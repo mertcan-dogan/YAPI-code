@@ -1,0 +1,65 @@
+# Yapı — Local development stack (frontend + backend + postgres)
+# Section 13.3: docker-compose.yml for local development
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: yapi_postgres
+    environment:
+      POSTGRES_USER: yapi
+      POSTGRES_PASSWORD: yapi_dev_password
+      POSTGRES_DB: yapi
+    ports:
+      - "5432:5432"
+    volumes:
+      - yapi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yapi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: yapi_backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://yapi:yapi_dev_password@postgres:5432/yapi
+      ENVIRONMENT: development
+      FRONTEND_URL: http://localhost:5173
+      # Supabase / Anthropic / Resend keys injected from your shell or .env
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    image: node:20-alpine
+    container_name: yapi_frontend
+    working_dir: /app
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+      VITE_SUPABASE_URL: ${SUPABASE_URL:-}
+      VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  yapi_pgdata:

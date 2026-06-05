@@ -1,0 +1,134 @@
+"""Project schemas (Section 11 wizard, Section 4.2)."""
+import uuid
+from datetime import date
+from decimal import Decimal
+
+from pydantic import BaseModel, field_validator, model_validator
+
+from app.constants import PROJECT_STATUSES, PROJECT_TYPES
+from app.schemas.common import ERR_CONTRACT, ERR_RETENTION, ORMModel
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    project_code: str
+    project_type: str
+    client_name: str
+    client_contact: str | None = None
+    contract_number: str | None = None
+    location: str | None = None
+    description: str | None = None
+
+    contract_value_try: Decimal
+    contract_value_eur: Decimal | None = None
+    contract_value_usd: Decimal | None = None
+    eur_try_rate: Decimal = Decimal("1.0")
+    usd_try_rate: Decimal = Decimal("1.0")
+
+    start_date: date
+    planned_end_date: date
+
+    retention_pct: Decimal = Decimal("10.00")
+    contingency_pct: Decimal = Decimal("5.00")
+    original_budget_try: Decimal
+    target_margin_pct: Decimal | None = None
+    project_manager_id: uuid.UUID | None = None
+
+    @field_validator("project_type")
+    @classmethod
+    def _type(cls, v: str) -> str:
+        if v not in PROJECT_TYPES:
+            raise ValueError("Geçersiz proje türü")
+        return v
+
+    @field_validator("contract_value_try")
+    @classmethod
+    def _contract(cls, v: Decimal) -> Decimal:
+        if v is None or v <= 0:
+            raise ValueError(ERR_CONTRACT)
+        return v
+
+    @field_validator("retention_pct")
+    @classmethod
+    def _retention(cls, v: Decimal) -> Decimal:
+        if v is None or v < 0 or v > 50:
+            raise ValueError(ERR_RETENTION)
+        return v
+
+    @model_validator(mode="after")
+    def _dates(self):
+        if self.planned_end_date < self.start_date:
+            raise ValueError("Planlanan bitiş tarihi başlangıç tarihinden önce olamaz")
+        return self
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = None
+    client_name: str | None = None
+    client_contact: str | None = None
+    contract_number: str | None = None
+    location: str | None = None
+    description: str | None = None
+    contract_value_try: Decimal | None = None
+    contract_value_eur: Decimal | None = None
+    eur_try_rate: Decimal | None = None
+    planned_end_date: date | None = None
+    actual_end_date: date | None = None
+    status: str | None = None
+    retention_pct: Decimal | None = None
+    contingency_pct: Decimal | None = None
+    original_budget_try: Decimal | None = None
+    approved_variations_try: Decimal | None = None
+    target_margin_pct: Decimal | None = None
+    completion_pct: Decimal | None = None
+    project_manager_id: uuid.UUID | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _status(cls, v):
+        if v is not None and v not in PROJECT_STATUSES:
+            raise ValueError("Geçersiz proje durumu")
+        return v
+
+    @field_validator("contract_value_try")
+    @classmethod
+    def _contract(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError(ERR_CONTRACT)
+        return v
+
+    @field_validator("retention_pct")
+    @classmethod
+    def _retention(cls, v):
+        if v is not None and (v < 0 or v > 50):
+            raise ValueError(ERR_RETENTION)
+        return v
+
+
+class ProjectOut(ORMModel):
+    id: uuid.UUID
+    company_id: uuid.UUID
+    name: str
+    project_code: str
+    project_type: str
+    client_name: str
+    client_contact: str | None
+    contract_number: str | None
+    location: str | None
+    description: str | None
+    contract_value_try: Decimal
+    contract_value_eur: Decimal | None
+    contract_value_usd: Decimal | None
+    eur_try_rate: Decimal
+    usd_try_rate: Decimal
+    start_date: date
+    planned_end_date: date
+    actual_end_date: date | None
+    status: str
+    retention_pct: Decimal
+    contingency_pct: Decimal
+    original_budget_try: Decimal
+    approved_variations_try: Decimal
+    target_margin_pct: Decimal | None
+    completion_pct: Decimal
+    project_manager_id: uuid.UUID | None
