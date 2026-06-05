@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — Section 6.2 */
+:root {
+  --color-primary: #1b2b4b;
+  --color-primary-light: #2e4272;
+  --color-accent: #f59e0b;
+  --color-success: #10b981;
+  --color-danger: #ef4444;
+  --color-warning: #eab308;
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text-primary: #1e293b;
+  --color-text-secondary: #64748b;
+  --color-text-disabled: #94a3b8;
+  --color-navy-50: #eff6ff;
+  --color-amber-50: #fffbeb;
+  --color-red-50: #fef2f2;
+  --color-green-50: #f0fdf4;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* All financial figures use tabular numerals (Section 6.3) */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Skeleton shimmer (Section 6.7) */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e9eef5;
+  border-radius: 6px;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

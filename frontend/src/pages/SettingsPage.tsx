@@ -1,0 +1,168 @@
+import { DataTable, type Column } from "@/components/DataTable";
+import { PageHeader } from "@/components/layout/AppLayout";
+import { Button, Card, CardBody, Input, Label, Select } from "@/components/ui";
+import { SideDrawer } from "@/components/SideDrawer";
+import { ROLE_LABELS, VAT_RATES } from "@/constants";
+import { useFetch } from "@/hooks/useFetch";
+import { apiPost, apiPut } from "@/lib/api";
+import { cn } from "@/lib/cn";
+import { useAuth } from "@/store/auth";
+import { toast } from "@/store/toast";
+import type { User } from "@/types";
+import { formatDateTime } from "@/utils/format";
+import { useState } from "react";
+import { Navigate } from "react-router-dom";
+
+const TABS = [
+  { key: "company", label: "Şirket" },
+  { key: "users", label: "Kullanıcılar" },
+  { key: "notifications", label: "Bildirimler" },
+];
+
+export default function SettingsPage() {
+  const { user } = useAuth();
+  const [tab, setTab] = useState("company");
+  if (user && user.role !== "director") return <Navigate to="/dashboard" replace />;
+
+  return (
+    <div>
+      <PageHeader title="Ayarlar" />
+      <div className="mb-4 flex gap-1 rounded-md border border-border p-0.5">
+        {TABS.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)} className={cn("rounded px-4 py-1.5 text-sm", tab === t.key ? "bg-primary text-white" : "text-text-secondary")}>{t.label}</button>
+        ))}
+      </div>
+      {tab === "company" && <CompanyTab />}
+      {tab === "users" && <UsersTab />}
+      {tab === "notifications" && <NotificationsTab />}
+    </div>
+  );
+}
+
+function CompanyTab() {
+  const { data, refetch } = useFetch<any>("/settings/company");
+  const [form, setForm] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+  const f = form ?? data ?? {};
+  const set = (k: string, v: any) => setForm({ ...(form ?? data), [k]: v });
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiPut("/settings/company", form ?? {});
+      toast.success("Şirket ayarları kaydedildi");
+      setForm(null);
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="max-w-2xl">
+      <CardBody className="space-y-3">
+        <div><Label>Şirket Adı</Label><Input value={f.name ?? ""} onChange={(e) => set("name", e.target.value)} /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label>Vergi No</Label><Input value={f.tax_number ?? ""} onChange={(e) => set("tax_number", e.target.value)} /></div>
+          <div><Label>Telefon</Label><Input value={f.phone ?? ""} onChange={(e) => set("phone", e.target.value)} /></div>
+        </div>
+        <div><Label>Adres</Label><Input value={f.address ?? ""} onChange={(e) => set("address", e.target.value)} /></div>
+        <div className="grid grid-cols-3 gap-3">
+          <div><Label>Varsayılan KDV %</Label><Select value={f.vat_rate_default ?? 20} onChange={(e) => set("vat_rate_default", Number(e.target.value))}>{VAT_RATES.map((v) => <option key={v} value={v}>%{v}</option>)}</Select></div>
+          <div><Label>Varsayılan Kesinti %</Label><Input type="number" value={f.retention_default_pct ?? 10} onChange={(e) => set("retention_default_pct", Number(e.target.value))} /></div>
+          <div><Label>Para Birimi</Label><Select value={f.default_currency ?? "TRY"} onChange={(e) => set("default_currency", e.target.value)}><option>TRY</option><option>EUR</option><option>USD</option></Select></div>
+        </div>
+        <div><Label>Mali Yıl Başlangıç Ayı</Label><Input type="number" min={1} max={12} value={f.fiscal_year_start_month ?? 1} onChange={(e) => set("fiscal_year_start_month", Number(e.target.value))} /></div>
+        <div className="pt-2"><Button onClick={save} loading={saving} disabled={!form}>Kaydet</Button></div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function UsersTab() {
+  const { data, loading, refetch } = useFetch<User[]>("/settings/users");
+  const { user: me } = useAuth();
+  const [open, setOpen] = useState(false);
+
+  const toggleActive = async (u: User) => {
+    try {
+      await apiPut(`/settings/users/${u.id}`, { is_active: !u.is_active });
+      toast.success("Güncellendi");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+  const changeRole = async (u: User, role: string) => {
+    try {
+      await apiPut(`/settings/users/${u.id}`, { role });
+      toast.success("Rol güncellendi");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
+  const columns: Column<User>[] = [
+    { key: "full_name", header: "Ad", render: (u) => <span className="font-medium text-primary">{u.full_name}</span> },
+    { key: "email", header: "E-posta" },
+    { key: "role", header: "Rol", render: (u) => <Select value={u.role} onChange={(e) => changeRole(u, e.target.value)} className="w-40">{Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select> },
+    { key: "last_login_at", header: "Son Giriş", render: (u) => formatDateTime(u.last_login_at) },
+    { key: "is_active", header: "Aktif", render: (u) => (
+      <button onClick={() => toggleActive(u)} disabled={u.id === me?.id} className={cn("rounded-full px-2 py-0.5 text-xs", u.is_active ? "bg-green-50 text-success" : "bg-red-50 text-danger")}>{u.is_active ? "Aktif" : "Pasif"}</button>
+    ) },
+  ];
+
+  return (
+    <div>
+      <div className="mb-3 flex justify-end"><Button onClick={() => setOpen(true)}>Kullanıcı Davet Et</Button></div>
+      <DataTable columns={columns} rows={data ?? []} loading={loading} emptyMessage="Henüz kullanıcı yok." />
+      <InviteDrawer open={open} onClose={() => setOpen(false)} onSaved={refetch} />
+    </div>
+  );
+}
+
+function InviteDrawer({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState({ email: "", full_name: "", role: "project_manager" });
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiPost("/settings/users", form);
+      toast.success("Davet gönderildi");
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <SideDrawer open={open} title="Kullanıcı Davet Et" onClose={onClose} onSave={save} saving={saving} saveLabel="Davet Gönder">
+      <div className="space-y-3">
+        <div><Label required>Ad Soyad</Label><Input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></div>
+        <div><Label required>E-posta</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+        <div><Label required>Rol</Label><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select></div>
+      </div>
+    </SideDrawer>
+  );
+}
+
+function NotificationsTab() {
+  return (
+    <Card className="max-w-2xl">
+      <CardBody className="space-y-3 text-sm">
+        <p className="text-text-secondary">Bildirim tercihleri (her olay için uygulama içi ve e-posta):</p>
+        {["Vadesi geçmiş ödeme", "Yaklaşan ödeme (7 gün)", "Kar marjı uyarısı", "Bütçe kategorisi aşımı", "Yeni AI uyarısı", "Haftalık özet"].map((n) => (
+          <label key={n} className="flex items-center justify-between border-b border-border py-2">
+            <span>{n}</span>
+            <input type="checkbox" defaultChecked className="h-4 w-4 accent-[var(--color-primary)]" />
+          </label>
+        ))}
+      </CardBody>
+    </Card>
+  );
+}

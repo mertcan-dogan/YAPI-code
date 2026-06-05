@@ -1,0 +1,136 @@
+import { cn } from "@/lib/cn";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import * as React from "react";
+import { Skeleton } from "./ui";
+import { EmptyState } from "./EmptyState";
+
+export interface Column<T> {
+  key: string;
+  header: string;
+  align?: "left" | "right" | "center";
+  sortable?: boolean;
+  render?: (row: T) => React.ReactNode;
+  sortValue?: (row: T) => string | number;
+}
+
+interface DataTableProps<T> {
+  columns: Column<T>[];
+  rows: T[];
+  loading?: boolean;
+  emptyMessage?: string;
+  emptyAction?: { label: string; onClick: () => void };
+  onRowClick?: (row: T) => void;
+  rowClassName?: (row: T) => string;
+}
+
+// Data Table — sticky navy header, zebra rows, sortable (Section 6.5)
+export function DataTable<T extends Record<string, any>>({
+  columns,
+  rows,
+  loading,
+  emptyMessage = "Henüz veri yok",
+  emptyAction,
+  onRowClick,
+  rowClassName,
+}: DataTableProps<T>) {
+  const [sortKey, setSortKey] = React.useState<string | null>(null);
+  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+
+  const sorted = React.useMemo(() => {
+    if (!sortKey) return rows;
+    const col = columns.find((c) => c.key === sortKey);
+    if (!col) return rows;
+    const val = col.sortValue ?? ((r: T) => r[sortKey]);
+    return [...rows].sort((a, b) => {
+      const av = val(a);
+      const bv = val(b);
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [rows, sortKey, sortDir, columns]);
+
+  const toggleSort = (key: string) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="bg-primary px-4 py-3" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="border-b border-border px-4 py-3">
+            <Skeleton />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-surface">
+        <EmptyState message={emptyMessage} actionLabel={emptyAction?.label} onAction={emptyAction?.onClick} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full min-w-[640px] border-collapse text-sm">
+        <thead className="sticky top-0">
+          <tr className="bg-primary text-white">
+            {columns.map((c) => (
+              <th
+                key={c.key}
+                className={cn(
+                  "px-3 py-2.5 text-left text-xs font-semibold",
+                  c.align === "right" && "text-right",
+                  c.align === "center" && "text-center",
+                  c.sortable && "cursor-pointer select-none"
+                )}
+                onClick={() => c.sortable && toggleSort(c.key)}
+              >
+                <span className="inline-flex items-center gap-1">
+                  {c.header}
+                  {c.sortable && sortKey === c.key && (sortDir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((row, i) => (
+            <tr
+              key={row.id ?? i}
+              className={cn(
+                i % 2 === 0 ? "bg-surface" : "bg-bg",
+                "border-b border-border hover:bg-navy-50",
+                onRowClick && "cursor-pointer",
+                rowClassName?.(row)
+              )}
+              onClick={() => onRowClick?.(row)}
+            >
+              {columns.map((c) => (
+                <td
+                  key={c.key}
+                  className={cn(
+                    "px-3 py-2.5",
+                    c.align === "right" && "text-right tabular",
+                    c.align === "center" && "text-center"
+                  )}
+                >
+                  {c.render ? c.render(row) : row[c.key]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
