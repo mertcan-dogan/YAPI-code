@@ -20,8 +20,12 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
 
     # Auth
-    jwt_secret: str = "dev-insecure-secret-change-me"
+    jwt_secret: str = "dev-insecure-secret-change-me"  # legacy HS256 shared secret
     jwt_algorithm: str = "HS256"
+    # Optional override for the public JWKS endpoint used to verify asymmetric
+    # (ES256/RS256) access tokens under Supabase's new signing keys. When blank
+    # it is derived from supabase_url: {SUPABASE_URL}/auth/v1/.well-known/jwks.json
+    supabase_jwks_url: str = ""
     # JWT access token lifetime 1h, refresh 8h inactivity (Section 8.1)
     access_token_ttl_seconds: int = 3600
     inactivity_timeout_seconds: int = 8 * 3600
