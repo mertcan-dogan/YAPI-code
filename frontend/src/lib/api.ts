@@ -5,13 +5,27 @@ const baseURL = (import.meta.env.VITE_API_BASE_URL as string) ?? "http://localho
 
 export const api = axios.create({ baseURL });
 
+const DEBUG_AUTH = import.meta.env.DEV || import.meta.env.VITE_DEBUG_AUTH === "1";
+
+function algOf(jwtToken: string): string {
+  try {
+    return JSON.parse(atob(jwtToken.split(".")[0])).alg ?? "?";
+  } catch {
+    return "?";
+  }
+}
+
 // Attach the Supabase JWT to every request (Section 3.1).
 api.interceptors.request.use(async (config) => {
   const {
     data: { session },
   } = await supabase.auth.getSession();
-  if (session?.access_token) {
-    config.headers.Authorization = `Bearer ${session.access_token}`;
+  const token = session?.access_token;
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+    if (DEBUG_AUTH) console.debug(`[auth] → ${config.url} attaching token alg=${algOf(token)} len=${token.length}`);
+  } else if (DEBUG_AUTH) {
+    console.warn(`[auth] → ${config.url} NO session token to attach (getSession returned null)`);
   }
   return config;
 });
@@ -24,11 +38,16 @@ api.interceptors.response.use(
     const message = env?.error?.message ?? "Beklenmeyen bir hata oluştu";
     const field = env?.error?.field;
     const code = env?.error?.code;
-    if (error.response?.status === 401) {
-      // Session invalid — bounce to login.
+    const status = error.response?.status;
+    if (DEBUG_AUTH && status === 401) {
+      console.warn(`[auth] ← ${error.config?.url} 401 ${code ?? ""}: ${message}`);
+    }
+    // Only force sign-out on a genuine token rejection — not on /auth/me probes,
+    // so we never wipe a freshly created session before it is usable.
+    if (status === 401 && !String(error.config?.url ?? "").includes("/auth/me")) {
       supabase.auth.signOut();
     }
-    return Promise.reject(Object.assign(new Error(message), { field, code, status: error.response?.status }));
+    return Promise.reject(Object.assign(new Error(message), { field, code, status }));
   }
 );
 

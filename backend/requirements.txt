@@ -11,7 +11,7 @@ alembic==1.14.0
 psycopg[binary]==3.3.4
 
 # Auth / security
-pyjwt==2.10.1
+pyjwt[crypto]==2.10.1          # [crypto] pulls cryptography — required for ES256/RS256 (JWKS) verification
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.20

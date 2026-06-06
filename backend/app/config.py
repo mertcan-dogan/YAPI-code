@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     # (ES256/RS256) access tokens under Supabase's new signing keys. When blank
     # it is derived from supabase_url: {SUPABASE_URL}/auth/v1/.well-known/jwks.json
     supabase_jwks_url: str = ""
+    # Verbose auth diagnostics. Defaults on outside production; set DEBUG_AUTH=0 to silence.
+    debug_auth: bool = True
     # JWT access token lifetime 1h, refresh 8h inactivity (Section 8.1)
     access_token_ttl_seconds: int = 3600
     inactivity_timeout_seconds: int = 8 * 3600

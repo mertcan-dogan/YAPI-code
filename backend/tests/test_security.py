@@ -86,3 +86,61 @@ def test_asymmetric_token_routes_to_jwks(monkeypatch):
     with pytest.raises(TokenError):
         decode_token(tok)
     assert called["jwks"] is True
+
+
+# --- Real ES256 (P-256) round-trip — the user's exact signing scheme ----------
+@pytest.fixture()
+def ec_keys():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    priv = ec.generate_private_key(ec.SECP256R1())  # P-256
+    return priv, priv.public_key()
+
+
+def _es256(claims: dict, priv, kid: str = "ec-key-1") -> str:
+    return jwt.encode(claims, priv, algorithm="ES256", headers={"kid": kid})
+
+
+class _Shim:
+    def __init__(self, key):
+        self.key = key
+
+
+def test_es256_p256_token_verifies(monkeypatch, ec_keys):
+    """A genuine ES256/P-256 token, with the JWKS returning the matching public
+    key, must verify successfully through decode_token."""
+    import time as _t
+
+    import app.security as sec
+
+    priv, pub = ec_keys
+    tok = _es256({"sub": "ec-user", "aud": "authenticated", "exp": int(_t.time()) + 3600}, priv)
+
+    class Client:
+        def get_signing_key_from_jwt(self, token):
+            return _Shim(pub)  # JWKS resolves the matching public key
+
+    monkeypatch.setattr(sec, "_get_jwks_client", lambda: Client())
+    payload = decode_token(tok)
+    assert payload["sub"] == "ec-user"
+
+
+def test_es256_wrong_key_rejected(monkeypatch, ec_keys):
+    """If the JWKS returns a non-matching public key, verification must fail."""
+    import time as _t
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    import app.security as sec
+
+    priv, _ = ec_keys
+    other_pub = ec.generate_private_key(ec.SECP256R1()).public_key()
+    tok = _es256({"sub": "ec-user", "aud": "authenticated", "exp": int(_t.time()) + 3600}, priv)
+
+    class Client:
+        def get_signing_key_from_jwt(self, token):
+            return _Shim(other_pub)
+
+    monkeypatch.setattr(sec, "_get_jwks_client", lambda: Client())
+    with pytest.raises(TokenError):
+        decode_token(tok)

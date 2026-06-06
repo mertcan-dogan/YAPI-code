@@ -1,4 +1,5 @@
 """FastAPI dependencies: auth, current user, role gating (Section 3.2)."""
+import logging
 import uuid
 from typing import Annotated
 
@@ -6,6 +7,7 @@ from fastapi import Depends, Header, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 from app.models.user import User
 from app.responses import APIError
@@ -17,9 +19,13 @@ from app.constants import (
     ROLE_SITE_MANAGER,
 )
 
+logger = logging.getLogger("yapi.auth")
+
 
 def _extract_bearer(authorization: str | None) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
+        if settings.debug_auth:
+            logger.warning("[auth] no/invalid Authorization header (value=%r) — frontend did not send a Bearer token", authorization)
         raise APIError(401, "UNAUTHENTICATED", "Kimlik doğrulama gerekli")
     return authorization.split(" ", 1)[1].strip()
 
@@ -49,6 +55,10 @@ def get_current_user(
         select(User).where(User.id == uid, User.is_deleted.is_(False))
     ).scalar_one_or_none()
     if user is None or not user.is_active:
+        # Token verified but no matching app user row — common when the public.users
+        # row was never created for this Supabase auth user (see /auth/me note).
+        if settings.debug_auth:
+            logger.warning("[auth] token valid (sub=%s) but no active users row found", user_id)
         raise APIError(401, "UNAUTHENTICATED", "Kullanıcı bulunamadı veya pasif")
 
     # Stash on request state for the audit middleware.

@@ -180,6 +180,32 @@ cd frontend && npm run build
 
 ---
 
+## Troubleshooting — 401 on `/auth/me`
+
+The backend verifies Supabase access tokens in two modes, auto-selected by the
+token header: legacy **HS256** (shared `JWT_SECRET`) and new **ES256/RS256**
+(asymmetric signing keys, verified via JWKS). With `DEBUG_AUTH=1` (default
+outside production) the backend logs the algorithm, kid, JWKS URL and the exact
+failure for every rejected token, and the browser console logs whether a token
+was attached.
+
+Run the standalone diagnostic with a real token (copied from the browser):
+
+```bash
+cd backend
+python scripts/debug_auth.py "<access_token>"
+```
+
+It prints the token header/claims, the kids published by your JWKS endpoint, and
+the precise verification result. Common causes:
+
+| Symptom in logs | Cause | Fix |
+|---|---|---|
+| `no/invalid Authorization header` | Frontend isn't sending the token | Check `VITE_SUPABASE_*` env and that the session exists |
+| `token kid NOT present in JWKS` | Key rotation / wrong project | Confirm `SUPABASE_JWKS_URL` matches the project that issued the token |
+| `cryptography package missing` | ES/RS can't be verified | `pip install -r requirements.txt` (`pyjwt[crypto]`) |
+| `token valid … but no active users row` | Auth user has no `public.users` row | Create the company + `users` row for that `sub` (invite/onboarding) |
+
 ## Key Features
 
 - **Company & Project dashboards** — KPI cards, RAG health, S-curve, cash-flow charts.
