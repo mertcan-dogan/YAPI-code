@@ -16,6 +16,7 @@ from app.api import (
     auth,
     cashflow,
     costs,
+    custom_categories,
     equipment,
     imports,
     invoices,
@@ -77,5 +78,6 @@ for r in (
     uploads.router,
     audit.router,
     settings_router.router,
+    custom_categories.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

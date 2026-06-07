@@ -12,7 +12,7 @@ import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
 import { Download, Plus, Upload } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 const RAG_BG: Record<string, string> = { red: "bg-red-50", amber: "bg-amber-50", green: "" };
@@ -154,8 +154,14 @@ function CostDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proj
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
+  const [customCats, setCustomCats] = useState<{ id: string; name: string }[]>([]);
   const extractRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  // CR-001-D: company custom categories appear under their own group.
+  useEffect(() => {
+    if (open) apiGet<{ id: string; name: string }[]>("/custom-categories").then(({ data }) => setCustomCats(data ?? [])).catch(() => setCustomCats([]));
+  }, [open]);
 
   const save = async () => {
     if (!form.cost_category || toNumber(form.amount_try) <= 0) {
@@ -219,7 +225,17 @@ function CostDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proj
           <div><Label required>Tarih</Label><Input type="date" className={aiClass("entry_date")} value={form.entry_date} onChange={(e) => set("entry_date", e.target.value)} /></div>
           <div><Label required>Giriş Tipi</Label><Select value={form.entry_type} onChange={(e) => set("entry_type", e.target.value)}><option value="actual">Gerçekleşen</option><option value="committed">Taahhüt</option><option value="forecast">Tahmin</option></Select></div>
         </div>
-        <div><Label required>Kategori</Label><Select value={form.cost_category} onChange={(e) => set("cost_category", e.target.value)}><option value="">Seçiniz</option>{COST_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}</Select></div>
+        <div><Label required>Kategori</Label><Select value={form.cost_category} onChange={(e) => set("cost_category", e.target.value)}>
+          <option value="">Seçiniz</option>
+          <optgroup label="Standart Kategoriler">
+            {COST_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </optgroup>
+          {customCats.length > 0 && (
+            <optgroup label="Şirket Kategorileri">
+              {customCats.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+            </optgroup>
+          )}
+        </Select></div>
         <div><Label>Alt Kategori</Label><Input value={form.subcategory} onChange={(e) => set("subcategory", e.target.value)} /></div>
         <div><Label>Tedarikçi / Alt Yüklenici</Label><Input className={aiClass("supplier_name")} value={form.supplier_name} onChange={(e) => set("supplier_name", e.target.value)} /></div>
         <div><Label>Açıklama</Label><Textarea className={aiClass("description")} value={form.description} onChange={(e) => set("description", e.target.value)} /></div>

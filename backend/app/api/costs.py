@@ -29,6 +29,25 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _bump_custom_category(db: Session, company_id, category: str) -> None:
+    """If a cost uses a company custom category, increment its usage_count (CR-001-D)."""
+    from app.constants import COST_CATEGORY_KEYS
+    from app.models.custom_category import CustomCostCategory
+
+    if not category or category in COST_CATEGORY_KEYS:
+        return
+    norm = " ".join(category.strip().lower().split())
+    cat = db.execute(
+        select(CustomCostCategory).where(
+            CustomCostCategory.company_id == company_id,
+            CustomCostCategory.name_normalized == norm,
+            CustomCostCategory.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if cat is not None:
+        cat.usage_count = (cat.usage_count or 0) + 1
+
+
 def _refresh_payment_status(c: CostEntry, today: date | None = None) -> None:
     """Keep payment_status coherent with amounts/dates (overdue is derived)."""
     today = today or date.today()
@@ -106,6 +125,7 @@ def create_cost(
     _refresh_payment_status(cost)
     db.add(cost)
     db.flush()
+    _bump_custom_category(db, user.company_id, cost.cost_category)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
         record_id=cost.id, action="INSERT", new_values=snapshot(cost), ip_address=_ip(request),

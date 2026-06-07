@@ -10,6 +10,7 @@ from app.models.equipment_log import EquipmentLog
 from app.models.budget_line_item import BudgetLineItem
 from app.models.audit_log import AuditLog
 from app.models.ai_alert import AIAlert
+from app.models.custom_category import CustomCostCategory
 
 __all__ = [
     "Base",
@@ -23,4 +24,5 @@ __all__ = [
     "BudgetLineItem",
     "AuditLog",
     "AIAlert",
+    "CustomCostCategory",
 ]

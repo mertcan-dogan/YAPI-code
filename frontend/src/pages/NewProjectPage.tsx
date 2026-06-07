@@ -6,6 +6,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
 import { formatCurrency, toNumber } from "@/utils/format";
 import { cn } from "@/lib/cn";
+import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -37,6 +38,8 @@ export default function NewProjectPage() {
     planned_end_date: "",
   });
   const [budgets, setBudgets] = useState<Record<string, string>>({});
+  // CR-001-D: ad-hoc custom categories added in the wizard.
+  const [customCats, setCustomCats] = useState<{ name: string; amount: string }[]>([]);
 
   const set = (k: string, v: string) => {
     setForm((f: any) => ({ ...f, [k]: v }));
@@ -61,7 +64,9 @@ export default function NewProjectPage() {
       .catch(() => setPrevTypes([]));
   }, []);
 
-  const budgetTotal = Object.values(budgets).reduce((s, v) => s + toNumber(v), 0);
+  const budgetTotal =
+    Object.values(budgets).reduce((s, v) => s + toNumber(v), 0) +
+    customCats.reduce((s, c) => s + toNumber(c.amount), 0);
   const budgetMismatch = budgetTotal > 0 && Math.abs(budgetTotal - toNumber(form.original_budget_try)) > 0.01;
 
   const submit = async () => {
@@ -91,6 +96,12 @@ export default function NewProjectPage() {
       for (const [cat, amount] of Object.entries(budgets)) {
         if (toNumber(amount) > 0) {
           await apiPost(`/projects/${project.id}/budget/${cat}`, { original_budget_try: amount }).catch(() => {});
+        }
+      }
+      // CR-001-D: register custom categories at the company level.
+      for (const c of customCats) {
+        if (c.name.trim()) {
+          await apiPost("/custom-categories", { name: c.name.trim() }).catch(() => {});
         }
       }
       toast.success("Proje oluşturuldu");
@@ -241,6 +252,42 @@ export default function NewProjectPage() {
                   />
                 </div>
               ))}
+
+              {/* CR-001-D: custom categories */}
+              {customCats.map((c, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Input
+                    className="flex-1"
+                    placeholder="Kategori adı"
+                    value={c.name}
+                    onChange={(e) => setCustomCats((rows) => rows.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))}
+                  />
+                  <Input
+                    type="number"
+                    className="w-40"
+                    placeholder="Tutar"
+                    value={c.amount}
+                    onChange={(e) => setCustomCats((rows) => rows.map((r, j) => (j === i ? { ...r, amount: e.target.value } : r)))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCustomCats((rows) => rows.filter((_, j) => j !== i))}
+                    className="text-text-secondary hover:text-danger"
+                    aria-label="Kategoriyi sil"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full border-accent text-accent"
+                onClick={() => setCustomCats((rows) => [...rows, { name: "", amount: "" }])}
+              >
+                <Plus className="h-4 w-4" /> Yeni Kategori Ekle
+              </Button>
+
               <div className={cn("flex justify-between border-t border-border pt-2 text-sm font-semibold", budgetMismatch && "text-accent")}>
                 <span>Toplam</span>
                 <span>{formatCurrency(budgetTotal)}</span>

@@ -44,8 +44,15 @@ class CostEntryCreate(BaseModel):
     @field_validator("cost_category")
     @classmethod
     def _cat(cls, v: str) -> str:
-        if v not in COST_CATEGORY_KEYS:
+        # Standard enum key OR a company custom category (CR-001-D). Custom
+        # categories are free text (validated for length only).
+        if v in COST_CATEGORY_KEYS:
+            return v
+        v = (v or "").strip()
+        if not v:
             raise ValueError("Geçersiz maliyet kategorisi")
+        if len(v) > 50:
+            raise ValueError("Kategori en fazla 50 karakter olabilir")
         return v
 
     @field_validator("entry_type")
