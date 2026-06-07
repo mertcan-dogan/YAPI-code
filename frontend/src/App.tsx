@@ -6,6 +6,7 @@ import { Toaster } from "./components/Toaster";
 import { useAuth } from "./store/auth";
 
 import AIAlertsPage from "./pages/AIAlertsPage";
+import AuditLogPage from "./pages/AuditLogPage";
 import BudgetPage from "./pages/BudgetPage";
 import CashFlowPage from "./pages/CashFlowPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -62,6 +63,8 @@ export default function App() {
           <Route path="/projects/:id/subcontractors" element={<SubcontractorsPage />} />
           <Route path="/projects/:id/cashflow" element={<CashFlowPage />} />
           <Route path="/projects/:id/equipment" element={<EquipmentPage />} />
+          <Route path="/projects/:id/audit-log" element={<AuditLogPage />} />
+          <Route path="/audit-log" element={<AuditLogPage />} />
           <Route path="/reminders" element={<RemindersPage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />

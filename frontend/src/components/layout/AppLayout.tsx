@@ -7,6 +7,7 @@ import {
   FileBarChart,
   FileText,
   FolderKanban,
+  History,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -60,6 +61,7 @@ function Sidebar() {
   const { pathname } = useLocation();
   const params = useParams();
   const projectId = params.id;
+  const isDirector = useAuth((s) => s.user?.role === "director");
   return (
     <aside className="hidden w-64 shrink-0 flex-col bg-primary lg:flex">
       <div className="flex items-center gap-2 px-5 py-4 text-white">
@@ -76,12 +78,24 @@ function Sidebar() {
             {PROJECT_NAV(projectId).map((n) => (
               <NavItem key={n.to} {...n} active={pathname === n.to} />
             ))}
+            {/* CR-001-H: Denetim İzi — director only, under Ekipman */}
+            {isDirector && (
+              <NavItem
+                icon={History}
+                label="Denetim İzi"
+                to={`/projects/${projectId}/audit-log`}
+                active={pathname === `/projects/${projectId}/audit-log`}
+              />
+            )}
           </div>
         )}
         <div className="mt-3 border-t border-white/10 pt-3">
           {BOTTOM_NAV.map((n) => (
             <NavItem key={n.to} {...n} active={pathname.startsWith(n.to)} />
           ))}
+          {isDirector && (
+            <NavItem icon={History} label="Denetim İzi" to="/audit-log" active={pathname === "/audit-log"} />
+          )}
         </div>
       </nav>
     </aside>
