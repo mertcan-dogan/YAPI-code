@@ -1,11 +1,11 @@
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, FieldError, Input, Label, Select, Textarea } from "@/components/ui";
-import { COST_CATEGORY_OPTIONS, PROJECT_TYPES } from "@/constants";
-import { apiPost } from "@/lib/api";
+import { COST_CATEGORY_OPTIONS, PROJECT_TYPE_GROUPS } from "@/constants";
+import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
 import { formatCurrency, toNumber } from "@/utils/format";
 import { cn } from "@/lib/cn";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const STEPS = ["Proje Bilgileri", "Finansal Bilgiler", "Zaman Planı", "Bütçe Dağılımı"];
@@ -15,10 +15,12 @@ export default function NewProjectPage() {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [prevTypes, setPrevTypes] = useState<{ value: string; label: string }[]>([]);
   const [form, setForm] = useState<any>({
     name: "",
     project_code: "",
     project_type: "road",
+    custom_project_type: "",
     client_name: "",
     client_contact: "",
     contract_number: "",
@@ -43,6 +45,21 @@ export default function NewProjectPage() {
     }
   };
 
+  // CR-001-A: surface the company's previously used custom types as a group.
+  useEffect(() => {
+    apiGet<any[]>("/projects")
+      .then(({ data }) => {
+        const seen = new Map<string, string>();
+        for (const p of data ?? []) {
+          if (p.project_type === "other" && p.custom_project_type) {
+            seen.set(p.custom_project_type.toLowerCase(), p.custom_project_type);
+          }
+        }
+        setPrevTypes(Array.from(seen.values()).map((v) => ({ value: `prev:${v}`, label: v })));
+      })
+      .catch(() => setPrevTypes([]));
+  }, []);
+
   const budgetTotal = Object.values(budgets).reduce((s, v) => s + toNumber(v), 0);
   const budgetMismatch = budgetTotal > 0 && Math.abs(budgetTotal - toNumber(form.original_budget_try)) > 0.01;
 
@@ -50,8 +67,18 @@ export default function NewProjectPage() {
     setSaving(true);
     setError(null);
     try {
+      // Normalise the type: a "prev:<text>" selection is a reused custom type.
+      let projectType = form.project_type;
+      let customType: string | null = form.custom_project_type || null;
+      if (projectType.startsWith("prev:")) {
+        customType = projectType.slice(5);
+        projectType = "other";
+      }
+      if (projectType !== "other") customType = null;
       const payload: any = {
         ...form,
+        project_type: projectType,
+        custom_project_type: customType,
         contract_value_try: form.contract_value_try,
         original_budget_try: form.original_budget_try || form.contract_value_try,
         contract_value_eur: form.contract_value_eur || null,
@@ -76,7 +103,13 @@ export default function NewProjectPage() {
   };
 
   const canNext = () => {
-    if (step === 0) return form.name && form.project_code && form.client_name;
+    if (step === 0)
+      return (
+        form.name &&
+        form.project_code &&
+        form.client_name &&
+        (form.project_type !== "other" || form.custom_project_type.trim())
+      );
     if (step === 1) return toNumber(form.contract_value_try) > 0;
     if (step === 2) return form.start_date && form.planned_end_date;
     return true;
@@ -106,11 +139,33 @@ export default function NewProjectPage() {
               </Field>
               <Field label="Proje Türü" required>
                 <Select value={form.project_type} onChange={(e) => set("project_type", e.target.value)}>
-                  {Object.entries(PROJECT_TYPES).map(([v, l]) => (
-                    <option key={v} value={v}>{l}</option>
+                  {PROJECT_TYPE_GROUPS.map((g) => (
+                    <optgroup key={g.category} label={g.category}>
+                      {g.options.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </optgroup>
                   ))}
+                  {prevTypes.length > 0 && (
+                    <optgroup label="Şirketinizin Önceki Türleri">
+                      {prevTypes.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </Select>
               </Field>
+              {form.project_type === "other" && (
+                <Field label="Proje Türünü Belirtin" required>
+                  <Input
+                    value={form.custom_project_type}
+                    maxLength={100}
+                    onChange={(e) => set("custom_project_type", e.target.value)}
+                    placeholder="Örn. Maden Tesisi"
+                    autoFocus
+                  />
+                </Field>
+              )}
               <Field label="İşveren Adı" required>
                 <Input value={form.client_name} onChange={(e) => set("client_name", e.target.value)} />
               </Field>

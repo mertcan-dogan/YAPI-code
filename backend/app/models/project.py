@@ -23,6 +23,8 @@ class Project(TimestampSoftDeleteMixin, Base):
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     project_code: Mapped[str] = mapped_column(String(50), nullable=False)
     project_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # CR-001-A: free-text type entered when project_type == "other"
+    custom_project_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)
     client_contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
     contract_number: Mapped[str | None] = mapped_column(String(100), nullable=True)

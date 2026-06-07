@@ -11,16 +11,64 @@ export const COLORS = {
   lightBlue: "#93C5FD",
 } as const;
 
-export const PROJECT_TYPES: Record<string, string> = {
-  road: "Yol İnşaatı",
-  railway: "Demiryolu",
-  marine: "Denizel / Kıyı",
-  wastewater: "Atıksu Arıtma",
-  building: "Bina İnşaatı",
-  tunnel: "Tünel",
-  bridge: "Köprü / Viyadük",
-  other: "Diğer",
-};
+// CR-001-A: 26 project types grouped by category.
+export const PROJECT_TYPE_GROUPS: { category: string; options: { value: string; label: string }[] }[] = [
+  {
+    category: "Ulaşım",
+    options: [
+      { value: "road", label: "Yol" },
+      { value: "motorway", label: "Otoyol" },
+      { value: "railway", label: "Demiryolu" },
+      { value: "metro_tram", label: "Metro / Tramvay" },
+      { value: "tunnel", label: "Tünel" },
+      { value: "bridge_viaduct", label: "Köprü / Viyadük" },
+    ],
+  },
+  {
+    category: "Denizel",
+    options: [
+      { value: "marine_coastal", label: "Denizel / Kıyı" },
+      { value: "dredging", label: "Tarama (Dredging)" },
+      { value: "port_harbor", label: "Liman / Rıhtım" },
+    ],
+  },
+  {
+    category: "Su & Altyapı",
+    options: [
+      { value: "wastewater", label: "Atıksu Arıtma" },
+      { value: "water_supply", label: "İçmesuyu" },
+      { value: "sewage", label: "Kanalizasyon" },
+      { value: "irrigation", label: "Sulama / Tarım" },
+    ],
+  },
+  {
+    category: "Bina",
+    options: [
+      { value: "building_residential", label: "Bina (Konut)" },
+      { value: "building_commercial", label: "Bina (Ticari)" },
+      { value: "building_industrial", label: "Bina (Endüstriyel)" },
+      { value: "factory", label: "Fabrika" },
+      { value: "warehouse_logistics", label: "Depo / Lojistik Merkezi" },
+      { value: "hospital", label: "Hastane" },
+      { value: "school", label: "Okul / Eğitim" },
+      { value: "hotel", label: "Otel / Turizm" },
+    ],
+  },
+  {
+    category: "Özel",
+    options: [
+      { value: "renovation", label: "Renovasyon / Tadilat" },
+      { value: "urban_transformation", label: "Kentsel Dönüşüm" },
+      { value: "energy_plant", label: "Enerji Santrali" },
+      { value: "landscaping", label: "Peyzaj" },
+    ],
+  },
+  { category: "Diğer", options: [{ value: "other", label: "Diğer" }] },
+];
+
+export const PROJECT_TYPES: Record<string, string> = Object.fromEntries(
+  PROJECT_TYPE_GROUPS.flatMap((g) => g.options.map((o) => [o.value, o.label]))
+);
 
 export const COST_CATEGORIES: Record<string, string> = {
   labour_direct: "İşçilik — Direkt",

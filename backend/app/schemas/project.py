@@ -13,6 +13,7 @@ class ProjectCreate(BaseModel):
     name: str
     project_code: str
     project_type: str
+    custom_project_type: str | None = None
     client_name: str
     client_contact: str | None = None
     contract_number: str | None = None
@@ -59,11 +60,18 @@ class ProjectCreate(BaseModel):
     def _dates(self):
         if self.planned_end_date < self.start_date:
             raise ValueError("Planlanan bitiş tarihi başlangıç tarihinden önce olamaz")
+        # CR-001-A: a custom type is required when "Diğer" is selected.
+        if self.project_type == "other" and not (self.custom_project_type or "").strip():
+            raise ValueError("Lütfen proje türünü belirtin")
+        if self.custom_project_type and len(self.custom_project_type) > 100:
+            raise ValueError("Proje türü en fazla 100 karakter olabilir")
         return self
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = None
+    project_type: str | None = None
+    custom_project_type: str | None = None
     client_name: str | None = None
     client_contact: str | None = None
     contract_number: str | None = None
@@ -111,6 +119,7 @@ class ProjectOut(ORMModel):
     name: str
     project_code: str
     project_type: str
+    custom_project_type: str | None
     client_name: str
     client_contact: str | None
     contract_number: str | None

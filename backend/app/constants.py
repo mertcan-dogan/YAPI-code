@@ -7,17 +7,37 @@ ROLE_FINANCE = "finance"
 ROLE_SITE_MANAGER = "site_manager"
 ROLES = [ROLE_DIRECTOR, ROLE_PROJECT_MANAGER, ROLE_FINANCE, ROLE_SITE_MANAGER]
 
-# --- Project types (Appendix A) ---
-PROJECT_TYPES = {
-    "road": "Yol İnşaatı",
-    "railway": "Demiryolu",
-    "marine": "Denizel / Kıyı",
-    "wastewater": "Atıksu Arıtma",
-    "building": "Bina İnşaatı",
-    "tunnel": "Tünel",
-    "bridge": "Köprü / Viyadük",
-    "other": "Diğer",
-}
+# --- Project types (CR-001-A: 26 types grouped by category) ---
+# key (stored in DB) -> (label, category)
+PROJECT_TYPE_DEFS = [
+    ("road", "Yol", "Ulaşım"),
+    ("motorway", "Otoyol", "Ulaşım"),
+    ("railway", "Demiryolu", "Ulaşım"),
+    ("metro_tram", "Metro / Tramvay", "Ulaşım"),
+    ("tunnel", "Tünel", "Ulaşım"),
+    ("bridge_viaduct", "Köprü / Viyadük", "Ulaşım"),
+    ("marine_coastal", "Denizel / Kıyı", "Denizel"),
+    ("dredging", "Tarama (Dredging)", "Denizel"),
+    ("port_harbor", "Liman / Rıhtım", "Denizel"),
+    ("wastewater", "Atıksu Arıtma", "Su & Altyapı"),
+    ("water_supply", "İçmesuyu", "Su & Altyapı"),
+    ("sewage", "Kanalizasyon", "Su & Altyapı"),
+    ("irrigation", "Sulama / Tarım", "Su & Altyapı"),
+    ("building_residential", "Bina (Konut)", "Bina"),
+    ("building_commercial", "Bina (Ticari)", "Bina"),
+    ("building_industrial", "Bina (Endüstriyel)", "Bina"),
+    ("factory", "Fabrika", "Bina"),
+    ("warehouse_logistics", "Depo / Lojistik Merkezi", "Bina"),
+    ("hospital", "Hastane", "Bina"),
+    ("school", "Okul / Eğitim", "Bina"),
+    ("hotel", "Otel / Turizm", "Bina"),
+    ("renovation", "Renovasyon / Tadilat", "Özel"),
+    ("urban_transformation", "Kentsel Dönüşüm", "Özel"),
+    ("energy_plant", "Enerji Santrali", "Özel"),
+    ("landscaping", "Peyzaj", "Özel"),
+    ("other", "Diğer", "Diğer"),
+]
+PROJECT_TYPES = {key: label for key, label, _cat in PROJECT_TYPE_DEFS}
 
 PROJECT_STATUSES = ["active", "completed", "suspended", "cancelled"]
 
