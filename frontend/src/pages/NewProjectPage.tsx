@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, FieldError, Input, Label, Select, Textarea } from "@/components/ui";
+import { InfoTooltip } from "@/components/ui/tooltip";
 import { COST_CATEGORY_OPTIONS, PROJECT_TYPE_GROUPS } from "@/constants";
 import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
@@ -201,9 +202,13 @@ export default function NewProjectPage() {
                 <Field label="Hakediş Kesintisi %">
                   <Input type="number" value={form.retention_pct} onChange={(e) => set("retention_pct", e.target.value)} />
                 </Field>
-                <Field label="Öngörülemeyen Giderler %">
+                <div>
+                  <Label className="flex items-center gap-1">
+                    Öngörülemeyen Giderler %
+                    <InfoTooltip text="Öngörülemeyen giderler, proje süresince ortaya çıkabilecek beklenmedik maliyetler için ayrılan bütçe payıdır. Türk kamu ihale mevzuatında standart oran %10'dur. Özel projeler için %5 ile %15 arasında belirlenmesi önerilir." />
+                  </Label>
                   <Input type="number" value={form.contingency_pct} onChange={(e) => set("contingency_pct", e.target.value)} />
-                </Field>
+                </div>
                 <Field label="Hedef Kar Marjı %">
                   <Input type="number" value={form.target_margin_pct} onChange={(e) => set("target_margin_pct", e.target.value)} />
                 </Field>
