@@ -57,7 +57,7 @@ COST_CATEGORIES = {
     "permits_fees": "İzin ve Harçlar",
     "site_overhead": "Şantiye Genel Giderleri",
     "engineering_design": "Mühendislik ve Tasarım",
-    "contingency": "Beklenmedik Giderler (Kontenjan)",
+    "contingency": "Öngörülemeyen Giderler",
     "other": "Diğer",
 }
 COST_CATEGORY_KEYS = list(COST_CATEGORIES.keys())

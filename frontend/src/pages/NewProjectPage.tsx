@@ -201,7 +201,7 @@ export default function NewProjectPage() {
                 <Field label="Hakediş Kesintisi %">
                   <Input type="number" value={form.retention_pct} onChange={(e) => set("retention_pct", e.target.value)} />
                 </Field>
-                <Field label="Kontenjan %">
+                <Field label="Öngörülemeyen Giderler %">
                   <Input type="number" value={form.contingency_pct} onChange={(e) => set("contingency_pct", e.target.value)} />
                 </Field>
                 <Field label="Hedef Kar Marjı %">

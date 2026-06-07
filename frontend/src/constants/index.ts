@@ -84,7 +84,7 @@ export const COST_CATEGORIES: Record<string, string> = {
   permits_fees: "İzin ve Harçlar",
   site_overhead: "Şantiye Genel Giderleri",
   engineering_design: "Mühendislik ve Tasarım",
-  contingency: "Beklenmedik Giderler (Kontenjan)",
+  contingency: "Öngörülemeyen Giderler",
   other: "Diğer",
 };
 
