@@ -1,6 +1,6 @@
 import { DataTable, type Column } from "@/components/DataTable";
 import { PageHeader } from "@/components/layout/AppLayout";
-import { Button, Input, Label, Select } from "@/components/ui";
+import { Button, Checkbox, Input, Label, Select } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost } from "@/lib/api";
@@ -41,19 +41,15 @@ export default function EquipmentPage() {
 }
 
 function EquipDrawer({ open, projectId, onClose, onSaved }: { open: boolean; projectId: string; onClose: () => void; onSaved: () => void }) {
-  const empty = { equipment_name: "", ownership_type: "rented", supplier_name: "", rate_try: "", rate_unit: "day", deployment_start: new Date().toISOString().slice(0, 10), deployment_end: "", fuel_maintenance_try: "0", notes: "" };
+  const empty = { equipment_name: "", ownership_type: "rented", supplier_name: "", rate_try: "", rate_unit: "day", deployment_start: new Date().toISOString().slice(0, 10), deployment_end: "", fuel_maintenance_try: "0", notes: "", add_to_budget: true };
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
-  const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
+  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   const save = async () => {
     setSaving(true);
     try {
       await apiPost(`/projects/${projectId}/equipment`, { ...form, rate_try: form.rate_try || null, deployment_end: form.deployment_end || null });
-      toast.success("Ekipman kaydedildi");
-      if (window.confirm("Bu ekipman maliyetini bütçe takibine eklemek ister misiniz?")) {
-        // Optional: prompt acknowledged — PM adds via cost page manually (Section 4.8).
-        toast.info("Bütçeye eklemek için Maliyet Ekle ekranını kullanın.");
-      }
+      toast.success(form.add_to_budget ? "Ekipman kaydedildi ve bütçeye eklendi" : "Ekipman kaydedildi");
       setForm(empty);
       onSaved();
       onClose();
@@ -78,6 +74,14 @@ function EquipDrawer({ open, projectId, onClose, onSaved }: { open: boolean; pro
           <div><Label>Bitiş</Label><Input type="date" value={form.deployment_end} onChange={(e) => set("deployment_end", e.target.value)} /></div>
         </div>
         <div><Label>Yakıt / Bakım (TRY)</Label><Input type="number" value={form.fuel_maintenance_try} onChange={(e) => set("fuel_maintenance_try", e.target.value)} /></div>
+        <div className="rounded-md border border-border bg-bg p-3">
+          <Checkbox
+            id="add_to_budget"
+            checked={form.add_to_budget}
+            onChange={(v) => set("add_to_budget", v)}
+            label="Bu ekipman maliyetini bütçe takibine otomatik ekle"
+          />
+        </div>
       </div>
     </SideDrawer>
   );

@@ -101,6 +101,32 @@ export function FieldError({ message }: { message?: string }) {
   return <p className="mt-1 text-xs text-danger">{message}</p>;
 }
 
+// --- Checkbox (CR-001-E) ---
+export function Checkbox({
+  checked,
+  onChange,
+  label,
+  id,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label?: React.ReactNode;
+  id?: string;
+}) {
+  return (
+    <label htmlFor={id} className="flex cursor-pointer items-center gap-2 text-sm">
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 accent-[var(--color-primary)]"
+      />
+      {label}
+    </label>
+  );
+}
+
 // --- Skeleton (Section 6.7) ---
 export function Skeleton({ className }: { className?: string }) {
   return <div className={cn("skeleton h-4 w-full", className)} />;

@@ -19,6 +19,8 @@ class EquipmentCreate(BaseModel):
     deployment_end: date | None = None
     fuel_maintenance_try: Decimal = Decimal("0")
     notes: str | None = None
+    # CR-001-E: when true, also create a committed cost_entry for this equipment.
+    add_to_budget: bool = True
 
     @field_validator("ownership_type")
     @classmethod
