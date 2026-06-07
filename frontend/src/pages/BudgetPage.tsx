@@ -7,12 +7,13 @@ import { ImportPreview } from "@/components/ImportPreview";
 import { StatusBadge } from "@/components/StatusBadge";
 import { COST_CATEGORIES, COST_CATEGORY_OPTIONS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
-import { apiGet, apiPost, apiPut, api } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, api } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
-import { Download, Plus, Upload } from "lucide-react";
+import { Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -29,8 +30,31 @@ export default function BudgetPage() {
     per_page: 100,
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editingCost, setEditingCost] = useState<CostEntry | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuth();
+  const canDelete = user?.role === "director" || user?.role === "project_manager";
+
+  const refetchAll = () => {
+    costs.refetch();
+    budget.refetch();
+  };
+
+  const openEdit = (c: CostEntry) => {
+    setEditingCost(c);
+    setDrawerOpen(true);
+  };
+
+  const removeCost = async (c: CostEntry) => {
+    try {
+      await apiDelete(`/projects/${id}/costs/${c.id}`);
+      toast.success("Maliyet kaydı silindi");
+      refetchAll();
+    } catch (e: any) {
+      toast.error(e.message ?? "Silinemedi");
+    }
+  };
 
   const editForecast = async (cat: string, value: string) => {
     try {
@@ -76,6 +100,22 @@ export default function BudgetPage() {
     { key: "total_with_vat_try", header: "KDV Dahil", align: "right", render: (r) => formatCurrency(r.total_with_vat_try) },
     { key: "payment_due_date", header: "Vade", align: "right", render: (r) => formatDate(r.payment_due_date) },
     { key: "payment_status", header: "Durum", render: (r) => <StatusBadge status={r.payment_status} /> },
+    {
+      key: "actions",
+      header: "",
+      render: (r) => (
+        <div className="flex justify-end gap-2">
+          <button onClick={() => openEdit(r)} className="text-text-secondary hover:text-primary" aria-label="Düzenle">
+            <Pencil className="h-4 w-4" />
+          </button>
+          {canDelete && (
+            <button onClick={() => removeCost(r)} className="text-text-secondary hover:text-danger" aria-label="Sil">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ),
+    },
   ];
 
   const onImport = async (file: File) => {
@@ -152,7 +192,13 @@ export default function BudgetPage() {
         <DataTable columns={costColumns} rows={costs.data ?? []} loading={costs.loading} emptyMessage="Bu proje için henüz maliyet girişi yapılmamış." emptyAction={{ label: "Maliyet Ekle", onClick: () => setDrawerOpen(true) }} rowClassName={(r) => (r.payment_status === "overdue" ? "!bg-red-50" : "")} />
       </div>
 
-      <CostDrawer open={drawerOpen} projectId={id!} onClose={() => setDrawerOpen(false)} onSaved={() => { costs.refetch(); budget.refetch(); }} />
+      <CostDrawer
+        open={drawerOpen}
+        projectId={id!}
+        editing={editingCost}
+        onClose={() => { setDrawerOpen(false); setEditingCost(null); }}
+        onSaved={() => { setEditingCost(null); refetchAll(); }}
+      />
 
       {importFile && (
         <ImportPreview
@@ -170,7 +216,7 @@ export default function BudgetPage() {
   );
 }
 
-function CostDrawer({ open, projectId, onClose, onSaved }: { open: boolean; projectId: string; onClose: () => void; onSaved: () => void }) {
+function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: boolean; projectId: string; editing?: CostEntry | null; onClose: () => void; onSaved: () => void }) {
   const empty = {
     entry_date: new Date().toISOString().slice(0, 10),
     entry_type: "actual",
@@ -192,6 +238,29 @@ function CostDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proj
   const extractRef = useRef<HTMLInputElement>(null);
   const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
 
+  // CR-001-G: prefill the form when editing an existing entry.
+  useEffect(() => {
+    if (open && editing) {
+      setForm({
+        entry_date: editing.entry_date ?? empty.entry_date,
+        entry_type: editing.entry_type ?? "actual",
+        cost_category: editing.cost_category ?? "",
+        subcategory: editing.subcategory ?? "",
+        supplier_name: editing.supplier_name ?? "",
+        description: editing.description ?? "",
+        invoice_number: editing.invoice_number ?? "",
+        amount_try: editing.amount_try ?? "",
+        amount_eur: (editing as any).amount_eur ?? "",
+        vat_rate: editing.vat_rate ?? "20",
+        payment_due_date: editing.payment_due_date ?? "",
+        notes: editing.notes ?? "",
+      });
+    } else if (open && !editing) {
+      setForm(empty);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
+
   // CR-001-D: company custom categories appear under their own group.
   useEffect(() => {
     if (open) apiGet<{ id: string; name: string }[]>("/custom-categories").then(({ data }) => setCustomCats(data ?? [])).catch(() => setCustomCats([]));
@@ -204,12 +273,18 @@ function CostDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proj
     }
     setSaving(true);
     try {
-      await apiPost(`/projects/${projectId}/costs`, {
+      const body = {
         ...form,
         amount_eur: form.amount_eur || null,
         payment_due_date: form.payment_due_date || null,
-      });
-      toast.success("Maliyet kaydedildi");
+      };
+      if (editing) {
+        await apiPut(`/projects/${projectId}/costs/${editing.id}`, body);
+        toast.success("Maliyet güncellendi");
+      } else {
+        await apiPost(`/projects/${projectId}/costs`, body);
+        toast.success("Maliyet kaydedildi");
+      }
       setForm(empty);
       setAiFields(new Set());
       onSaved();
@@ -247,7 +322,7 @@ function CostDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proj
   const aiClass = (k: string) => (aiFields.has(k) ? "bg-navy-50" : "");
 
   return (
-    <SideDrawer open={open} title="Maliyet Ekle" onClose={onClose} onSave={save} saving={saving} dirty={!!form.amount_try || !!form.cost_category}>
+    <SideDrawer open={open} title={editing ? "Maliyet Düzenle" : "Maliyet Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.amount_try || !!form.cost_category}>
       <div className="space-y-3">
         <div>
           <Button variant="outline" className="w-full" onClick={() => extractRef.current?.click()}>

@@ -116,6 +116,7 @@ export interface ClientInvoice {
   invoice_type: string;
   description: string | null;
   amount_try: string;
+  vat_rate: string;
   vat_amount_try: string;
   total_with_vat_try: string;
   retention_amount_try: string;

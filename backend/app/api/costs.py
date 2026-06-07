@@ -194,9 +194,9 @@ def delete_cost(
     user: CurrentUser,
     db: Session = Depends(get_db),
 ):
-    # Only directors may delete cost entries (Section 3.2).
-    if user.role != ROLE_DIRECTOR:
-        raise APIError(403, "FORBIDDEN", "Maliyet kaydını yalnızca yönetici silebilir")
+    # CR-001-G: Director and Project Manager may soft-delete cost entries.
+    if user.role not in (ROLE_DIRECTOR, ROLE_PROJECT_MANAGER):
+        raise APIError(403, "FORBIDDEN", "Maliyet kaydını yalnızca yönetici veya proje müdürü silebilir")
     project = get_company_project(db, project_id, user)
     cost = _get_cost(db, project, cost_id)
     old = snapshot(cost)

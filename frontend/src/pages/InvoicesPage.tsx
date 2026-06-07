@@ -3,14 +3,14 @@ import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
 import { StatusBadge } from "@/components/StatusBadge";
-import { INVOICE_TYPE_LABELS, VAT_RATES } from "@/constants";
+import { INVOICE_TYPE_LABELS, STATUS_LABELS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost, apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
 import type { ClientInvoice } from "@/types";
 import { daysUntil, formatCurrency, formatDate, toNumber } from "@/utils/format";
-import { Plus } from "lucide-react";
-import { useState } from "react";
+import { Pencil, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 function Chip({ label, value }: { label: string; value: string }) {
@@ -26,6 +26,7 @@ export default function InvoicesPage() {
   const { id } = useParams();
   const { data, loading, refetch } = useFetch<ClientInvoice[]>(`/projects/${id}/invoices`);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<ClientInvoice | null>(null);
 
   const rows = data ?? [];
   const sum = (k: keyof ClientInvoice) => rows.reduce((s, r) => s + toNumber(r[k] as string), 0);
@@ -45,25 +46,31 @@ export default function InvoicesPage() {
     {
       key: "actions",
       header: "",
-      render: (r) =>
-        r.payment_status !== "paid" && (
-          <Button
-            variant="outline"
-            className="px-2 py-1 text-xs"
-            onClick={async (e) => {
-              e.stopPropagation();
-              try {
-                await apiPut(`/projects/${id}/invoices/${r.id}`, { date_received: new Date().toISOString().slice(0, 10), payment_status: "paid", amount_received_try: r.net_due_try });
-                toast.success("Tahsilat kaydedildi");
-                refetch();
-              } catch (err: any) {
-                toast.error(err.message);
-              }
-            }}
-          >
-            Tahsil Edildi
-          </Button>
-        ),
+      render: (r) => (
+        <div className="flex items-center justify-end gap-2">
+          {r.payment_status !== "paid" && (
+            <Button
+              variant="outline"
+              className="px-2 py-1 text-xs"
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  await apiPut(`/projects/${id}/invoices/${r.id}`, { date_received: new Date().toISOString().slice(0, 10), payment_status: "paid", amount_received_try: r.net_due_try });
+                  toast.success("Tahsilat kaydedildi");
+                  refetch();
+                } catch (err: any) {
+                  toast.error(err.message);
+                }
+              }}
+            >
+              Tahsil Edildi
+            </Button>
+          )}
+          <button onClick={() => { setEditing(r); setOpen(true); }} className="text-text-secondary hover:text-primary" aria-label="Düzenle">
+            <Pencil className="h-4 w-4" />
+          </button>
+        </div>
+      ),
     },
   ];
 
@@ -77,22 +84,54 @@ export default function InvoicesPage() {
         <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
       </div>
       <DataTable columns={columns} rows={rows} loading={loading} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
-      <InvoiceDrawer open={open} projectId={id!} onClose={() => setOpen(false)} onSaved={refetch} />
+      <InvoiceDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
     </div>
   );
 }
 
-function InvoiceDrawer({ open, projectId, onClose, onSaved }: { open: boolean; projectId: string; onClose: () => void; onSaved: () => void }) {
-  const empty = { invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), hakkedis_period: "", invoice_type: "hakedis", description: "", amount_try: "", vat_rate: "20", retention_amount_try: "0", due_date: "" };
+function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: boolean; projectId: string; editing?: ClientInvoice | null; onClose: () => void; onSaved: () => void }) {
+  const empty = { invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), hakkedis_period: "", invoice_type: "hakedis", description: "", amount_try: "", vat_rate: "20", retention_amount_try: "0", due_date: "", payment_status: "unpaid", amount_received_try: "0", date_received: "" };
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
 
+  // CR-001-G: prefill when editing (enables status revert).
+  useEffect(() => {
+    if (open && editing) {
+      setForm({
+        invoice_number: editing.invoice_number,
+        invoice_date: editing.invoice_date,
+        hakkedis_period: editing.hakkedis_period ?? "",
+        invoice_type: editing.invoice_type,
+        description: editing.description ?? "",
+        amount_try: editing.amount_try,
+        vat_rate: editing.vat_rate,
+        retention_amount_try: editing.retention_amount_try,
+        due_date: editing.due_date,
+        payment_status: editing.payment_status,
+        amount_received_try: editing.amount_received_try ?? "0",
+        date_received: editing.date_received ?? "",
+      });
+    } else if (open && !editing) {
+      setForm(empty);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
+
   const save = async () => {
     setSaving(true);
     try {
-      await apiPost(`/projects/${projectId}/invoices`, { ...form, amount_eur: null });
-      toast.success("Fatura kaydedildi");
+      if (editing) {
+        await apiPut(`/projects/${projectId}/invoices/${editing.id}`, {
+          ...form,
+          amount_eur: null,
+          date_received: form.date_received || null,
+        });
+        toast.success("Fatura güncellendi");
+      } else {
+        await apiPost(`/projects/${projectId}/invoices`, { ...form, amount_eur: null });
+        toast.success("Fatura kaydedildi");
+      }
       setForm(empty);
       onSaved();
       onClose();
@@ -104,7 +143,7 @@ function InvoiceDrawer({ open, projectId, onClose, onSaved }: { open: boolean; p
   };
 
   return (
-    <SideDrawer open={open} title="Fatura Ekle" onClose={onClose} onSave={save} saving={saving} dirty={!!form.invoice_number}>
+    <SideDrawer open={open} title={editing ? "Fatura Düzenle" : "Fatura Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.invoice_number}>
       <div className="space-y-3">
         <div><Label required>Fatura No</Label><Input value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
         <div><Label required>Fatura Tarihi</Label><Input type="date" value={form.invoice_date} onChange={(e) => set("invoice_date", e.target.value)} /></div>
@@ -119,6 +158,21 @@ function InvoiceDrawer({ open, projectId, onClose, onSaved }: { open: boolean; p
           <div><Label>Kesinti Tutarı (TRY)</Label><Input type="number" value={form.retention_amount_try} onChange={(e) => set("retention_amount_try", e.target.value)} /></div>
           <div><Label required>Vade Tarihi</Label><Input type="date" value={form.due_date} onChange={(e) => set("due_date", e.target.value)} /></div>
         </div>
+        {editing && (
+          <div className="rounded-md border border-border bg-bg p-3">
+            <Label>Ödeme Durumu</Label>
+            <Select value={form.payment_status} onChange={(e) => set("payment_status", e.target.value)}>
+              {["unpaid", "partial", "paid", "disputed"].map((s) => (
+                <option key={s} value={s}>{STATUS_LABELS[s] ?? s}</option>
+              ))}
+            </Select>
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              <div><Label>Tahsil Edilen (TRY)</Label><Input type="number" value={form.amount_received_try} onChange={(e) => set("amount_received_try", e.target.value)} /></div>
+              <div><Label>Tahsilat Tarihi</Label><Input type="date" value={form.date_received} onChange={(e) => set("date_received", e.target.value)} /></div>
+            </div>
+            <p className="mt-1 text-xs text-text-secondary">"Tahsil Edildi"yi geri almak için durumu "Ödenmedi" veya "Kısmi Ödeme" yapın.</p>
+          </div>
+        )}
       </div>
     </SideDrawer>
   );

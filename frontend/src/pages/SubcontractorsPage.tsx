@@ -4,12 +4,12 @@ import { Button, Card, CardBody, Input, Label, Select, Textarea } from "@/compon
 import { SideDrawer } from "@/components/SideDrawer";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useFetch } from "@/hooks/useFetch";
-import { apiPost } from "@/lib/api";
+import { apiPost, apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
 import type { Subcontractor } from "@/types";
 import { formatCurrency, toNumber } from "@/utils/format";
-import { Plus } from "lucide-react";
-import { useState } from "react";
+import { Pencil, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
 function Chip({ label, value }: { label: string; value: string }) {
@@ -25,6 +25,7 @@ export default function SubcontractorsPage() {
   const { id } = useParams();
   const { data, loading, refetch } = useFetch<Subcontractor[]>(`/projects/${id}/subcontractors`);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Subcontractor | null>(null);
   const subs = data ?? [];
 
   return (
@@ -49,7 +50,12 @@ export default function SubcontractorsPage() {
                 <CardBody>
                   <div className="flex items-start justify-between">
                     <h3 className="font-semibold text-primary">{s.name}</h3>
-                    <StatusBadge status={s.status} />
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={s.status} />
+                      <button onClick={() => { setEditing(s); setOpen(true); }} className="text-text-secondary hover:text-primary" aria-label="Düzenle">
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                   <p className="mt-1 text-xs text-text-secondary">{s.scope_of_work ?? "—"}</p>
                   <div className="mt-3 space-y-1 text-sm">
@@ -69,7 +75,7 @@ export default function SubcontractorsPage() {
           })}
         </div>
       )}
-      <SubDrawer open={open} projectId={id!} onClose={() => setOpen(false)} onSaved={refetch} />
+      <SubDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
     </div>
   );
 }
@@ -78,16 +84,41 @@ function Row({ label, value }: { label: string; value: string }) {
   return <div className="flex justify-between"><span className="text-text-secondary">{label}</span><span className="tabular font-medium">{value}</span></div>;
 }
 
-function SubDrawer({ open, projectId, onClose, onSaved }: { open: boolean; projectId: string; onClose: () => void; onSaved: () => void }) {
-  const empty = { name: "", scope_of_work: "", contract_value_try: "", retention_pct: "10", contact_name: "", contact_phone: "", contact_email: "", notes: "" };
+function SubDrawer({ open, projectId, editing, onClose, onSaved }: { open: boolean; projectId: string; editing?: Subcontractor | null; onClose: () => void; onSaved: () => void }) {
+  const empty = { name: "", scope_of_work: "", contract_value_try: "", retention_pct: "10", contact_name: "", contact_phone: "", contact_email: "", notes: "", status: "active" };
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    if (open && editing) {
+      setForm({
+        name: editing.name,
+        scope_of_work: editing.scope_of_work ?? "",
+        contract_value_try: editing.contract_value_try,
+        retention_pct: editing.retention_pct,
+        contact_name: editing.contact_name ?? "",
+        contact_phone: editing.contact_phone ?? "",
+        contact_email: editing.contact_email ?? "",
+        notes: (editing as any).notes ?? "",
+        status: editing.status,
+      });
+    } else if (open && !editing) {
+      setForm(empty);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
+
   const save = async () => {
     setSaving(true);
     try {
-      await apiPost(`/projects/${projectId}/subcontractors`, form);
-      toast.success("Alt yüklenici kaydedildi");
+      if (editing) {
+        await apiPut(`/projects/${projectId}/subcontractors/${editing.id}`, form);
+        toast.success("Alt yüklenici güncellendi");
+      } else {
+        await apiPost(`/projects/${projectId}/subcontractors`, form);
+        toast.success("Alt yüklenici kaydedildi");
+      }
       setForm(empty);
       onSaved();
       onClose();
@@ -98,7 +129,7 @@ function SubDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proje
     }
   };
   return (
-    <SideDrawer open={open} title="Alt Yüklenici Ekle" onClose={onClose} onSave={save} saving={saving} dirty={!!form.name}>
+    <SideDrawer open={open} title={editing ? "Alt Yüklenici Düzenle" : "Alt Yüklenici Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.name}>
       <div className="space-y-3">
         <div><Label required>Ad</Label><Input value={form.name} onChange={(e) => set("name", e.target.value)} /></div>
         <div><Label>Kapsam</Label><Textarea value={form.scope_of_work} onChange={(e) => set("scope_of_work", e.target.value)} /></div>
@@ -106,6 +137,14 @@ function SubDrawer({ open, projectId, onClose, onSaved }: { open: boolean; proje
           <div><Label required>Sözleşme Değeri (TRY)</Label><Input type="number" value={form.contract_value_try} onChange={(e) => set("contract_value_try", e.target.value)} /></div>
           <div><Label>Kesinti %</Label><Input type="number" value={form.retention_pct} onChange={(e) => set("retention_pct", e.target.value)} /></div>
         </div>
+        {editing && (
+          <div><Label>Durum</Label><Select value={form.status} onChange={(e) => set("status", e.target.value)}>
+            <option value="active">Aktif</option>
+            <option value="completed">Tamamlandı</option>
+            <option value="disputed">İhtilaflı</option>
+            <option value="terminated">Feshedildi</option>
+          </Select></div>
+        )}
         <div><Label>İrtibat Kişisi</Label><Input value={form.contact_name} onChange={(e) => set("contact_name", e.target.value)} /></div>
         <div className="grid grid-cols-2 gap-3">
           <div><Label>Telefon</Label><Input value={form.contact_phone} onChange={(e) => set("contact_phone", e.target.value)} /></div>

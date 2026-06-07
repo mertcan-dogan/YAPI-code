@@ -1,7 +1,7 @@
 """Equipment log router (Section 2.5, 4.8)."""
 import uuid
 
-from fastapi import APIRouter, Depends, Request, Request
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -11,8 +11,8 @@ from app.db import get_db
 from app.deps import CurrentUser
 from app.models.cost_entry import CostEntry
 from app.models.equipment_log import EquipmentLog
-from app.responses import success
-from app.schemas.equipment import EquipmentCreate, EquipmentOut
+from app.responses import APIError, success
+from app.schemas.equipment import EquipmentCreate, EquipmentOut, EquipmentUpdate
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.financials import project_financials
@@ -99,6 +99,32 @@ def add_equipment(
     db.flush()
     if add_to_budget:
         _create_budget_entry_for_equipment(db, user, project.id, e)
+    db.commit()
+    db.refresh(e)
+    return success(_serialize(e))
+
+
+@router.put("/projects/{project_id}/equipment/{equipment_id}")
+def update_equipment(
+    project_id: uuid.UUID,
+    equipment_id: uuid.UUID,
+    payload: EquipmentUpdate,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """CR-001-G: edit an equipment record."""
+    project = get_company_project(db, project_id, user)
+    e = db.execute(
+        select(EquipmentLog).where(
+            EquipmentLog.id == equipment_id,
+            EquipmentLog.project_id == project.id,
+            EquipmentLog.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if e is None:
+        raise APIError(404, "NOT_FOUND", "Ekipman bulunamadı")
+    for k, v in payload.model_dump(exclude_unset=True).items():
+        setattr(e, k, v)
     db.commit()
     db.refresh(e)
     return success(_serialize(e))
