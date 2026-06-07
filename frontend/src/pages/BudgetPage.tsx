@@ -3,6 +3,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
+import { ImportPreview } from "@/components/ImportPreview";
 import { StatusBadge } from "@/components/StatusBadge";
 import { COST_CATEGORIES, COST_CATEGORY_OPTIONS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
@@ -28,6 +29,7 @@ export default function BudgetPage() {
     per_page: 100,
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const editForecast = async (cat: string, value: string) => {
@@ -79,13 +81,23 @@ export default function BudgetPage() {
   const onImport = async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
+    // CR-001-F: no longer used (kept for reference) — preview flow handles import.
+    void fd;
+  };
+
+  // CR-001-F/G: download the template with the auth header (fixes the 401 that
+  // window.open caused — it cannot attach the Bearer token).
+  const downloadTemplate = async () => {
     try {
-      const res = await api.post(`/projects/${id}/import/confirm`, fd);
-      toast.success(`${res.data.data.imported} kayıt içe aktarıldı, ${res.data.data.skipped} atlandı`);
-      costs.refetch();
-      budget.refetch();
+      const res = await api.get(`/projects/${id}/costs/import/template`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "yapi-maliyet-sablonu.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e: any) {
-      toast.error(e.message ?? "İçe aktarma başarısız");
+      toast.error(e.message ?? "Şablon indirilemedi");
     }
   };
 
@@ -95,13 +107,22 @@ export default function BudgetPage() {
         title="Bütçe & Maliyetler"
         action={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => window.open(`${api.defaults.baseURL}/projects/${id}/import/template`, "_blank")}>
+            <Button variant="outline" onClick={downloadTemplate}>
               <Download className="h-4 w-4" /> Şablon
             </Button>
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               <Upload className="h-4 w-4" /> Excel'den İçe Aktar
             </Button>
-            <input ref={fileRef} type="file" accept=".xlsx" hidden onChange={(e) => e.target.files?.[0] && onImport(e.target.files[0])} />
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx"
+              hidden
+              onChange={(e) => {
+                if (e.target.files?.[0]) setImportFile(e.target.files[0]);
+                e.target.value = "";
+              }}
+            />
             <Button onClick={() => setDrawerOpen(true)}>
               <Plus className="h-4 w-4" /> Maliyet Ekle
             </Button>
@@ -132,6 +153,19 @@ export default function BudgetPage() {
       </div>
 
       <CostDrawer open={drawerOpen} projectId={id!} onClose={() => setDrawerOpen(false)} onSaved={() => { costs.refetch(); budget.refetch(); }} />
+
+      {importFile && (
+        <ImportPreview
+          projectId={id!}
+          file={importFile}
+          onClose={() => setImportFile(null)}
+          onDone={() => {
+            setImportFile(null);
+            costs.refetch();
+            budget.refetch();
+          }}
+        />
+      )}
     </div>
   );
 }

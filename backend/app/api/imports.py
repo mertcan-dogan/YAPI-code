@@ -1,14 +1,22 @@
-"""Excel import router (Section 9.1)."""
+"""Excel import router (Section 9.1 + CR-001-F).
+
+Flow:
+  GET  /projects/{id}/costs/import/template  -> download .xlsx template
+  POST /projects/{id}/costs/import/preview   -> parse+validate a file, NO save
+  POST /projects/{id}/costs/import/confirm   -> bulk-save edited rows (all-or-nothing)
+"""
 import uuid
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import CurrentUser
 from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
+from app.schemas.cost import CostEntryCreate
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
@@ -17,7 +25,19 @@ from app.services.excel_import import build_template, validate_rows
 router = APIRouter(tags=["imports"])
 
 
-@router.get("/projects/{project_id}/import/template")
+class ImportConfirmRequest(BaseModel):
+    rows: list[dict]
+
+
+def _serialize_row(r: dict) -> dict:
+    data = {
+        k: (str(v) if hasattr(v, "isoformat") or hasattr(v, "quantize") else v)
+        for k, v in r["data"].items()
+    }
+    return {"row": r["row"], "valid": r["valid"], "errors": r["errors"], "data": data}
+
+
+@router.get("/projects/{project_id}/costs/import/template")
 def download_template(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     get_company_project(db, project_id, user)
     data = build_template()
@@ -28,7 +48,7 @@ def download_template(project_id: uuid.UUID, user: CurrentUser, db: Session = De
     )
 
 
-@router.post("/projects/{project_id}/import/preview")
+@router.post("/projects/{project_id}/costs/import/preview")
 async def preview_import(
     project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db), file: UploadFile = File(...)
 ):
@@ -39,34 +59,48 @@ async def preview_import(
     except Exception as exc:
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
     valid = sum(1 for r in rows if r["valid"])
-    # Serialise Decimals/dates for transport.
-    out = []
-    for r in rows:
-        d = {k: (str(v) if hasattr(v, "isoformat") or hasattr(v, "quantize") else v) for k, v in r["data"].items()}
-        out.append({"row": r["row"], "valid": r["valid"], "errors": r["errors"], "data": d})
+    out = [_serialize_row(r) for r in rows]
     return success(out, meta={"total": len(rows), "valid": valid, "invalid": len(rows) - valid})
 
 
-@router.post("/projects/{project_id}/import/confirm")
-async def confirm_import(
-    project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db), file: UploadFile = File(...)
+@router.post("/projects/{project_id}/costs/import/confirm")
+def confirm_import(
+    project_id: uuid.UUID,
+    payload: ImportConfirmRequest,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
 ):
+    """All-or-nothing bulk save of (possibly edited) rows. Validates every row
+    server-side; if ANY row is invalid nothing is saved (CR-001-F)."""
     project = get_company_project(db, project_id, user)
-    data = await file.read()
-    rows = validate_rows(data)
+    if not payload.rows:
+        raise APIError(422, "VALIDATION_ERROR", "İçe aktarılacak satır yok")
+
+    validated: list[CostEntryCreate] = []
+    errors: list[dict] = []
+    for idx, raw in enumerate(payload.rows):
+        try:
+            validated.append(CostEntryCreate(**raw))
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            msg = first.get("msg", "Geçersiz satır").replace("Value error, ", "")
+            errors.append({"row": idx + 1, "field": (first.get("loc") or [None])[-1], "message": msg})
+
+    if errors:
+        # Reject the whole batch — partial import is not allowed.
+        raise APIError(422, "VALIDATION_ERROR", f"{len(errors)} satır geçersiz. İçe aktarma iptal edildi.")
+
+    # Single transaction: either all rows persist or none.
     imported = 0
-    skipped = 0
-    for r in rows:
-        if not r["valid"]:
-            skipped += 1
-            continue
-        d = r["data"]
+    for item in validated:
+        d = item.model_dump()
         vat = vat_amount(d["amount_try"], d["vat_rate"])
         twv = total_with_vat(d["amount_try"], d["vat_rate"])
+        if d.get("payment_status") == "paid" and not d.get("amount_paid_try"):
+            d["amount_paid_try"] = twv
         entry = CostEntry(
             project_id=project.id, company_id=user.company_id, created_by=user.id,
-            entry_type="actual", vat_amount_try=vat, total_with_vat_try=twv,
-            amount_paid_try=twv if d["payment_status"] == "paid" else 0, **d,
+            vat_amount_try=vat, total_with_vat_try=twv, **d,
         )
         db.add(entry)
         db.flush()
@@ -76,4 +110,4 @@ async def confirm_import(
         )
         imported += 1
     db.commit()
-    return success({"imported": imported, "skipped": skipped})
+    return success({"imported": imported, "skipped": 0})
