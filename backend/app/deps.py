@@ -70,6 +70,24 @@ def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def get_token_claims(
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict:
+    """Verify the JWT and return its claims WITHOUT requiring a public.users row.
+
+    Used by the registration/provisioning endpoint, where the user has just
+    signed up in Supabase Auth but has no application row yet.
+    """
+    token = _extract_bearer(authorization)
+    try:
+        return decode_token(token)
+    except TokenError as exc:
+        raise APIError(401, "UNAUTHENTICATED", str(exc))
+
+
+TokenClaims = Annotated[dict, Depends(get_token_claims)]
+
+
 def require_roles(*allowed: str):
     """Dependency factory enforcing that the current user holds one of the
     allowed roles, else 403 (Section 3.2)."""

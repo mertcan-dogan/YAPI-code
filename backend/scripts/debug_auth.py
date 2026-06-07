@@ -84,20 +84,20 @@ def main() -> None:
                 print(f"      kid={kid} alg={alg} kty={kty} crv={crv}")
             token_kid = header.get("kid")
             if token_kid and token_kid not in [k[0] for k in kids]:
-                print(f"  !! token kid={token_kid} NOT present in JWKS — key rotation/mismatch")
+                print(f"  [WARN] token kid={token_kid} NOT present in JWKS — key rotation/mismatch")
         except Exception as exc:  # noqa: BLE001
-            print(f"  !! Could not fetch JWKS: {type(exc).__name__}: {exc}")
+            print(f"  [WARN] Could not fetch JWKS: {type(exc).__name__}: {exc}")
 
     print("\n=== VERIFICATION (via app.security.decode_token) ===")
     security.reset_jwks_client()
     try:
         payload = security.decode_token(token)
-        print("  ✅ SUCCESS — token verified.")
+        print("  [OK] SUCCESS — token verified.")
         b("sub", payload.get("sub"))
         print("\n  Next: confirm a row exists in public.users with id =", payload.get("sub"))
         print("  (a valid token with no matching users row also yields 401 on /auth/me).")
     except Exception as exc:  # noqa: BLE001
-        print(f"  ❌ FAILED — {type(exc).__name__}: {exc}")
+        print(f"  [ERROR] FAILED — {type(exc).__name__}: {exc}")
         print("\n  Full traceback:")
         traceback.print_exc()
 
