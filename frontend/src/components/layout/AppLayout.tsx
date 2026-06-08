@@ -4,6 +4,7 @@ import {
   BarChart3,
   Bell,
   Calculator,
+  ChevronDown,
   FileBarChart,
   FileText,
   FolderKanban,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
+import { apiGet } from "@/lib/api";
 
 const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
@@ -102,6 +104,60 @@ function Sidebar() {
   );
 }
 
+// CR-002-G: clickable project selector in the top-left.
+function ProjectSelector() {
+  const navigate = useNavigate();
+  const params = useParams();
+  const [open, setOpen] = React.useState(false);
+  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([]);
+
+  React.useEffect(() => {
+    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+      .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active")))
+      .catch(() => setProjects([]));
+  }, []);
+
+  const current = projects.find((p) => p.id === params.id);
+
+  return (
+    <div className="relative hidden lg:block">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-text-primary hover:bg-bg"
+      >
+        <FolderKanban className="h-4 w-4 text-primary" />
+        <span className="max-w-[200px] truncate">{current?.name ?? "Proje Seç"}</span>
+        <ChevronDown className="h-4 w-4 text-text-secondary" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-11 z-20 max-h-80 w-64 overflow-auto rounded-md border border-border bg-surface py-1 shadow-lg">
+            {projects.length === 0 && <div className="px-3 py-2 text-xs text-text-secondary">Aktif proje yok</div>}
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => { setOpen(false); navigate(`/projects/${p.id}/dashboard`); }}
+                className={cn("flex w-full items-center px-3 py-2 text-left text-sm hover:bg-navy-50", p.id === params.id && "font-semibold text-primary")}
+              >
+                <span className="truncate">{p.name}</span>
+              </button>
+            ))}
+            <div className="mt-1 border-t border-border">
+              <button
+                onClick={() => { setOpen(false); navigate("/projects/new"); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary-light hover:bg-navy-50"
+              >
+                <Plus className="h-4 w-4" /> Yeni Proje
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function TopNav() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -111,6 +167,7 @@ function TopNav() {
       <div className="flex items-center gap-3">
         <Menu className="h-5 w-5 text-text-secondary lg:hidden" />
         <span className="font-semibold text-primary lg:hidden">Yapı</span>
+        <ProjectSelector />
       </div>
       <div className="relative flex items-center gap-3">
         <Link to="/reminders" className="text-text-secondary hover:text-primary">
