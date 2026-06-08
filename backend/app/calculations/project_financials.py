@@ -50,6 +50,7 @@ def compute_project_financials(
     client_invoices: list[dict],
     budget_line_items: list[dict],
     today: date | None = None,
+    extra_category_keys: list[str] | None = None,
 ) -> dict:
     today = today or date.today()
 
@@ -84,7 +85,7 @@ def compute_project_financials(
     remaining_budget = money(revised_budget - total_committed)
 
     # --- Per-category budget table (Section 4.3) ---
-    categories = _compute_category_rows(cost_entries, budget_line_items, today)
+    categories = _compute_category_rows(cost_entries, budget_line_items, today, extra_category_keys)
     forecast_from_budget = money(sum((c["forecast_final"] for c in categories), ZERO))
     categories_over_100pct = sum(1 for c in categories if c["pct_spent"] > HUNDRED)
     categories_over_95pct = sum(1 for c in categories if c["pct_spent"] >= Decimal("95"))
@@ -175,9 +176,17 @@ def compute_project_financials(
 
 
 def _compute_category_rows(
-    cost_entries: list[dict], budget_line_items: list[dict], today: date
+    cost_entries: list[dict],
+    budget_line_items: list[dict],
+    today: date,
+    extra_category_keys: list[str] | None = None,
 ) -> list[dict]:
-    """Budget-vs-actual rows per cost category (Section 4.3)."""
+    """Budget-vs-actual rows per cost category (Section 4.3 / CR-002-A).
+
+    All 15 standard categories are ALWAYS returned (even with no activity), plus
+    any company custom categories (extra_category_keys) and any categories that
+    appear in the data or budget rows.
+    """
     budgets = {b["cost_category"]: b for b in budget_line_items}
 
     # Aggregate cost entries by category.
@@ -196,9 +205,13 @@ def _compute_category_rows(
         a["paid"] += D(e.get("amount_paid_try"))
 
     rows: list[dict] = []
-    # Iterate over every known category plus any unknown ones present in data.
+    # CR-002-A: always include all 15 standard categories, plus custom categories,
+    # plus any category present in budgets or cost data.
     all_cats = list(COST_CATEGORY_KEYS)
-    for cat in agg:
+    for cat in (extra_category_keys or []):
+        if cat not in all_cats:
+            all_cats.append(cat)
+    for cat in list(agg) + list(budgets):
         if cat not in all_cats:
             all_cats.append(cat)
 
@@ -226,9 +239,8 @@ def _compute_category_rows(
         else:
             status = "green"
 
-        # Skip categories that have neither budget nor activity.
-        if revised == ZERO and committed == ZERO and invoiced == ZERO and paid == ZERO and forecast_raw is None:
-            continue
+        # CR-002-A: do NOT skip empty categories — all standard/custom categories
+        # are always shown so the user can budget against them.
 
         rows.append(
             {

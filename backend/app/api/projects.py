@@ -152,18 +152,41 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
 @router.get("/projects/{project_id}/budget")
 def get_budget(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     project = get_company_project(db, project_id, user)
-    f = fin_service.project_financials(db, project)
+    # CR-002-A: include company custom categories so they always appear in the table.
+    from app.models.custom_category import CustomCostCategory
+
+    custom = db.execute(
+        select(CustomCostCategory).where(
+            CustomCostCategory.company_id == user.company_id,
+            CustomCostCategory.is_deleted.is_(False),
+        )
+    ).scalars().all()
+    custom_names = [c.name for c in custom]
+    f = fin_service.project_financials(db, project, extra_category_keys=custom_names)
+
+    # Totals across the category rows (CR-002-A totals row).
+    from app.calculations.money import D, money
+
+    cats = f["categories"]
     rows = []
-    for c in f["categories"]:
+    tot_revised = tot_committed = tot_invoiced = tot_paid = D(0)
+    for c in cats:
         row = _jsonify(c)
         row["label_tr"] = COST_CATEGORIES.get(c["cost_category"], c["cost_category"])
         rows.append(row)
+        tot_revised += c["revised_budget_try"]
+        tot_committed += c["committed_try"]
+        tot_invoiced += c["invoiced_try"]
+        tot_paid += c["paid_try"]
     return success(
         {
             "categories": rows,
             "totals": {
-                "revised_budget_try": str(f["revised_budget_try"]),
-                "committed_try": str(f["total_committed_try"]),
+                "revised_budget_try": str(money(tot_revised)),
+                "committed_try": str(money(tot_committed)),
+                "invoiced_try": str(money(tot_invoiced)),
+                "paid_try": str(money(tot_paid)),
+                "remaining_try": str(money(tot_revised - tot_committed)),
                 "forecast_final_cost_try": str(f["forecast_final_cost_try"]),
             },
         }
@@ -181,7 +204,19 @@ def update_budget(
 ):
     project = get_company_project(db, project_id, user)
     if category not in COST_CATEGORY_KEYS:
-        raise APIError(422, "VALIDATION_ERROR", "Geçersiz kategori", field="category")
+        # CR-002-A: allow editing the budget of a company custom category too.
+        from app.models.custom_category import CustomCostCategory
+
+        norm = " ".join(category.strip().lower().split())
+        is_custom = db.execute(
+            select(CustomCostCategory).where(
+                CustomCostCategory.company_id == user.company_id,
+                CustomCostCategory.name_normalized == norm,
+                CustomCostCategory.is_deleted.is_(False),
+            )
+        ).scalar_one_or_none()
+        if is_custom is None:
+            raise APIError(422, "VALIDATION_ERROR", "Geçersiz kategori", field="category")
     line = db.execute(
         select(BudgetLineItem).where(
             BudgetLineItem.project_id == project.id,

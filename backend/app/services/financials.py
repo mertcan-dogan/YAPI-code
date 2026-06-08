@@ -83,9 +83,13 @@ def load_project_inputs(db: Session, project: Project) -> tuple[list[dict], list
     return cost_dicts, invoice_dicts, budget_dicts
 
 
-def project_financials(db: Session, project: Project, today: date | None = None) -> dict:
+def project_financials(
+    db: Session, project: Project, today: date | None = None, extra_category_keys: list[str] | None = None
+) -> dict:
     costs, invoices, budgets = load_project_inputs(db, project)
-    return compute_project_financials(_project_dict(project), costs, invoices, budgets, today=today)
+    return compute_project_financials(
+        _project_dict(project), costs, invoices, budgets, today=today, extra_category_keys=extra_category_keys
+    )
 
 
 def project_cashflow(db: Session, project: Project, today: date | None = None) -> list[dict]:

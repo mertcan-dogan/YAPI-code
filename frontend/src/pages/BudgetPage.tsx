@@ -66,9 +66,33 @@ export default function BudgetPage() {
     }
   };
 
+  // CR-002-A: edit the revised budget inline (saved as original_budget_try).
+  const editRevised = async (cat: string, value: string) => {
+    try {
+      await apiPut(`/projects/${id}/budget/${cat}`, { original_budget_try: value || "0", approved_variations_try: "0" });
+      toast.success("Revize bütçe güncellendi");
+      budget.refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    }
+  };
+
   const budgetColumns: Column<BudgetCategoryRow>[] = [
     { key: "label_tr", header: "Kategori", render: (r) => r.label_tr ?? COST_CATEGORIES[r.cost_category] },
-    { key: "revised_budget_try", header: "Revize Bütçe", align: "right", render: (r) => formatCurrency(r.revised_budget_try) },
+    {
+      key: "revised_budget_try",
+      header: "Revize Bütçe",
+      align: "right",
+      render: (r) => (
+        <Input
+          defaultValue={toNumber(r.revised_budget_try) ? r.revised_budget_try : ""}
+          type="number"
+          placeholder="0"
+          className="w-32 bg-amber-50 text-right"
+          onBlur={(e) => e.target.value !== r.revised_budget_try && editRevised(r.cost_category, e.target.value)}
+        />
+      ),
+    },
     { key: "committed_try", header: "Taahhüt", align: "right", render: (r) => formatCurrency(r.committed_try) },
     { key: "invoiced_try", header: "Faturalanan", align: "right", render: (r) => formatCurrency(r.invoiced_try) },
     { key: "paid_try", header: "Ödenen", align: "right", render: (r) => formatCurrency(r.paid_try) },
@@ -172,6 +196,16 @@ export default function BudgetPage() {
 
       <h2 className="mb-2 text-lg font-semibold text-primary">Bütçe & Gerçekleşen</h2>
       <DataTable columns={budgetColumns} rows={budget.data?.categories ?? []} loading={budget.loading} emptyMessage="Bu proje için henüz bütçe verisi yok." />
+      {budget.data?.totals && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-8 gap-y-1 rounded-md bg-primary px-4 py-3 text-sm text-white">
+          <span className="font-semibold">Toplam</span>
+          <span className="tabular">Revize Bütçe: <b>{formatCurrency(budget.data.totals.revised_budget_try)}</b></span>
+          <span className="tabular">Taahhüt: <b>{formatCurrency(budget.data.totals.committed_try)}</b></span>
+          <span className="tabular">Faturalanan: <b>{formatCurrency(budget.data.totals.invoiced_try)}</b></span>
+          <span className="tabular">Ödenen: <b>{formatCurrency(budget.data.totals.paid_try)}</b></span>
+          <span className="tabular">Genel Kalan: <b>{formatCurrency(budget.data.totals.remaining_try)}</b></span>
+        </div>
+      )}
 
       <div className="mt-6 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-primary">Maliyet Girişleri</h2>
