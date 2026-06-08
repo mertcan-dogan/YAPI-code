@@ -54,6 +54,11 @@ def _normalise_category(value) -> str | None:
 @router.post("/projects/{project_id}/ai-import")
 async def ai_import(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db), file: UploadFile = File(...)):
     get_company_project(db, project_id, user)
+    # CR-002-I: AI import limited to 5 requests/min/user (Claude cost).
+    from app.config import settings
+    from app.middleware.limits import enforce_user_limit
+
+    enforce_user_limit(str(user.id), "ai-import", settings.ai_import_rate_per_minute)
     if not ai_service.is_available():
         raise APIError(503, "AI_UNAVAILABLE", "AI şu an kullanılamıyor. Standart içe aktarma kullanın.")
     data = await file.read()

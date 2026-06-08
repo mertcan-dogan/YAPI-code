@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr
 from slugify import slugify
 from sqlalchemy import select
@@ -47,7 +47,15 @@ def _unique_slug(db: Session, name: str) -> str:
 
 
 @router.post("/login")
-def login(payload: LoginRequest):
+def login(payload: LoginRequest, request: Request):
+    from app.middleware.limits import clear_failed_logins, is_login_locked, record_failed_login
+
+    ip = request.client.host if request.client else "unknown"
+    # CR-002-I: lock the IP after too many failed attempts.
+    locked = is_login_locked(ip)
+    if locked:
+        raise APIError(429, "ACCOUNT_LOCKED", f"Çok fazla başarısız deneme. {locked} saniye sonra tekrar deneyin.")
+
     if not settings.supabase_url or not settings.supabase_anon_key:
         raise APIError(503, "AUTH_UNAVAILABLE", "Kimlik doğrulama servisi yapılandırılmadı")
 
@@ -66,8 +74,10 @@ def login(payload: LoginRequest):
         raise APIError(503, "AUTH_UNAVAILABLE", "Kimlik doğrulama servisine ulaşılamadı")
 
     if resp.status_code != 200:
+        record_failed_login(ip)
         raise APIError(401, "INVALID_CREDENTIALS", "E-posta veya şifre hatalı")
 
+    clear_failed_logins(ip)  # successful login resets the counter
     session = resp.json()
     # Best-effort: stamp last_login_at.
     user_id = (session.get("user") or {}).get("id")

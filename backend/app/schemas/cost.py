@@ -81,6 +81,14 @@ class CostEntryCreate(BaseModel):
             raise ValueError("Notlar en fazla 1000 karakter olabilir")
         return v
 
+    # CR-002-I: strip any HTML from free-text fields (XSS protection).
+    @field_validator("description", "supplier_name", "subcategory", "notes", "invoice_number")
+    @classmethod
+    def _sanitize(cls, v):
+        from app.utils.sanitize import sanitize_text
+
+        return sanitize_text(v)
+
     @model_validator(mode="after")
     def _due(self):
         if self.payment_due_date and self.payment_due_date < self.entry_date:

@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # Security
     rate_limit_per_ip_per_minute: int = 100
     rate_limit_per_user_per_minute: int = 1000
+    # CR-002-I targeted limits
+    login_max_attempts: int = 5
+    login_lockout_seconds: int = 15 * 60
+    import_rate_per_minute: int = 10
+    ai_import_rate_per_minute: int = 5
+    # Field encryption (Fernet passphrase). Optional; never exposed to frontend.
+    encryption_key: str = ""
+    # Require directors to have MFA (enforced via the token AAL claim).
+    require_director_mfa: bool = False
 
     @property
     def is_production(self) -> bool:

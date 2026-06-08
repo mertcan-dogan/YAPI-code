@@ -8,6 +8,7 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from app.config import settings
 from app.middleware.errors import register_error_handlers
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 # Routers
 from app.api import (
@@ -43,6 +44,7 @@ app = FastAPI(
 if settings.is_production:
     app.add_middleware(HTTPSRedirectMiddleware)  # redirect HTTP -> HTTPS
 
+app.add_middleware(SecurityHeadersMiddleware)  # CR-002-I: security headers
 app.add_middleware(RateLimitMiddleware)
 
 # CORS: only allow the Vercel frontend origin(s) (Section 8.1).

@@ -18,6 +18,18 @@ ALLOWED = {
 }
 BUCKET = "documents"
 
+# CR-002-I: magic-byte signatures to defeat extension/content-type spoofing.
+_MAGIC = {
+    "application/pdf": (b"%PDF",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+}
+
+
+def _content_matches(content_type: str, data: bytes) -> bool:
+    sigs = _MAGIC.get(content_type, ())
+    return any(data.startswith(sig) for sig in sigs)
+
 
 @router.post("/document")
 async def upload_document(user: CurrentUser, file: UploadFile = File(...)):
@@ -30,6 +42,9 @@ async def upload_document(user: CurrentUser, file: UploadFile = File(...)):
     data = await file.read()
     if len(data) > MAX_BYTES:
         raise APIError(422, "VALIDATION_ERROR", "Dosya en fazla 10MB olabilir", field="file")
+    # CR-002-I: verify the real file signature, not just the declared type.
+    if not _content_matches(file.content_type, data):
+        raise APIError(422, "VALIDATION_ERROR", "Dosya içeriği belirtilen türle uyuşmuyor", field="file")
 
     ext = ALLOWED[file.content_type]
     # Namespacing by company keeps tenant files isolated within the bucket.

@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { Toaster } from "./components/Toaster";
@@ -20,6 +20,7 @@ import RemindersPage from "./pages/RemindersPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SubcontractorsPage from "./pages/SubcontractorsPage";
+import TwoFactorSetupPage from "./pages/TwoFactorSetupPage";
 
 function FullScreenLoader() {
   return (
@@ -31,8 +32,22 @@ function FullScreenLoader() {
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const [mfaOk, setMfaOk] = useState(true);
+
+  // CR-002-I 10.1: directors must enrol in 2FA when enforcement is enabled.
+  useEffect(() => {
+    const enforce = import.meta.env.VITE_REQUIRE_DIRECTOR_MFA === "1";
+    if (!enforce || !user || user.role !== "director") return;
+    import("./lib/supabase").then(async ({ supabase }) => {
+      const { data } = await supabase.auth.mfa.listFactors();
+      const verified = (data?.totp ?? []).some((f: any) => f.status === "verified");
+      setMfaOk(verified);
+    });
+  }, [user]);
+
   if (loading) return <FullScreenLoader />;
   if (!user) return <Navigate to="/login" replace />;
+  if (!mfaOk && window.location.pathname !== "/2fa-setup") return <Navigate to="/2fa-setup" replace />;
   return <>{children}</>;
 }
 
@@ -69,6 +84,7 @@ export default function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/settings/*" element={<SettingsPage />} />
+          <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

@@ -103,8 +103,10 @@ def client(session_factory):
     # Reset the in-memory rate-limit window so tests don't accumulate hits across
     # the suite (the TestClient shares a single client IP).
     from app.middleware.rate_limit import reset_rate_limits
+    from app.middleware.limits import reset_limits
 
     reset_rate_limits()
+    reset_limits()
 
     holder: dict = {"user_id": None}
 

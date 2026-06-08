@@ -72,6 +72,11 @@ async def preview_import(
     sheet_name: str | None = Form(None),
 ):
     get_company_project(db, project_id, user)
+    # CR-002-I: Excel import limited to 10 requests/min/user.
+    from app.config import settings
+    from app.middleware.limits import enforce_user_limit
+
+    enforce_user_limit(str(user.id), "import", settings.import_rate_per_minute)
     data = await file.read()
     try:
         result = validate_rows(data, sheet_name=sheet_name)
