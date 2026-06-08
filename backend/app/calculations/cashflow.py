@@ -48,27 +48,32 @@ def compute_monthly_cashflow(
     current_key = _month_key(today)
     months = build_month_window(window=window, anchor=today, back=back)
 
-    # Bucket sums by month key.
+    # Bucket sums by month key (CR-002-B).
     planned_out: dict[str, Decimal] = {}
     actual_out: dict[str, Decimal] = {}
     planned_in: dict[str, Decimal] = {}
     actual_in: dict[str, Decimal] = {}
 
     for e in cost_entries:
-        if e.get("entry_type") == "forecast" and e.get("entry_date"):
+        # Actual outflow: a cost is realised when the invoice is dated (entry_date),
+        # regardless of whether it has been paid yet — uses total incl. VAT.
+        if e.get("entry_date"):
             k = _month_key(e["entry_date"])
-            planned_out[k] = planned_out.get(k, ZERO) + D(e.get("amount_try"))
-        if e.get("date_paid"):
-            k = _month_key(e["date_paid"])
-            actual_out[k] = actual_out.get(k, ZERO) + D(e.get("amount_paid_try"))
+            actual_out[k] = actual_out.get(k, ZERO) + D(e.get("total_with_vat_try"))
+        # Planned outflow: still-unpaid costs land in their payment_due_date month.
+        if e.get("payment_due_date") and e.get("payment_status") == "unpaid":
+            k = _month_key(e["payment_due_date"])
+            planned_out[k] = planned_out.get(k, ZERO) + D(e.get("total_with_vat_try"))
 
     for inv in client_invoices:
-        if inv.get("due_date"):
-            k = _month_key(inv["due_date"])
-            planned_in[k] = planned_in.get(k, ZERO) + D(inv.get("net_due_try"))
+        # Actual inflow: money actually collected, in its date_received month.
         if inv.get("date_received"):
             k = _month_key(inv["date_received"])
             actual_in[k] = actual_in.get(k, ZERO) + D(inv.get("amount_received_try"))
+        # Planned inflow: still-unpaid invoices land in their due_date month.
+        if inv.get("due_date") and inv.get("payment_status") == "unpaid":
+            k = _month_key(inv["due_date"])
+            planned_in[k] = planned_in.get(k, ZERO) + D(inv.get("net_due_try"))
 
     rows: list[dict] = []
     cumulative = ZERO

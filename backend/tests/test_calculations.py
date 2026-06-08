@@ -235,41 +235,38 @@ def test_currency_eur_does_not_affect_try_totals():
 # Monthly cash flow — cumulative running total, mixed signs (Section 7.2, 12.1)
 # --------------------------------------------------------------------------
 def test_cumulative_cashflow_mixed_months():
+    # CR-002-B: actual outflow = total_with_vat by entry_date (any payment status),
+    # actual inflow = amount_received by date_received.
     today = date(2025, 6, 15)
     costs = [
-        # paid out in April
-        {"amount_try": Decimal("0"), "amount_paid_try": Decimal("50000"),
-         "entry_type": "actual", "date_paid": date(2025, 4, 10),
-         "entry_date": date(2025, 4, 10)},
-        # paid out in May
-        {"amount_try": Decimal("0"), "amount_paid_try": Decimal("30000"),
-         "entry_type": "actual", "date_paid": date(2025, 5, 10),
-         "entry_date": date(2025, 5, 10)},
+        {"total_with_vat_try": Decimal("50000"), "entry_date": date(2025, 4, 10),
+         "payment_status": "unpaid"},
+        {"total_with_vat_try": Decimal("30000"), "entry_date": date(2025, 5, 10),
+         "payment_status": "unpaid"},
     ]
     invoices = [
-        # received in May
-        {"net_due_try": Decimal("0"), "amount_received_try": Decimal("100000"),
-         "due_date": date(2025, 5, 1), "date_received": date(2025, 5, 20)},
+        {"amount_received_try": Decimal("100000"), "date_received": date(2025, 5, 20),
+         "payment_status": "paid"},
     ]
     rows = compute_monthly_cashflow(costs, invoices, today=today)
     by_month = {r["month"]: r for r in rows}
-    # April: -50,000
+    # April: -50,000 (cost realised by entry_date even though unpaid)
     assert by_month["2025-04"]["net_try"] == Decimal("-50000.00")
-    # May: +100,000 - 30,000 = +70,000
+    # May: +100,000 collected - 30,000 cost = +70,000
     assert by_month["2025-05"]["net_try"] == Decimal("70000.00")
-    # Cumulative through May = -50,000 + 70,000 = 20,000
     assert by_month["2025-05"]["cumulative_try"] == Decimal("20000.00")
 
 
 def test_cashflow_future_uses_planned():
+    # CR-002-B: future months use planned from due dates of unpaid records.
     today = date(2025, 6, 15)
     costs = [
-        {"amount_try": Decimal("40000"), "amount_paid_try": Decimal("0"),
-         "entry_type": "forecast", "entry_date": date(2025, 8, 1), "date_paid": None},
+        {"total_with_vat_try": Decimal("40000"), "entry_date": date(2025, 7, 1),
+         "payment_due_date": date(2025, 8, 1), "payment_status": "unpaid"},
     ]
     invoices = [
         {"net_due_try": Decimal("90000"), "amount_received_try": Decimal("0"),
-         "due_date": date(2025, 8, 15), "date_received": None},
+         "due_date": date(2025, 8, 15), "date_received": None, "payment_status": "unpaid"},
     ]
     rows = compute_monthly_cashflow(costs, invoices, today=today)
     by_month = {r["month"]: r for r in rows}
