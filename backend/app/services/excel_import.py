@@ -42,6 +42,36 @@ def list_sheet_names(file_bytes: bytes) -> list[str]:
     return list(wb.sheetnames)
 
 
+MAX_AI_ROWS = 500
+
+
+def excel_to_text(file_bytes: bytes) -> tuple[str, bool, int]:
+    """CR-002-H: flatten every sheet to text for the AI analyser.
+
+    Returns (text, truncated, row_count). At most MAX_AI_ROWS data rows across all
+    sheets; formula cells are read as their resolved values (data_only=True).
+    """
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    lines: list[str] = []
+    count = 0
+    truncated = False
+    for name in wb.sheetnames:
+        ws = wb[name]
+        lines.append(f"### SAYFA: {name}")
+        for row in ws.iter_rows(values_only=True):
+            if count >= MAX_AI_ROWS:
+                truncated = True
+                break
+            cells = ["" if c is None else str(c) for c in row]
+            if not any(cells):
+                continue
+            lines.append(" | ".join(cells))
+            count += 1
+        if truncated:
+            break
+    return "\n".join(lines), truncated, count
+
+
 def _parse_date(value) -> date | None:
     if value in (None, ""):
         return None

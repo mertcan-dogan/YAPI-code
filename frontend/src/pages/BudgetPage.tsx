@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
 import { ImportPreview } from "@/components/ImportPreview";
+import { AIImportPreview } from "@/components/AIImportPreview";
 import { StatusBadge } from "@/components/StatusBadge";
 import { COST_CATEGORIES, COST_CATEGORY_OPTIONS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
@@ -13,7 +14,7 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
-import { Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { Download, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -32,7 +33,9 @@ export default function BudgetPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingCost, setEditingCost] = useState<CostEntry | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [aiImportFile, setAiImportFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const aiFileRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const canDelete = user?.role === "director" || user?.role === "project_manager";
 
@@ -177,6 +180,19 @@ export default function BudgetPage() {
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               <Upload className="h-4 w-4" /> Excel'den İçe Aktar
             </Button>
+            <Button variant="outline" className="border-accent text-accent" onClick={() => aiFileRef.current?.click()}>
+              <Sparkles className="h-4 w-4" /> AI ile İçe Aktar
+            </Button>
+            <input
+              ref={aiFileRef}
+              type="file"
+              accept=".xlsx"
+              hidden
+              onChange={(e) => {
+                if (e.target.files?.[0]) setAiImportFile(e.target.files[0]);
+                e.target.value = "";
+              }}
+            />
             <input
               ref={fileRef}
               type="file"
@@ -241,6 +257,19 @@ export default function BudgetPage() {
           onClose={() => setImportFile(null)}
           onDone={() => {
             setImportFile(null);
+            costs.refetch();
+            budget.refetch();
+          }}
+        />
+      )}
+
+      {aiImportFile && (
+        <AIImportPreview
+          projectId={id!}
+          file={aiImportFile}
+          onClose={() => setAiImportFile(null)}
+          onDone={() => {
+            setAiImportFile(null);
             costs.refetch();
             budget.refetch();
           }}

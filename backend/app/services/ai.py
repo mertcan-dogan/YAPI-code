@@ -140,6 +140,52 @@ def daily_briefing(projects_summary: list[dict]) -> list[dict]:
         return items
 
 
+def analyze_excel_import(excel_text: str) -> dict:
+    """CR-002-H: classify messy Excel content into structured records.
+
+    Returns a dict with keys maliyet_girisleri / faturalar / alt_yukleniciler /
+    ekipman / tanimsiz, each a list of records carrying a 'confidence' (0..1).
+    Retries JSON parsing up to 2 times; raises AIUnavailable on failure.
+    """
+    from app.constants import COST_CATEGORY_KEYS
+
+    prompt = (
+        "Sen bir Türk inşaat projesi finans uzmanısın. Aşağıdaki Excel verilerini "
+        "analiz et ve YALNIZCA JSON formatında döndür. Verileri şu kategorilere ayır "
+        "ve her kayıt için 0-1 arası 'confidence' (güven) skoru ekle. Eksik alanları "
+        "null bırak.\n\n"
+        "JSON şeması:\n"
+        "{\n"
+        '  "maliyet_girisleri": [{"entry_date":"YYYY-MM-DD","cost_category":"<key>",'
+        '"supplier_name":"...","description":"...","amount_try":0,"vat_rate":20,'
+        '"payment_due_date":"YYYY-MM-DD|null","payment_status":"unpaid|paid","confidence":0.0}],\n'
+        '  "faturalar": [{"invoice_number":"...","invoice_date":"YYYY-MM-DD","amount_try":0,'
+        '"vat_rate":20,"due_date":"YYYY-MM-DD","confidence":0.0}],\n'
+        '  "alt_yukleniciler": [{"name":"...","scope_of_work":"...","contract_value_try":0,"confidence":0.0}],\n'
+        '  "ekipman": [{"equipment_name":"...","ownership_type":"rented|owned","rate_try":0,'
+        '"rate_unit":"day|month","deployment_start":"YYYY-MM-DD","confidence":0.0}],\n'
+        '  "tanimsiz": [{"raw":"...","confidence":0.0}]\n'
+        "}\n\n"
+        f"cost_category şu anahtarlardan biri olmalı: {', '.join(COST_CATEGORY_KEYS)}.\n\n"
+        f"Excel verisi:\n{excel_text}"
+    )
+    last_err: Exception | None = None
+    for _ in range(2):  # retry JSON parsing up to 2 times
+        try:
+            result = _call_json(prompt, max_tokens=4000)
+            if isinstance(result, dict):
+                # Ensure all expected keys exist.
+                for key in ("maliyet_girisleri", "faturalar", "alt_yukleniciler", "ekipman", "tanimsiz"):
+                    result.setdefault(key, [])
+                return result
+        except AIUnavailable as exc:
+            raise
+        except Exception as exc:  # JSON parse error -> retry
+            last_err = exc
+    logger.warning("AI import JSON parse failed: %s", last_err)
+    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+
 def extract_invoice(pdf_bytes: bytes) -> dict:
     """PDF invoice field extraction (Section 5.3). Returns extracted fields."""
     import base64

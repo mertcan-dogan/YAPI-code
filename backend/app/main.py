@@ -12,6 +12,7 @@ from app.middleware.rate_limit import RateLimitMiddleware
 # Routers
 from app.api import (
     ai,
+    ai_import,
     audit,
     auth,
     cashflow,
@@ -79,5 +80,6 @@ for r in (
     audit.router,
     settings_router.router,
     custom_categories.router,
+    ai_import.router,
 ):
     app.include_router(r, prefix=API_PREFIX)
