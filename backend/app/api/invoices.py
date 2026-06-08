@@ -120,7 +120,11 @@ def update_invoice(
     inv.net_due_try = invoice_net_due(inv.amount_try, inv.vat_rate, inv.retention_amount_try)
     if "date_received" in changes and inv.date_received and not inv.amount_received_try:
         inv.amount_received_try = inv.net_due_try
-    if "payment_status" not in changes:
+    # CR-002-D: payment_status is derived from amount_received vs net_due — never
+    # left to manual selection — except the explicit "disputed" override.
+    if changes.get("payment_status") == "disputed":
+        inv.payment_status = "disputed"
+    else:
         _refresh_invoice_status(inv)
     db.flush()
     record_audit(

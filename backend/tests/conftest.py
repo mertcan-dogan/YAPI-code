@@ -100,6 +100,12 @@ def client(session_factory):
 
     db_module.set_sessionmaker(session_factory)
 
+    # Reset the in-memory rate-limit window so tests don't accumulate hits across
+    # the suite (the TestClient shares a single client IP).
+    from app.middleware.rate_limit import reset_rate_limits
+
+    reset_rate_limits()
+
     holder: dict = {"user_id": None}
 
     def _override_get_db():

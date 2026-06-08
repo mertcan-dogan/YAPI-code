@@ -20,6 +20,7 @@ class ClientInvoiceCreate(BaseModel):
     vat_rate: Decimal = Decimal("20.00")
     retention_amount_try: Decimal = Decimal("0")
     due_date: date
+    document_url: str | None = None
 
     @field_validator("amount_try")
     @classmethod
