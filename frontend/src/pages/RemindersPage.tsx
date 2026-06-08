@@ -7,8 +7,17 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
 import type { Reminder } from "@/types";
-import { formatCurrency } from "@/utils/format";
+import { formatCurrency, toNumber } from "@/utils/format";
 import { useState } from "react";
+
+function KpiChip({ label, value, bg, border }: { label: string; value: string; bg: string; border: string }) {
+  return (
+    <div className="rounded-lg border p-3" style={{ backgroundColor: bg, borderColor: border }}>
+      <div className="text-xs text-text-secondary">{label}</div>
+      <div className="tabular mt-0.5 text-base font-bold text-text-primary">{value}</div>
+    </div>
+  );
+}
 
 const TABS = [
   { key: "all", label: "Tümü" },
@@ -57,9 +66,25 @@ export default function RemindersPage() {
     }
   };
 
+  // CR-002-C: summary KPI band computed from all reminders (not the filtered view).
+  const all = data ?? [];
+  const sumWhere = (pred: (d: number) => boolean) =>
+    all.filter((i) => pred(i.days_remaining)).reduce((s, i) => s + toNumber(i.amount_try), 0);
+  const overdueTotal = sumWhere((d) => d < 0);
+  const todayItems = all.filter((i) => i.days_remaining === 0);
+  const todaySum = todayItems.reduce((s, i) => s + toNumber(i.amount_try), 0);
+  const weekSum = sumWhere((d) => d > 0 && d <= 7);
+  const monthSum = sumWhere((d) => d > 0 && d <= 30);
+
   return (
     <div>
       <PageHeader title="Hatırlatıcılar" subtitle="Tüm projelerdeki vadesi yaklaşan ve geçmiş ödemeler" />
+      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiChip label="Vadesi Geçmiş Toplam" value={formatCurrency(overdueTotal)} bg="#FEF2F2" border="#EF4444" />
+        <KpiChip label="Bugün Vadesi Dolan" value={`${todayItems.length} · ${formatCurrency(todaySum)}`} bg="#FFFBEB" border="#F59E0B" />
+        <KpiChip label="Bu Hafta (7 Gün)" value={formatCurrency(weekSum)} bg="#FEFCE8" border="#EAB308" />
+        <KpiChip label="Bu Ay (30 Gün)" value={formatCurrency(monthSum)} bg="#EFF6FF" border="#93C5FD" />
+      </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex gap-1 rounded-md border border-border p-0.5">
           {TABS.map((t) => (
@@ -80,7 +105,7 @@ export default function RemindersPage() {
       ) : (
         <div className="space-y-2">
           {items.map((r) => (
-            <div key={r.record_id} className="flex items-center gap-4 rounded-lg border border-border bg-surface p-4" style={{ borderLeft: `4px solid ${r.border_colour}` }}>
+            <div key={r.record_id} className="flex items-center gap-4 rounded-lg border border-border p-4" style={{ borderLeft: `4px solid ${r.border_colour}`, backgroundColor: (r as any).bg_colour ?? "#FFFFFF" }}>
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <span className="rounded bg-navy-50 px-2 py-0.5 text-xs text-primary-light">{r.project_name}</span>
@@ -91,7 +116,7 @@ export default function RemindersPage() {
               </div>
               <div className="text-right">
                 <div className="tabular text-lg font-bold text-primary">{formatCurrency(r.amount_try)}</div>
-                <div className={cn("text-xs font-medium", r.days_remaining < 0 ? "text-danger" : r.days_remaining <= 7 ? "text-accent" : "text-text-secondary")}>{r.days_label}</div>
+                <div className={cn("text-xs font-medium", r.days_remaining <= 0 ? "text-danger font-bold" : r.days_remaining <= 7 ? "text-accent" : r.days_remaining <= 30 ? "text-warning" : "text-text-secondary")}>{r.days_label}</div>
               </div>
               <Button variant="outline" onClick={() => markDone(r)}>
                 {r.kind === "payable" ? "Ödendi İşaretle" : "Tahsil Edildi İşaretle"}

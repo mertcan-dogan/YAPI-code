@@ -23,18 +23,23 @@ def _days_label(days_remaining: int) -> str:
     return f"{days_remaining} gün kaldı"
 
 
-def _border_colour(days_remaining: int, paid: bool) -> str:
+# CR-002-C: exhaustive colour rules (border + background).
+def _colours(days_remaining: int, paid: bool) -> tuple[str, str]:
     if paid:
-        return "#10B981"  # green
-    if days_remaining < 0:
-        return "#EF4444"  # overdue red
+        return "#10B981", "#F0FDF4"  # green
+    if days_remaining <= 0:
+        return "#EF4444", "#FEF2F2"  # overdue OR due today -> red
     if days_remaining <= 7:
-        return "#F59E0B"  # amber
+        return "#F59E0B", "#FFFBEB"  # amber
     if days_remaining <= 30:
-        return "#EAB308"  # yellow
+        return "#EAB308", "#FEFCE8"  # yellow
     if days_remaining <= 60:
-        return "#93C5FD"  # light blue
-    return "#E2E8F0"
+        return "#93C5FD", "#EFF6FF"  # light blue
+    return "#E2E8F0", "#FFFFFF"
+
+
+def _border_colour(days_remaining: int, paid: bool) -> str:
+    return _colours(days_remaining, paid)[0]
 
 
 @router.get("/reminders")
@@ -74,7 +79,8 @@ def list_reminders(user: CurrentUser, db: Session = Depends(get_db)):
                 "due_date": c.payment_due_date.isoformat(),
                 "days_remaining": days,
                 "days_label": _days_label(days),
-                "border_colour": _border_colour(days, False),
+                "border_colour": _colours(days, False)[0],
+                "bg_colour": _colours(days, False)[1],
                 "status": c.payment_status,
                 "record_id": str(c.id),
             }
@@ -103,7 +109,8 @@ def list_reminders(user: CurrentUser, db: Session = Depends(get_db)):
                 "due_date": inv.due_date.isoformat(),
                 "days_remaining": days,
                 "days_label": _days_label(days),
-                "border_colour": _border_colour(days, False),
+                "border_colour": _colours(days, False)[0],
+                "bg_colour": _colours(days, False)[1],
                 "status": inv.payment_status,
                 "record_id": str(inv.id),
             }
