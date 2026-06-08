@@ -16,7 +16,7 @@ financial oversight — the gap between Excel and accounting software.
 | Backend | Python FastAPI, SQLAlchemy 2.0 + Alembic |
 | Database | PostgreSQL (Supabase) with Row-Level Security |
 | Auth | Supabase Auth (JWT) |
-| AI | Anthropic Claude API (`claude-sonnet-4-20250514`) |
+| AI | Anthropic Claude API (`claude-sonnet-4-5`) |
 | Email | Resend · **PDF** WeasyPrint · **Excel** openpyxl |
 | Hosting | Vercel (frontend) · Railway/Render (backend) |
 
