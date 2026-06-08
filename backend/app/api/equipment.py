@@ -24,8 +24,16 @@ def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def _equipment_description(e: EquipmentLog) -> str:
+    end = e.deployment_end.isoformat() if e.deployment_end else "—"
+    return f"{e.equipment_name} — {e.deployment_start.isoformat()} - {end} — otomatik oluşturuldu"
+
+
 def _create_budget_entry_for_equipment(db, user, project_id, e: EquipmentLog) -> None:
-    """CR-001-E: auto-create a committed cost_entry mirroring the equipment cost."""
+    """CR-001-E/CR-002-E: auto-create a committed cost_entry mirroring equipment cost.
+
+    amount_try = equipment_cost; vat 20%; total_with_vat = amount × 1.20.
+    """
     amount = equipment_cost(
         e.ownership_type, e.rate_try, e.rate_unit, e.deployment_start, e.deployment_end,
         e.fuel_maintenance_try,
@@ -33,6 +41,8 @@ def _create_budget_entry_for_equipment(db, user, project_id, e: EquipmentLog) ->
     if amount <= 0:
         return
     category = "equipment_rented" if e.ownership_type == "rented" else "equipment_owned"
+    vat_rate = D(20)
+    vat = money(amount * vat_rate / D(100))
     entry = CostEntry(
         project_id=project_id,
         company_id=user.company_id,
@@ -40,11 +50,11 @@ def _create_budget_entry_for_equipment(db, user, project_id, e: EquipmentLog) ->
         entry_date=e.deployment_start,
         cost_category=category,
         supplier_name=e.supplier_name,
-        description=f"{e.equipment_name} — otomatik oluşturuldu",
+        description=_equipment_description(e),
         amount_try=amount,
-        vat_rate=D(0),
-        vat_amount_try=D(0),
-        total_with_vat_try=amount,
+        vat_rate=vat_rate,
+        vat_amount_try=vat,
+        total_with_vat_try=money(amount + vat),
         entry_type="committed",
     )
     db.add(entry)

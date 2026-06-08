@@ -1,20 +1,28 @@
-"""Equipment cost calculations (Section 7.1)."""
+"""Equipment cost calculations (Section 7.1 + CR-002-E)."""
 from datetime import date
 from decimal import Decimal
 
-from app.calculations.money import D, money
+from dateutil.relativedelta import relativedelta
 
-# Average days per month, used to convert a monthly rate to a daily basis.
-DAYS_PER_MONTH = Decimal("30")
+from app.calculations.money import D, money
 
 
 def equipment_duration_days(deployment_start: date, deployment_end: date | None) -> int:
-    """Deployment duration in days. Inclusive lower bound; if no end date,
-    duration is 0 (still deployed — cost accrues only once an end is set)."""
+    """Inclusive day count: (end - start).days + 1 (CR-002-E).
+
+    e.g. 01.01 -> 20.01 is 20 days. No end yet -> 0 (cost accrues once ended)."""
     if deployment_end is None:
         return 0
-    delta = (deployment_end - deployment_start).days
-    return max(delta, 0)
+    return max((deployment_end - deployment_start).days + 1, 0)
+
+
+def equipment_duration_months(deployment_start: date, deployment_end: date | None) -> int:
+    """Whole months between the dates, minimum 1 (CR-002-E)."""
+    if deployment_end is None:
+        return 0
+    rd = relativedelta(deployment_end, deployment_start)
+    months = rd.months + rd.years * 12
+    return max(1, months)
 
 
 def equipment_cost(
@@ -25,21 +33,22 @@ def equipment_cost(
     deployment_end: date | None,
     fuel_maintenance_try=0,
 ) -> Decimal:
-    """Equipment cost.
+    """Equipment cost (excl. VAT).
 
-    Rented:  rate_try × duration + fuel_maintenance_try
-             where duration is in days (rate_unit='day') or months
-             (rate_unit='month'), derived from the deployment dates.
-    Owned:   only fuel/maintenance costs are attributed.
+    Rented (day):   rate × inclusive_days + fuel
+    Rented (month): rate × whole_months(min 1) + fuel
+    Owned:          fuel/maintenance only
     """
     fuel = D(fuel_maintenance_try)
     if ownership_type == "owned":
         return money(fuel)
+    if deployment_end is None:
+        # Cannot compute a duration yet — only fuel/maintenance is attributable.
+        return money(fuel)
 
-    days = equipment_duration_days(deployment_start, deployment_end)
     rate = D(rate_try)
     if rate_unit == "month":
-        units = D(days) / DAYS_PER_MONTH
+        units = D(equipment_duration_months(deployment_start, deployment_end))
     else:  # default 'day'
-        units = D(days)
+        units = D(equipment_duration_days(deployment_start, deployment_end))
     return money(rate * units + fuel)

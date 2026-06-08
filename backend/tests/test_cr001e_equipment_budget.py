@@ -31,8 +31,9 @@ def test_equipment_with_budget_creates_cost_entry(client, seed):
     auto = [c for c in costs if "otomatik oluşturuldu" in (c["description"] or "")]
     assert len(auto) == 1
     entry = auto[0]
-    # 10 days * 1000 + 500 fuel = 10,500
-    assert entry["amount_try"] == "10500.00"
+    # CR-002-E: inclusive days = (11-1)+1 = 11; 11*1000 + 500 fuel = 11,500; vat 20%.
+    assert entry["amount_try"] == "11500.00"
+    assert entry["total_with_vat_try"] == "13800.00"
     assert entry["cost_category"] == "equipment_rented"
     assert entry["entry_type"] == "committed"
     assert entry["supplier_name"] == "Kiralama A.Ş."

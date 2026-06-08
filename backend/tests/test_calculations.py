@@ -96,11 +96,11 @@ def test_subcontractor_retention_held():
 # Equipment cost — day and month rate units (Section 7.1, 12.1)
 # --------------------------------------------------------------------------
 def test_equipment_cost_day_rate():
-    # 10 days at 1000/day + 500 fuel = 10500
+    # CR-002-E: inclusive days. 01.01->11.01 = 11 days * 1000 + 500 fuel = 11500
     cost = equipment_cost(
         "rented", 1000, "day", date(2025, 1, 1), date(2025, 1, 11), 500
     )
-    assert cost == Decimal("10500.00")
+    assert cost == Decimal("11500.00")
 
 
 def test_equipment_cost_month_rate():
