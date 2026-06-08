@@ -19,7 +19,6 @@ interface Row {
   payment_due_date?: string;
   payment_status?: string;
   date_paid?: string;
-  _errors?: string[];
 }
 
 const CATEGORY_KEYS = new Set(COST_CATEGORY_OPTIONS.map((c) => c.value));
@@ -32,7 +31,7 @@ function rowErrors(r: Row): string[] {
   return errs;
 }
 
-// CR-001-F: Excel import preview + inline edit before saving.
+// CR-001-F + CR-002-F: sheet picker -> preview with header/total detection.
 export function ImportPreview({
   projectId,
   file,
@@ -44,43 +43,64 @@ export function ImportPreview({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [phase, setPhase] = useState<"loading" | "sheet" | "preview">("loading");
+  const [sheets, setSheets] = useState<string[]>([]);
   const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [skippedCount, setSkippedCount] = useState(0);
   const [saving, setSaving] = useState(false);
 
+  // Step 1: list sheets; if only one, go straight to preview.
   useEffect(() => {
     const fd = new FormData();
     fd.append("file", file);
     api
-      .post(`/projects/${projectId}/costs/import/preview`, fd)
+      .post(`/projects/${projectId}/costs/import/sheets`, fd)
       .then((res) => {
-        const parsed: Row[] = (res.data.data ?? []).map((r: any) => ({
-          ...r.data,
-          vat_rate: r.data.vat_rate ?? "20",
-          _errors: r.errors ?? [],
-        }));
-        setRows(parsed);
+        const s: string[] = res.data.data.sheets ?? [];
+        setSheets(s);
+        if (s.length <= 1) loadPreview(s[0]);
+        else setPhase("sheet");
       })
-      .catch((e) => toast.error(e.message ?? "Dosya okunamadı"))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        toast.error(e.message ?? "Dosya okunamadı");
+        onClose();
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file, projectId]);
 
-  const computed = useMemo(
-    () => rows.map((r) => ({ ...r, _errors: rowErrors(r) })),
-    [rows]
-  );
-  const validCount = computed.filter((r) => r._errors!.length === 0).length;
+  const loadPreview = (sheet?: string) => {
+    setPhase("loading");
+    const fd = new FormData();
+    fd.append("file", file);
+    if (sheet) fd.append("sheet_name", sheet);
+    api
+      .post(`/projects/${projectId}/costs/import/preview`, fd)
+      .then((res) => {
+        const data = res.data.data ?? [];
+        const meta = res.data.meta ?? {};
+        // CR-002-F: skipped rows (header/total/empty-date) are excluded from the editable list.
+        const editable = data.filter((r: any) => !r.skipped).map((r: any) => ({ ...r.data, vat_rate: r.data.vat_rate ?? "20" }));
+        setRows(editable);
+        setSkippedCount(meta.skipped ?? 0);
+        if (meta.header_detected === false) {
+          toast.info("Başlık satırı tespit edilemedi. Lütfen verileri kontrol edin.");
+        }
+        setPhase("preview");
+      })
+      .catch((e) => {
+        toast.error(e.message ?? "Önizleme oluşturulamadı");
+        onClose();
+      });
+  };
+
+  const computed = useMemo(() => rows.map((r) => ({ ...r, _errors: rowErrors(r) })), [rows]);
+  const validCount = computed.filter((r) => r._errors.length === 0).length;
   const invalidCount = computed.length - validCount;
   const totalAmount = computed.reduce((s, r) => s + toNumber(r.amount_try), 0);
 
-  const update = (i: number, k: keyof Row, v: string) =>
-    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const update = (i: number, k: keyof Row, v: string) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const removeRow = (i: number) => setRows((rs) => rs.filter((_, j) => j !== i));
-  const addRow = () =>
-    setRows((rs) => [
-      ...rs,
-      { entry_date: new Date().toISOString().slice(0, 10), cost_category: "", amount_try: "", vat_rate: "20" },
-    ]);
+  const addRow = () => setRows((rs) => [...rs, { entry_date: new Date().toISOString().slice(0, 10), cost_category: "", amount_try: "", vat_rate: "20" }]);
 
   const confirm = async () => {
     if (invalidCount > 0) return;
@@ -111,67 +131,68 @@ export function ImportPreview({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg">
-      {/* Summary band */}
-      <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
-        <div>
-          <h2 className="text-lg font-bold text-primary">İçe Aktarma Önizlemesi — {computed.length} satır bulundu</h2>
-          <div className="mt-1 flex gap-4 text-sm">
-            <span>Toplam: <b>{computed.length}</b></span>
-            <span className="text-success">Geçerli: <b>{validCount}</b></span>
-            <span className="text-danger">Hatalı: <b>{invalidCount}</b></span>
-            <span>Toplam Tutar: <b>{formatCurrency(totalAmount)}</b></span>
+      {phase === "sheet" ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6">
+          <button onClick={onClose} className="absolute right-6 top-6 text-text-secondary"><X className="h-5 w-5" /></button>
+          <h2 className="text-lg font-bold text-primary">Excel dosyasında birden fazla sayfa bulundu</h2>
+          <p className="text-sm text-text-secondary">Hangi sayfadan veri aktarmak istiyorsunuz?</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {sheets.map((s) => (
+              <Button key={s} variant="outline" onClick={() => loadPreview(s)}>{s}</Button>
+            ))}
           </div>
         </div>
-        <button onClick={onClose} className="text-text-secondary hover:text-text-primary"><X className="h-5 w-5" /></button>
-      </div>
-
-      {/* Editable rows */}
-      <div className="flex-1 overflow-auto p-6">
-        {loading ? (
-          <p className="text-sm text-text-secondary">Yükleniyor...</p>
-        ) : (
-          <div className="space-y-2">
-            {computed.map((r, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "rounded-md border bg-surface p-3",
-                  r._errors!.length ? "border-l-4 border-l-danger" : "border-l-4 border-l-success"
-                )}
-              >
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-7">
-                  <Input type="date" value={r.entry_date ?? ""} onChange={(e) => update(i, "entry_date", e.target.value)} />
-                  <Select value={r.cost_category ?? ""} onChange={(e) => update(i, "cost_category", e.target.value)}>
-                    <option value="">Kategori</option>
-                    {COST_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </Select>
-                  <Input placeholder="Tedarikçi" value={r.supplier_name ?? ""} onChange={(e) => update(i, "supplier_name", e.target.value)} />
-                  <Input placeholder="Açıklama" value={r.description ?? ""} onChange={(e) => update(i, "description", e.target.value)} />
-                  <Input type="number" placeholder="Tutar" value={r.amount_try ?? ""} onChange={(e) => update(i, "amount_try", e.target.value)} />
-                  <Select value={r.vat_rate ?? "20"} onChange={(e) => update(i, "vat_rate", e.target.value)}>
-                    {[0, 1, 10, 20].map((v) => <option key={v} value={v}>%{v}</option>)}
-                  </Select>
-                  <div className="flex items-center justify-end">
-                    <button onClick={() => removeRow(i)} className="text-text-secondary hover:text-danger" aria-label="Satırı sil">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-                {r._errors!.length > 0 && <p className="mt-1 text-xs text-danger">{r._errors!.join(" · ")}</p>}
+      ) : phase === "loading" ? (
+        <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">Yükleniyor...</div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
+            <div>
+              <h2 className="text-lg font-bold text-primary">İçe Aktarma Önizlemesi — {computed.length} satır bulundu</h2>
+              <div className="mt-1 flex gap-4 text-sm">
+                <span>Toplam: <b>{computed.length}</b></span>
+                <span className="text-success">Geçerli: <b>{validCount}</b></span>
+                <span className="text-danger">Hatalı: <b>{invalidCount}</b></span>
+                {skippedCount > 0 && <span className="text-text-secondary">Atlanan: <b>{skippedCount}</b> (başlık/toplam)</span>}
+                <span>Toplam Tutar: <b>{formatCurrency(totalAmount)}</b></span>
               </div>
-            ))}
-            <Button variant="outline" onClick={addRow}><Plus className="h-4 w-4" /> Satır Ekle</Button>
+            </div>
+            <button onClick={onClose} className="text-text-secondary hover:text-text-primary"><X className="h-5 w-5" /></button>
           </div>
-        )}
-      </div>
 
-      {/* Footer */}
-      <div className="flex items-center justify-end gap-2 border-t border-border bg-surface px-6 py-3">
-        <Button variant="ghost" onClick={onClose}>İptal</Button>
-        <Button onClick={confirm} loading={saving} disabled={invalidCount > 0 || computed.length === 0}>
-          İçe Aktar ({validCount} satır)
-        </Button>
-      </div>
+          <div className="flex-1 overflow-auto p-6">
+            <div className="space-y-2">
+              {computed.map((r, i) => (
+                <div key={i} className={cn("rounded-md border bg-surface p-3", r._errors.length ? "border-l-4 border-l-danger" : "border-l-4 border-l-success")}>
+                  <div className="grid grid-cols-2 gap-2 md:grid-cols-7">
+                    <Input type="date" value={r.entry_date ?? ""} onChange={(e) => update(i, "entry_date", e.target.value)} />
+                    <Select value={r.cost_category ?? ""} onChange={(e) => update(i, "cost_category", e.target.value)}>
+                      <option value="">Kategori</option>
+                      {COST_CATEGORY_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                    </Select>
+                    <Input placeholder="Tedarikçi" value={r.supplier_name ?? ""} onChange={(e) => update(i, "supplier_name", e.target.value)} />
+                    <Input placeholder="Açıklama" value={r.description ?? ""} onChange={(e) => update(i, "description", e.target.value)} />
+                    <Input type="number" placeholder="Tutar" value={r.amount_try ?? ""} onChange={(e) => update(i, "amount_try", e.target.value)} />
+                    <Select value={r.vat_rate ?? "20"} onChange={(e) => update(i, "vat_rate", e.target.value)}>
+                      {[0, 1, 10, 20].map((v) => <option key={v} value={v}>%{v}</option>)}
+                    </Select>
+                    <div className="flex items-center justify-end">
+                      <button onClick={() => removeRow(i)} className="text-text-secondary hover:text-danger" aria-label="Satırı sil"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                  </div>
+                  {r._errors.length > 0 && <p className="mt-1 text-xs text-danger">{r._errors.join(" · ")}</p>}
+                </div>
+              ))}
+              <Button variant="outline" onClick={addRow}><Plus className="h-4 w-4" /> Satır Ekle</Button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 border-t border-border bg-surface px-6 py-3">
+            <Button variant="ghost" onClick={onClose}>İptal</Button>
+            <Button onClick={confirm} loading={saving} disabled={invalidCount > 0 || computed.length === 0}>İçe Aktar ({validCount} satır)</Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

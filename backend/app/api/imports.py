@@ -7,7 +7,7 @@ Flow:
 """
 import uuid
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ from app.schemas.cost import CostEntryCreate
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
-from app.services.excel_import import build_template, validate_rows
+from app.services.excel_import import build_template, list_sheet_names, validate_rows
 
 router = APIRouter(tags=["imports"])
 
@@ -34,7 +34,8 @@ def _serialize_row(r: dict) -> dict:
         k: (str(v) if hasattr(v, "isoformat") or hasattr(v, "quantize") else v)
         for k, v in r["data"].items()
     }
-    return {"row": r["row"], "valid": r["valid"], "errors": r["errors"], "data": data}
+    return {"row": r["row"], "valid": r["valid"], "skipped": r.get("skipped", False),
+            "errors": r["errors"], "data": data}
 
 
 @router.get("/projects/{project_id}/costs/import/template")
@@ -48,19 +49,50 @@ def download_template(project_id: uuid.UUID, user: CurrentUser, db: Session = De
     )
 
 
+@router.post("/projects/{project_id}/costs/import/sheets")
+async def import_sheets(
+    project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db), file: UploadFile = File(...)
+):
+    """CR-002-F: list the sheet names in an uploaded workbook (for the picker)."""
+    get_company_project(db, project_id, user)
+    data = await file.read()
+    try:
+        sheets = list_sheet_names(data)
+    except Exception as exc:
+        raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
+    return success({"sheets": sheets})
+
+
 @router.post("/projects/{project_id}/costs/import/preview")
 async def preview_import(
-    project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db), file: UploadFile = File(...)
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+    file: UploadFile = File(...),
+    sheet_name: str | None = Form(None),
 ):
     get_company_project(db, project_id, user)
     data = await file.read()
     try:
-        rows = validate_rows(data)
+        result = validate_rows(data, sheet_name=sheet_name)
     except Exception as exc:
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
+    rows = result["rows"]
     valid = sum(1 for r in rows if r["valid"])
+    skipped = sum(1 for r in rows if r.get("skipped"))
+    invalid = sum(1 for r in rows if not r["valid"] and not r.get("skipped"))
     out = [_serialize_row(r) for r in rows]
-    return success(out, meta={"total": len(rows), "valid": valid, "invalid": len(rows) - valid})
+    return success(
+        out,
+        meta={
+            "total": len(rows),
+            "valid": valid,
+            "invalid": invalid,
+            "skipped": skipped,
+            "header_detected": result["header_detected"],
+            "header_row": result["header_row"],
+        },
+    )
 
 
 @router.post("/projects/{project_id}/costs/import/confirm")

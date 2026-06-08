@@ -43,15 +43,30 @@ def test_preview_does_not_save(client, seed):
 
 def test_preview_flags_invalid_rows(client, seed):
     pid = _login(client, seed)
-    data = _xlsx([["GEÇERSİZ", "Bilinmeyen Kategori", "", "", "", "", "-5", "20", "", "Ödenmedi", ""]])
+    # Valid date but unknown category + non-positive amount -> invalid (red), not skipped.
+    # (CR-002-F: an invalid/empty DATE row is skipped instead.)
+    data = _xlsx([["01.05.2025", "Bilinmeyen Kategori", "", "", "", "", "-5", "20", "", "Ödenmedi", ""]])
     r = client.post(
         f"/api/v1/projects/{pid}/costs/import/preview",
         files={"file": ("f.xlsx", data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
     )
     body = r.json()
     assert body["meta"]["invalid"] == 1
-    assert body["data"][0]["valid"] is False
-    assert len(body["data"][0]["errors"]) > 0
+    invalid = next(row for row in body["data"] if not row["skipped"])
+    assert invalid["valid"] is False
+    assert len(invalid["errors"]) > 0
+
+
+def test_preview_skips_invalid_date_row(client, seed):
+    # CR-002-F: rows with an empty/invalid date are skipped (grey), not invalid.
+    pid = _login(client, seed)
+    data = _xlsx([["GEÇERSİZ", "Malzeme — Beton", "", "", "", "", "1000", "20", "", "Ödenmedi", ""]])
+    r = client.post(
+        f"/api/v1/projects/{pid}/costs/import/preview",
+        files={"file": ("f.xlsx", data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    meta = r.json()["meta"]
+    assert meta["skipped"] >= 1
 
 
 def test_confirm_bulk_saves_edited_rows(client, seed):
