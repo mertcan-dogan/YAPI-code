@@ -13,10 +13,10 @@ def test_all_15_categories_shown_without_costs(client, seed):
     keys = {c["cost_category"] for c in data["categories"]}
     for k in COST_CATEGORY_KEYS:
         assert k in keys, f"missing category {k}"
-    # Empty category shows zeros + green status.
+    # Empty category (no budget) shows zeros + gray status (CR-003-A).
     steel = next(c for c in data["categories"] if c["cost_category"] == "material_steel")
     assert steel["committed_try"] == "0.00"
-    assert steel["status"] == "green"
+    assert steel["status"] == "gray"
 
 
 def test_revised_budget_editable_and_flows_to_table(client, seed):

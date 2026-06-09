@@ -232,9 +232,16 @@ def _compute_category_rows(
         forecast = money(forecast_raw) if forecast_raw is not None else money(max(revised, invoiced))
         variance = money(forecast - revised)  # positive = over budget
 
-        if variance > ZERO:
+        # CR-003-A: RAG dot rules.
+        #   gray  -> no budget entered (revised == 0)
+        #   red   -> over budget (% spent > 100) OR variance positive
+        #   amber -> 85-100% spent
+        #   green -> < 85% and variance <= 0
+        if revised == ZERO:
+            status = "gray"
+        elif pct_spent > HUNDRED or variance > ZERO:
             status = "red"
-        elif pct_spent > Decimal("85"):
+        elif pct_spent >= Decimal("85"):
             status = "amber"
         else:
             status = "green"

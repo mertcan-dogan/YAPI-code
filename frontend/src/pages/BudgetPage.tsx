@@ -86,15 +86,7 @@ export default function BudgetPage() {
       key: "revised_budget_try",
       header: "Revize Bütçe",
       align: "right",
-      render: (r) => (
-        <Input
-          defaultValue={toNumber(r.revised_budget_try) ? r.revised_budget_try : ""}
-          type="number"
-          placeholder="0"
-          className="w-32 bg-amber-50 text-right"
-          onBlur={(e) => e.target.value !== r.revised_budget_try && editRevised(r.cost_category, e.target.value)}
-        />
-      ),
+      render: (r) => <EditableMoneyCell value={r.revised_budget_try} onSave={(v) => editRevised(r.cost_category, v)} />,
     },
     { key: "committed_try", header: "Taahhüt", align: "right", render: (r) => formatCurrency(r.committed_try) },
     { key: "invoiced_try", header: "Faturalanan", align: "right", render: (r) => formatCurrency(r.invoiced_try) },
@@ -105,17 +97,31 @@ export default function BudgetPage() {
       key: "forecast_final",
       header: "Final Tahmin",
       align: "right",
+      render: (r) => <EditableMoneyCell value={r.forecast_final} onSave={(v) => editForecast(r.cost_category, v)} />,
+    },
+    {
+      key: "variance_try",
+      header: "Sapma",
+      align: "right",
+      // CR-003-A: positive (over budget) = red, negative (under) = green, zero = gray.
+      render: (r) => {
+        const v = toNumber(r.variance_try);
+        const color = v > 0 ? "text-danger" : v < 0 ? "text-success" : "text-text-secondary";
+        return <span className={cn("tabular", color)}>{formatCurrency(r.variance_try)}</span>;
+      },
+    },
+    {
+      key: "status",
+      header: "Durum",
       render: (r) => (
-        <Input
-          defaultValue={r.forecast_final}
-          type="number"
-          className="w-28 text-right"
-          onBlur={(e) => e.target.value !== r.forecast_final && editForecast(r.cost_category, e.target.value)}
+        <span
+          className={cn(
+            "inline-block h-3 w-3 rounded-full",
+            r.status === "red" ? "bg-danger" : r.status === "amber" ? "bg-accent" : r.status === "gray" ? "bg-text-secondary" : "bg-success"
+          )}
         />
       ),
     },
-    { key: "variance_try", header: "Sapma", align: "right", render: (r) => <span className={toNumber(r.variance_try) > 0 ? "text-danger" : "text-success"}>{formatCurrency(r.variance_try)}</span> },
-    { key: "status", header: "Durum", render: (r) => <span className={cn("inline-block h-3 w-3 rounded-full", r.status === "red" ? "bg-danger" : r.status === "amber" ? "bg-accent" : "bg-success")} /> },
   ];
 
   const costColumns: Column<CostEntry>[] = [
@@ -276,6 +282,34 @@ export default function BudgetPage() {
         />
       )}
     </div>
+  );
+}
+
+// CR-003-A: shows the value in Turkish currency format; click to edit inline.
+function EditableMoneyCell({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        type="number"
+        value={draft}
+        className="w-32 bg-amber-50 text-right tabular"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); if (draft !== "" && draft !== value) onSave(draft); }}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+      />
+    );
+  }
+  return (
+    <button
+      className="tabular w-full cursor-text rounded px-2 py-1 text-right hover:bg-amber-50"
+      onClick={() => { setDraft(toNumber(value) ? value : ""); setEditing(true); }}
+      title="Düzenlemek için tıklayın"
+    >
+      {formatCurrency(value)}
+    </button>
   );
 }
 

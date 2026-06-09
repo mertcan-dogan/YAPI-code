@@ -82,7 +82,7 @@ export interface BudgetCategoryRow {
   pct_spent: string;
   forecast_final: string;
   variance_try: string;
-  status: RAG;
+  status: RAG | "gray";
 }
 
 export interface CostEntry {
