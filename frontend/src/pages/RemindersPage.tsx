@@ -10,6 +10,16 @@ import type { Reminder } from "@/types";
 import { formatCurrency, toNumber } from "@/utils/format";
 import { useState } from "react";
 
+// CR-003-D: derive border/bg from days remaining (guarantees the 31-60 blue rule).
+function reminderColors(days: number, paid: boolean): { border: string; bg: string } {
+  if (paid) return { border: "#10B981", bg: "#F0FDF4" };
+  if (days <= 0) return { border: "#EF4444", bg: "#FEF2F2" };
+  if (days <= 7) return { border: "#F59E0B", bg: "#FFFBEB" };
+  if (days <= 30) return { border: "#EAB308", bg: "#FEFCE8" };
+  if (days <= 60) return { border: "#93C5FD", bg: "#EFF6FF" };
+  return { border: "#E2E8F0", bg: "#FFFFFF" };
+}
+
 function KpiChip({ label, value, bg, border }: { label: string; value: string; bg: string; border: string }) {
   return (
     <div className="rounded-lg border p-3" style={{ backgroundColor: bg, borderColor: border }}>
@@ -81,7 +91,7 @@ export default function RemindersPage() {
       <PageHeader title="Hatırlatıcılar" subtitle="Tüm projelerdeki vadesi yaklaşan ve geçmiş ödemeler" />
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiChip label="Vadesi Geçmiş Toplam" value={formatCurrency(overdueTotal)} bg="#FEF2F2" border="#EF4444" />
-        <KpiChip label="Bugün Vadesi Dolan" value={`${todayItems.length} · ${formatCurrency(todaySum)}`} bg="#FFFBEB" border="#F59E0B" />
+        <KpiChip label="Bugün Vadesi Dolan" value={todayItems.length === 0 ? "Bugün vade yok" : formatCurrency(todaySum)} bg="#FFFBEB" border="#F59E0B" />
         <KpiChip label="Bu Hafta (7 Gün)" value={formatCurrency(weekSum)} bg="#FEFCE8" border="#EAB308" />
         <KpiChip label="Bu Ay (30 Gün)" value={formatCurrency(monthSum)} bg="#EFF6FF" border="#93C5FD" />
       </div>
@@ -105,7 +115,14 @@ export default function RemindersPage() {
       ) : (
         <div className="space-y-2">
           {items.map((r) => (
-            <div key={r.record_id} className="flex items-center gap-4 rounded-lg border border-border p-4" style={{ borderLeft: `4px solid ${r.border_colour}`, backgroundColor: (r as any).bg_colour ?? "#FFFFFF" }}>
+            <div
+              key={r.record_id}
+              className="flex items-center gap-4 rounded-lg border border-border p-4"
+              style={{
+                borderLeft: `4px solid ${reminderColors(r.days_remaining, r.status === "paid").border}`,
+                backgroundColor: reminderColors(r.days_remaining, r.status === "paid").bg,
+              }}
+            >
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <span className="rounded bg-navy-50 px-2 py-0.5 text-xs text-primary-light">{r.project_name}</span>
