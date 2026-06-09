@@ -25,6 +25,8 @@ class AIAlert(Base):
     recommended_action: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_actioned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # CR-003-M: user feedback — useful / wrong / irrelevant
+    feedback: Mapped[str | None] = mapped_column(String(20), nullable=True)
     dismissed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     dismissed_by: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

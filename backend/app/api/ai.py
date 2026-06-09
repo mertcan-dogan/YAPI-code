@@ -102,10 +102,43 @@ def list_alerts(user: CurrentUser, db: Session = Depends(get_db)):
                 "reasoning": a.reasoning,
                 "recommended_action": a.recommended_action,
                 "is_actioned": a.is_actioned,
+                "feedback": a.feedback,
                 "created_at": a.created_at.isoformat(),
             }
         )
     return success(visible, meta={"total": len(visible), "ai_available": ai_service.is_available()})
+
+
+class AlertFeedback(BaseModel):
+    feedback: str  # useful | wrong | irrelevant
+
+
+@router.put("/alerts/{alert_id}/feedback")
+def alert_feedback(alert_id: uuid.UUID, payload: AlertFeedback, user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-003-M: record useful/wrong/irrelevant feedback on an alert."""
+    if payload.feedback not in ("useful", "wrong", "irrelevant"):
+        raise APIError(422, "VALIDATION_ERROR", "Geçersiz geri bildirim")
+    alert = db.execute(
+        select(AIAlert).where(AIAlert.id == alert_id, AIAlert.company_id == user.company_id)
+    ).scalar_one_or_none()
+    if alert is None:
+        raise APIError(404, "NOT_FOUND", "Uyarı bulunamadı")
+    alert.feedback = payload.feedback
+    db.commit()
+    return success({"id": str(alert_id), "feedback": payload.feedback})
+
+
+@router.post("/analyze-all")
+def analyze_all(user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-003-M: re-run the alert engine across all active projects."""
+    total = 0
+    for p in db.execute(
+        select(Project).where(
+            Project.company_id == user.company_id, Project.is_deleted.is_(False), Project.status == "active"
+        )
+    ).scalars().all():
+        total += len(analyze_project(db, p))
+    return success({"alerts_created": total})
 
 
 @router.put("/alerts/{alert_id}/dismiss")

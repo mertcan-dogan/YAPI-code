@@ -78,6 +78,12 @@ ALERT_TYPES = [
     "overdue_payment",
     "budget_overrun",
     "subcontractor_anomaly",
+    # CR-003-M: 5 new types
+    "duplicate_invoice",
+    "unusual_cost",
+    "collection_risk",
+    "margin_erosion",
+    "cash_gap_30",
 ]
 ALERT_SEVERITIES = ["high", "medium", "low"]
 

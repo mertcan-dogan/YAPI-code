@@ -18,7 +18,7 @@ from app.models.cost_entry import CostEntry
 from app.models.project import Project
 from app.models.subcontractor import Subcontractor
 from app.services import ai as ai_service
-from app.services.financials import project_financials
+from app.services.financials import forecast_at_completion, project_financials
 
 
 def _has_active(db: Session, company_id, project_id, alert_type: str) -> bool:
@@ -143,5 +143,107 @@ def analyze_project(db: Session, project: Project, today: date | None = None) ->
                    "Vadesi geçmiş ödemeleri önceliklendirin.")
         created.append({"type": "overdue_payment"})
 
+    created += _extra_alerts(db, project, today, cid)
+
     db.commit()
+    return created
+
+
+def _extra_alerts(db: Session, project: Project, today: date, cid) -> list[dict]:
+    """CR-003-M: 5 additional alert types."""
+    from collections import defaultdict
+
+    from app.models.client_invoice import ClientInvoice
+
+    created: list[dict] = []
+    costs = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+        )
+    ).scalars().all()
+    invoices = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id == project.id, ClientInvoice.is_deleted.is_(False)
+        )
+    ).scalars().all()
+
+    # 1) Duplicate invoice numbers (supplier invoices = cost entries; client
+    #    invoices already have a unique constraint so cannot duplicate).
+    seen_nums: dict[str, int] = defaultdict(int)
+    for c in costs:
+        if c.invoice_number:
+            seen_nums[c.invoice_number] += 1
+    dup = [num for num, n in seen_nums.items() if n >= 2]
+    if dup and not _has_active(db, cid, project.id, "duplicate_invoice"):
+        _add_alert(db, cid, project.id, "duplicate_invoice", "medium", "Yinelenen Fatura",
+                   f"{dup[0]} numaralı fatura bu projede daha önce kaydedilmiş. Mükerrer kayıt olabilir.",
+                   "Fatura kayıtlarını kontrol edin.")
+        created.append({"type": "duplicate_invoice"})
+
+    # 2) Unusual cost: an actual entry > 3x its category average.
+    by_cat: dict[str, list] = defaultdict(list)
+    for c in costs:
+        if c.entry_type == "actual":
+            by_cat[c.cost_category].append(D(c.amount_try))
+    unusual = None
+    for cat, amounts in by_cat.items():
+        if len(amounts) >= 2:
+            for i, a in enumerate(amounts):
+                others = amounts[:i] + amounts[i + 1:]
+                others_avg = sum(others) / len(others) if others else D(0)
+                if others_avg > 0 and a > others_avg * 3:
+                    unusual = cat
+                    break
+        if unusual:
+            break
+    if unusual and not _has_active(db, cid, project.id, "unusual_cost"):
+        from app.constants import COST_CATEGORIES
+
+        _add_alert(db, cid, project.id, "unusual_cost", "medium", "Olağandışı Maliyet",
+                   f"{COST_CATEGORIES.get(unusual, unusual)} kategorisinde bir maliyet, kategori "
+                   "ortalamasının 3 katından fazla. İncelemenizi öneririz.",
+                   "İlgili maliyet kaydını doğrulayın.")
+        created.append({"type": "unusual_cost"})
+
+    # 3) Collection risk: an unpaid invoice 45+ days overdue.
+    risky = None
+    for inv in invoices:
+        if inv.payment_status != "paid" and D(inv.outstanding_try) > 0 and inv.due_date:
+            days = (today - inv.due_date).days
+            if days >= 45:
+                risky = (inv.invoice_number, days)
+                break
+    if risky and not _has_active(db, cid, project.id, "collection_risk"):
+        _add_alert(db, cid, project.id, "collection_risk", "high", "Tahsilat Riski",
+                   f"{risky[0]} hakedişi {risky[1]} gündür tahsil edilemedi. İşverenle iletişime geçilmesini öneririz.",
+                   "İşverenle tahsilat görüşmesi planlayın.")
+        created.append({"type": "collection_risk"})
+
+    # 4) Margin erosion: forecast margin below current and current below 12%.
+    f = project_financials(db, project, today=today)
+    fac = forecast_at_completion(db, project)
+    cur = float(f["margin_pct"])
+    fc = float(fac["forecast_final_margin_pct"])
+    if cur < 12 and fc < cur and not _has_active(db, cid, project.id, "margin_erosion"):
+        _add_alert(db, cid, project.id, "margin_erosion", "high", "Marj Bozulması",
+                   f"{project.name} projesinde kar marjı bozuluyor: güncel %{cur:.1f}, tahmini final %{fc:.1f}. "
+                   "Acil maliyet kontrolü gerekiyor.",
+                   "Final tahminleri ve maliyet kalemlerini gözden geçirin.")
+        created.append({"type": "margin_erosion"})
+
+    # 5) 30-day cash gap: outflow > inflow * 1.5.
+    horizon = today + timedelta(days=30)
+    out_30 = sum((D(c.total_with_vat_try) for c in costs
+                  if c.payment_status != "paid" and c.payment_due_date and today <= c.payment_due_date <= horizon), D(0))
+    in_30 = sum((D(inv.outstanding_try) for inv in invoices
+                 if inv.payment_status != "paid" and inv.due_date and today <= inv.due_date <= horizon), D(0))
+    if out_30 > in_30 * D("1.5") and out_30 > 0 and not _has_active(db, cid, project.id, "cash_gap_30"):
+        gap = out_30 - in_30
+        _add_alert(db, cid, project.id, "cash_gap_30", "high", "Nakit Açığı Riski",
+                   f"Önümüzdeki 30 günde {out_30:,.0f}₺ gider öngörüsüne karşın yalnızca {in_30:,.0f}₺ "
+                   f"tahsilat bekleniyor. {gap:,.0f}₺ nakit açığı riski.",
+                   "Tahsilatları hızlandırın veya ödeme planını revize edin.")
+        created.append({"type": "cash_gap_30"})
+
     return created
