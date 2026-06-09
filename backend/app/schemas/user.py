@@ -62,6 +62,10 @@ class CompanyOut(ORMModel):
     logo_url: str | None
     subscription_status: str
     fiscal_year_start_month: int
+    approvals_enabled: bool
+    cost_approval_threshold_try: float
+    require_budget_approval: bool
+    require_subcontractor_approval: bool
 
 
 class CompanyUpdate(BaseModel):
@@ -75,3 +79,7 @@ class CompanyUpdate(BaseModel):
     vat_rate_default: float | None = None
     logo_url: str | None = None
     fiscal_year_start_month: int | None = None
+    approvals_enabled: bool | None = None
+    cost_approval_threshold_try: float | None = None
+    require_budget_approval: bool | None = None
+    require_subcontractor_approval: bool | None = None

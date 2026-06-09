@@ -122,6 +122,13 @@ def create_cost(
         total_with_vat_try=twv,
         **data,
     )
+    # CR-003-J: entries above the company threshold await director approval and are
+    # excluded from the dashboard until approved.
+    from app.models.company import Company
+
+    company = db.get(Company, user.company_id)
+    if company and company.approvals_enabled and D(cost.amount_try) > D(company.cost_approval_threshold_try):
+        cost.pending_approval = True
     _refresh_payment_status(cost)
     db.add(cost)
     db.flush()

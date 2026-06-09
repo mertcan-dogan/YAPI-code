@@ -5,6 +5,7 @@ import {
   Bell,
   Calculator,
   ChevronDown,
+  ClipboardCheck,
   FileBarChart,
   FileText,
   FolderKanban,
@@ -68,6 +69,10 @@ function Sidebar() {
   const params = useParams();
   const projectId = params.id;
   const isDirector = useAuth((s) => s.user?.role === "director");
+  const [approvalCount, setApprovalCount] = React.useState(0);
+  React.useEffect(() => {
+    if (isDirector) apiGet<any[]>("/approvals").then(({ data }) => setApprovalCount(data?.length ?? 0)).catch(() => setApprovalCount(0));
+  }, [isDirector, pathname]);
   return (
     <aside className="hidden w-64 shrink-0 flex-col bg-primary lg:flex">
       <div className="flex items-center gap-2 px-5 py-4 text-white">
@@ -99,6 +104,18 @@ function Sidebar() {
           {BOTTOM_NAV.map((n) => (
             <NavItem key={n.to} {...n} active={pathname.startsWith(n.to)} />
           ))}
+          {isDirector && (
+            <Link
+              to="/approvals"
+              className={cn(
+                "flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                pathname === "/approvals" ? "bg-primary-light text-white" : "text-white/70 hover:bg-primary-light/60 hover:text-white"
+              )}
+            >
+              <span className="flex items-center gap-3"><ClipboardCheck className="h-4 w-4 shrink-0" /> Onay Bekleyenler</span>
+              {approvalCount > 0 && <span className="rounded-full bg-danger px-1.5 text-[10px] font-bold text-white">{approvalCount}</span>}
+            </Link>
+          )}
           {isDirector && (
             <NavItem icon={History} label="Denetim İzi" to="/audit-log" active={pathname === "/audit-log"} />
           )}

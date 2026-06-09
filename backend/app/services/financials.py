@@ -55,7 +55,9 @@ def _invoice_dict(i: ClientInvoice) -> dict:
 def load_project_inputs(db: Session, project: Project) -> tuple[list[dict], list[dict], list[dict]]:
     costs = db.execute(
         select(CostEntry).where(
-            CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False)
+            CostEntry.project_id == project.id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),  # CR-003-J: exclude unapproved
         )
     ).scalars().all()
     invoices = db.execute(

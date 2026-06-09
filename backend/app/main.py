@@ -14,6 +14,7 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.api import (
     ai,
     ai_import,
+    approvals,
     audit,
     auth,
     cashflow,
@@ -85,5 +86,6 @@ for r in (
     custom_categories.router,
     ai_import.router,
     variations.router,
+    approvals.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

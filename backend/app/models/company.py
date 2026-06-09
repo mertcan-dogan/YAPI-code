@@ -32,6 +32,13 @@ class Company(TimestampSoftDeleteMixin, Base):
     )
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     fiscal_year_start_month: Mapped[int] = mapped_column(default=1, server_default="1")
+    # CR-003-J approval workflow settings
+    approvals_enabled: Mapped[bool] = mapped_column(default=True, server_default="true")
+    cost_approval_threshold_try: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("500000"), server_default="500000"
+    )
+    require_budget_approval: Mapped[bool] = mapped_column(default=False, server_default="false")
+    require_subcontractor_approval: Mapped[bool] = mapped_column(default=False, server_default="false")
 
     users: Mapped[list["User"]] = relationship(back_populates="company")  # noqa: F821
     projects: Mapped[list["Project"]] = relationship(back_populates="company")  # noqa: F821

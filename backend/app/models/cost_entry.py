@@ -43,6 +43,9 @@ class CostEntry(TimestampSoftDeleteMixin, Base):
     amount_paid_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), server_default="0")
 
     entry_type: Mapped[str] = mapped_column(String(20), default="actual", server_default="actual")
+    # CR-003-J: large entries await director approval and are excluded from the dashboard.
+    pending_approval: Mapped[bool] = mapped_column(default=False, server_default="false")
+    approval_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

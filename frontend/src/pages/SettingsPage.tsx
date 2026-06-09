@@ -75,6 +75,25 @@ function CompanyTab() {
           <div><Label>Para Birimi</Label><Select value={f.default_currency ?? "TRY"} onChange={(e) => set("default_currency", e.target.value)}><option>TRY</option><option>EUR</option><option>USD</option></Select></div>
         </div>
         <div><Label>Mali Yıl Başlangıç Ayı</Label><Input type="number" min={1} max={12} value={f.fiscal_year_start_month ?? 1} onChange={(e) => set("fiscal_year_start_month", Number(e.target.value))} /></div>
+
+        {/* CR-003-J: approval thresholds */}
+        <div className="mt-2 rounded-md border border-border bg-bg p-3">
+          <h3 className="mb-2 text-sm font-semibold text-primary">Onay Eşikleri</h3>
+          <label className="flex items-center justify-between py-1 text-sm">
+            <span>Onay iş akışı aktif</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.approvals_enabled ?? true} onChange={(e) => set("approvals_enabled", e.target.checked)} />
+          </label>
+          <div className="py-1"><Label>Maliyet Girişi Onay Eşiği (TRY)</Label><Input type="number" value={f.cost_approval_threshold_try ?? 500000} onChange={(e) => set("cost_approval_threshold_try", Number(e.target.value))} /></div>
+          <label className="flex items-center justify-between py-1 text-sm">
+            <span>Bütçe değişikliği onay zorunlu</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_budget_approval ?? false} onChange={(e) => set("require_budget_approval", e.target.checked)} />
+          </label>
+          <label className="flex items-center justify-between py-1 text-sm">
+            <span>Alt yüklenici değişikliği onay zorunlu</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_subcontractor_approval ?? false} onChange={(e) => set("require_subcontractor_approval", e.target.checked)} />
+          </label>
+        </div>
+
         <div className="pt-2"><Button onClick={save} loading={saving} disabled={!form}>Kaydet</Button></div>
       </CardBody>
     </Card>

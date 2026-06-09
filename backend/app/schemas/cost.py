@@ -146,5 +146,6 @@ class CostEntryOut(ORMModel):
     amount_paid_try: Decimal
     document_url: str | None
     notes: str | None
+    pending_approval: bool = False
     created_by: uuid.UUID
     created_at: datetime
