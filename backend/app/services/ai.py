@@ -140,16 +140,11 @@ def daily_briefing(projects_summary: list[dict]) -> list[dict]:
         return items
 
 
-def analyze_excel_import(excel_text: str) -> dict:
-    """CR-002-H: classify messy Excel content into structured records.
-
-    Returns a dict with keys maliyet_girisleri / faturalar / alt_yukleniciler /
-    ekipman / tanimsiz, each a list of records carrying a 'confidence' (0..1).
-    Retries JSON parsing up to 2 times; raises AIUnavailable on failure.
-    """
+def build_import_prompt(excel_text: str) -> str:
+    """Prompt for the AI Excel importer (extracted so it is testable)."""
     from app.constants import COST_CATEGORY_KEYS
 
-    prompt = (
+    return (
         "Sen bir Türk inşaat projesi finans uzmanısın. Aşağıdaki Excel verilerini "
         "analiz et ve YALNIZCA JSON formatında döndür. Verileri şu kategorilere ayır "
         "ve her kayıt için 0-1 arası 'confidence' (güven) skoru ekle. Eksik alanları "
@@ -167,8 +162,23 @@ def analyze_excel_import(excel_text: str) -> dict:
         '  "tanimsiz": [{"raw":"...","confidence":0.0}]\n'
         "}\n\n"
         f"cost_category şu anahtarlardan biri olmalı: {', '.join(COST_CATEGORY_KEYS)}.\n\n"
+        # CR-003-B: distinguish supplier invoices (costs) from client invoices (revenue).
+        "ÖNEMLİ: Tedarikçi faturası (supplier invoice) ile işverene kesilen fatura "
+        "(client invoice/hakediş) arasındaki farkı dikkate al. Tedarikçi faturası = "
+        "maliyet_girisleri. İşverene kesilen fatura/hakediş = faturalar. Fatura numarası "
+        "olması bir kaydı otomatik olarak faturalar kategorisine sokmaz.\n\n"
         f"Excel verisi:\n{excel_text}"
     )
+
+
+def analyze_excel_import(excel_text: str) -> dict:
+    """CR-002-H: classify messy Excel content into structured records.
+
+    Returns a dict with keys maliyet_girisleri / faturalar / alt_yukleniciler /
+    ekipman / tanimsiz, each a list of records carrying a 'confidence' (0..1).
+    Retries JSON parsing up to 2 times; raises AIUnavailable on failure.
+    """
+    prompt = build_import_prompt(excel_text)
     last_err: Exception | None = None
     for _ in range(2):  # retry JSON parsing up to 2 times
         try:
