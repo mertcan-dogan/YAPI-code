@@ -140,6 +140,42 @@ def daily_briefing(projects_summary: list[dict]) -> list[dict]:
         return items
 
 
+def project_narrative(summary: dict) -> str:
+    """CR-003-F: a 2-3 sentence Turkish project summary (biggest positive/negative
+    driver, cash risk, next step). Degrades gracefully without the API."""
+    payload = json.dumps(summary, default=_decimal_default, ensure_ascii=False)
+    prompt = (
+        "Sen bir inşaat proje finansal analistisin. Aşağıdaki proje verilerine göre "
+        "2-3 cümlelik kısa bir Türkçe özet yaz: en büyük olumlu etken, en büyük "
+        "olumsuz etken, nakit riski ve önerilen sonraki adım. Yalnızca düz metin "
+        "döndür, JSON değil. Veriler: " + payload
+    )
+    try:
+        client = _client()
+        msg = client.messages.create(
+            model=settings.anthropic_model, max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+    except Exception:
+        # Deterministic fallback.
+        margin = float(summary.get("forecast_final_margin_pct", summary.get("margin_pct", 0)))
+        cash = float(summary.get("net_cash_position_try", 0))
+        parts = []
+        if margin < 5:
+            parts.append(f"Tahmini final kar marjı %{margin:.1f} ile kritik seviyede; acil maliyet kontrolü gerekiyor.")
+        elif margin < 10:
+            parts.append(f"Tahmini final kar marjı %{margin:.1f} ile hedefin altında.")
+        else:
+            parts.append(f"Tahmini final kar marjı %{margin:.1f} ile sağlıklı görünüyor.")
+        if cash < 0:
+            parts.append(f"Nakit pozisyonu negatif ({cash:,.0f}₺); tahsilatların hızlandırılması önerilir.")
+        else:
+            parts.append("Nakit pozisyonu pozitif.")
+        parts.append("Bütçe sapması olan kategoriler gözden geçirilmelidir.")
+        return " ".join(parts)
+
+
 def build_import_prompt(excel_text: str) -> str:
     """Prompt for the AI Excel importer (extracted so it is testable)."""
     from app.constants import COST_CATEGORY_KEYS

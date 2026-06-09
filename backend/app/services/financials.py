@@ -95,3 +95,52 @@ def project_financials(
 def project_cashflow(db: Session, project: Project, today: date | None = None) -> list[dict]:
     costs, invoices, _ = load_project_inputs(db, project)
     return compute_monthly_cashflow(costs, invoices, today=today)
+
+
+def forecast_at_completion(db: Session, project: Project) -> dict:
+    """CR-003-F: Forecast-at-Completion KPIs (uses VAT-inclusive cost totals)."""
+    from app.calculations.money import D, money, pct, safe_div
+
+    costs, _invoices, budgets = load_project_inputs(db, project)
+    contract = D(project.contract_value_try)
+
+    original_budget = money(sum((D(b["original_budget_try"]) for b in budgets), D(0)))
+    revised_budget = money(
+        sum((D(b["original_budget_try"]) + D(b["approved_variations_try"]) for b in budgets), D(0))
+    )
+
+    # Actual (entry_type=actual) cost-to-date and per-category VAT-inclusive totals.
+    cost_to_date = D(0)
+    actual_by_cat: dict[str, object] = {}
+    for c in costs:
+        if c.get("entry_type") == "actual":
+            twv = D(c.get("total_with_vat_try"))
+            cost_to_date += twv
+            cat = c.get("cost_category")
+            actual_by_cat[cat] = D(actual_by_cat.get(cat, D(0))) + twv
+    cost_to_date = money(cost_to_date)
+
+    # Estimated final cost: per-category forecast_final_try if set, else actuals.
+    budget_by_cat = {b["cost_category"]: b for b in budgets}
+    all_cats = set(budget_by_cat) | set(actual_by_cat)
+    forecast_final_cost = D(0)
+    for cat in all_cats:
+        b = budget_by_cat.get(cat)
+        if b and b.get("forecast_final_try") is not None:
+            forecast_final_cost += D(b["forecast_final_try"])
+        else:
+            forecast_final_cost += D(actual_by_cat.get(cat, D(0)))
+    forecast_final_cost = money(forecast_final_cost)
+
+    cost_to_complete = money(forecast_final_cost - cost_to_date)
+    margin_pct = pct(safe_div(contract - forecast_final_cost, contract) * 100)
+
+    return {
+        "original_budget_try": str(original_budget),
+        "revised_budget_try": str(revised_budget),
+        "cost_to_date_try": str(cost_to_date),
+        "cost_to_complete_try": str(cost_to_complete),
+        "forecast_final_cost_try": str(forecast_final_cost),
+        "forecast_final_margin_pct": str(margin_pct),
+        "over_budget": forecast_final_cost > revised_budget,
+    }

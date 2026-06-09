@@ -139,13 +139,38 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
     project = get_company_project(db, project_id, user)
     f = fin_service.project_financials(db, project)
     cashflow = fin_service.project_cashflow(db, project)
+    fac = fin_service.forecast_at_completion(db, project)  # CR-003-F
     return success(
         {
             "project": ProjectOut.model_validate(project).model_dump(mode="json"),
             "financials": _jsonify(f),
             "cashflow": _jsonify_list(cashflow),
+            "forecast_at_completion": fac,
         }
     )
+
+
+@router.post("/projects/{project_id}/ai-narrative")
+def project_ai_narrative(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-003-F: AI-written 2-3 sentence project summary."""
+    from datetime import datetime, timezone
+
+    from app.services import ai as ai_service
+
+    project = get_company_project(db, project_id, user)
+    f = fin_service.project_financials(db, project)
+    fac = fin_service.forecast_at_completion(db, project)
+    summary = {
+        "project_name": project.name,
+        "margin_pct": str(f["margin_pct"]),
+        "forecast_final_margin_pct": fac["forecast_final_margin_pct"],
+        "net_cash_position_try": str(f["net_cash_position_try"]),
+        "overdue_count": f["overdue_count"],
+        "categories_over_100pct": f["categories_over_100pct"],
+        "cost_to_complete_try": fac["cost_to_complete_try"],
+    }
+    narrative = ai_service.project_narrative(summary)
+    return success({"narrative": narrative, "generated_at": datetime.now(timezone.utc).isoformat()})
 
 
 # --- Budget (Section 4.3) ---
