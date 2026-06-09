@@ -16,6 +16,7 @@ from app.api import (
     ai_import,
     approvals,
     audit,
+    budget_templates,
     auth,
     cashflow,
     costs,
@@ -87,5 +88,6 @@ for r in (
     ai_import.router,
     variations.router,
     approvals.router,
+    budget_templates.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

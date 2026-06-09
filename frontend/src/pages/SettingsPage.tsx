@@ -2,7 +2,7 @@ import { DataTable, type Column } from "@/components/DataTable";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
-import { ROLE_LABELS, VAT_RATES } from "@/constants";
+import { COST_CATEGORIES, ROLE_LABELS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost, apiPut } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -16,6 +16,7 @@ import { Navigate } from "react-router-dom";
 const TABS = [
   { key: "company", label: "Şirket" },
   { key: "users", label: "Kullanıcılar" },
+  { key: "templates", label: "Şablonlar" },
   { key: "notifications", label: "Bildirimler" },
 ];
 
@@ -34,6 +35,7 @@ export default function SettingsPage() {
       </div>
       {tab === "company" && <CompanyTab />}
       {tab === "users" && <UsersTab />}
+      {tab === "templates" && <TemplatesTab />}
       {tab === "notifications" && <NotificationsTab />}
     </div>
   );
@@ -167,6 +169,53 @@ function InviteDrawer({ open, onClose, onSaved }: { open: boolean; onClose: () =
         <div><Label required>Rol</Label><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select></div>
       </div>
     </SideDrawer>
+  );
+}
+
+// CR-003-L: budget templates list (presets + company custom).
+function TemplatesTab() {
+  const { data, refetch } = useFetch<{ id: string; name: string; is_preset: boolean; distribution: Record<string, number> }[]>("/budget-templates");
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const create = async () => {
+    if (!name.trim()) return;
+    setCreating(true);
+    try {
+      // New custom template seeded from an even split of the standard categories
+      // (the user edits per-category budgets when creating a project).
+      await apiPost("/budget-templates", { name, distribution: { labour_direct: 100 } });
+      toast.success("Şablon oluşturuldu");
+      setName("");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <Card className="max-w-3xl">
+      <CardBody className="space-y-3">
+        <p className="text-sm text-text-secondary">Hazır şablonlar ve şirketinize özel şablonlar. Proje sihirbazında "Şablondan Yükle" ile uygulanır.</p>
+        {(data ?? []).map((t) => (
+          <div key={t.id} className="rounded-md border border-border p-3">
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-primary">{t.name}</span>
+              {t.is_preset && <span className="rounded bg-navy-50 px-2 py-0.5 text-[10px] text-primary-light">Hazır</span>}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
+              {Object.entries(t.distribution).map(([cat, pct]) => (
+                <span key={cat}>{COST_CATEGORIES[cat] ?? cat}: %{pct}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="flex items-end gap-2 border-t border-border pt-3">
+          <div className="flex-1"><Label>Yeni Şablon Adı</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Tünel Projesi" /></div>
+          <Button onClick={create} loading={creating} disabled={!name.trim()}>Oluştur</Button>
+        </div>
+      </CardBody>
+    </Card>
   );
 }
 

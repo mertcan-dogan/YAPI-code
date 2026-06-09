@@ -18,6 +18,8 @@ export default function NewProjectPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [prevTypes, setPrevTypes] = useState<{ value: string; label: string }[]>([]);
+  const [templates, setTemplates] = useState<{ id: string; name: string; distribution: Record<string, number> }[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState("");
   const [form, setForm] = useState<any>({
     name: "",
     project_code: "",
@@ -62,7 +64,24 @@ export default function NewProjectPage() {
         setPrevTypes(Array.from(seen.values()).map((v) => ({ value: `prev:${v}`, label: v })));
       })
       .catch(() => setPrevTypes([]));
+    // CR-003-L: load budget templates.
+    apiGet<any[]>("/budget-templates").then(({ data }) => setTemplates(data ?? [])).catch(() => setTemplates([]));
   }, []);
+
+  const applyTemplate = () => {
+    const t = templates.find((x) => x.id === selectedTemplate);
+    const contract = toNumber(form.original_budget_try || form.contract_value_try);
+    if (!t || contract <= 0) {
+      toast.error("Şablon uygulamak için önce sözleşme/bütçe değeri girin");
+      return;
+    }
+    const next: Record<string, string> = {};
+    for (const [cat, pct] of Object.entries(t.distribution)) {
+      next[cat] = String(Math.round((contract * Number(pct)) / 100));
+    }
+    setBudgets(next);
+    toast.success(`"${t.name}" şablonu uygulandı`);
+  };
 
   const budgetTotal =
     Object.values(budgets).reduce((s, v) => s + toNumber(v), 0) +
@@ -240,6 +259,18 @@ export default function NewProjectPage() {
 
           {step === 3 && (
             <>
+              {templates.length > 0 && (
+                <div className="flex items-end gap-2 rounded-md border border-border bg-bg p-3">
+                  <div className="flex-1">
+                    <Label>Şablondan Yükle</Label>
+                    <Select value={selectedTemplate} onChange={(e) => setSelectedTemplate(e.target.value)}>
+                      <option value="">Şablon seçin…</option>
+                      {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </Select>
+                  </div>
+                  <Button type="button" variant="outline" disabled={!selectedTemplate} onClick={applyTemplate}>Uygula</Button>
+                </div>
+              )}
               <p className="text-sm text-text-secondary">Kategori bazında bütçe girin (opsiyonel, sonra düzenlenebilir).</p>
               {COST_CATEGORY_OPTIONS.map((c) => (
                 <div key={c.value} className="flex items-center gap-3">
