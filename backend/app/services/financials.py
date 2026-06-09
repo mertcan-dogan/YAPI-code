@@ -144,3 +144,67 @@ def forecast_at_completion(db: Session, project: Project) -> dict:
         "forecast_final_margin_pct": str(margin_pct),
         "over_budget": forecast_final_cost > revised_budget,
     }
+
+
+def margin_bridge(db: Session, project: Project) -> dict:
+    """CR-003-G: margin waterfall components (TRY)."""
+    from app.calculations.money import D, money, safe_div
+
+    costs, _invoices, budgets = load_project_inputs(db, project)
+    contract = D(project.contract_value_try)
+
+    # Original expected margin: target margin % if set, else (contract - original budget)/contract.
+    original_budget = sum((D(b["original_budget_try"]) for b in budgets), D(0))
+    if project.target_margin_pct is not None:
+        original_margin = money(contract * D(project.target_margin_pct) / D(100))
+    else:
+        original_margin = money(contract - original_budget)
+
+    approved_variations = money(sum((D(b["approved_variations_try"]) for b in budgets), D(0)))
+
+    # Pending variations from the variations module (CR-003-I), if present.
+    pending_variations = D(0)
+    try:
+        from app.models.variation import Variation
+
+        for v in db.execute(
+            select(Variation).where(
+                Variation.project_id == project.id, Variation.status == "pending",
+                Variation.is_deleted.is_(False),
+            )
+        ).scalars().all():
+            pending_variations += D(v.value_try)
+    except Exception:
+        pending_variations = D(0)
+    pending_variations = money(pending_variations)
+
+    # Per-category overruns / savings (forecast vs original budget).
+    actual_by_cat: dict = {}
+    for c in costs:
+        if c.get("entry_type") == "actual":
+            cat = c.get("cost_category")
+            actual_by_cat[cat] = D(actual_by_cat.get(cat, D(0))) + D(c.get("total_with_vat_try"))
+    overruns = D(0)
+    savings = D(0)
+    for b in budgets:
+        cat = b["cost_category"]
+        original = D(b["original_budget_try"])
+        forecast = D(b["forecast_final_try"]) if b["forecast_final_try"] is not None else D(actual_by_cat.get(cat, D(0)))
+        diff = forecast - original
+        if original > 0:  # only categories with a budget contribute over/under
+            if diff > 0:
+                overruns += diff
+            elif diff < 0:
+                savings += -diff
+
+    fac = forecast_at_completion(db, project)
+    current_margin = money(contract - D(fac["forecast_final_cost_try"]))
+
+    return {
+        "original_margin_try": str(original_margin),
+        "approved_variations_try": str(approved_variations),
+        "pending_variations_try": str(pending_variations),
+        "cost_overruns_try": str(money(-overruns)),   # negative impact
+        "cost_savings_try": str(money(savings)),       # positive impact
+        "current_margin_try": str(current_margin),
+    }

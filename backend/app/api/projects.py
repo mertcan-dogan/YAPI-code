@@ -140,12 +140,14 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
     f = fin_service.project_financials(db, project)
     cashflow = fin_service.project_cashflow(db, project)
     fac = fin_service.forecast_at_completion(db, project)  # CR-003-F
+    bridge = fin_service.margin_bridge(db, project)  # CR-003-G
     return success(
         {
             "project": ProjectOut.model_validate(project).model_dump(mode="json"),
             "financials": _jsonify(f),
             "cashflow": _jsonify_list(cashflow),
             "forecast_at_completion": fac,
+            "margin_bridge": bridge,
         }
     )
 

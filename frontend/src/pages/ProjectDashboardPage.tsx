@@ -1,4 +1,4 @@
-import { CashFlowChart, SCurveChart } from "@/components/charts";
+import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
 import { Button, Card, CardBody } from "@/components/ui";
 import { EmptyState } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
@@ -24,7 +24,7 @@ interface FAC {
 
 export default function ProjectDashboardPage() {
   const { id } = useParams();
-  const { data, loading } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC }>(
+  const { data, loading } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
     `/projects/${id}/dashboard`
   );
   const p = data?.project;
@@ -123,6 +123,16 @@ export default function ProjectDashboardPage() {
           <h2 className="mb-3 text-lg font-semibold text-primary">Aylık Nakit Akışı</h2>
           <Card><CardBody>{cashflow.length ? <CashFlowChart data={cashflow} /> : <EmptyState message="Henüz nakit hareketi yok." />}</CardBody></Card>
         </div>
+      </div>
+
+      {/* CR-003-G: Margin Bridge */}
+      <div className="mt-6">
+        <h2 className="mb-3 text-lg font-semibold text-primary">Marj Hareketi — Neden Değişti?</h2>
+        <Card>
+          <CardBody>
+            {data?.margin_bridge ? <MarginBridgeChart bridge={data.margin_bridge} /> : <EmptyState message="Marj verisi yok." />}
+          </CardBody>
+        </Card>
       </div>
 
       {f?.estimated_finish_date && (

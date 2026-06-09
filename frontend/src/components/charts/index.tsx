@@ -4,6 +4,7 @@ import {
   Area,
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Line,
   LineChart,
@@ -61,6 +62,51 @@ export function SCurveChart({
         <Line type="monotone" dataKey="planned" name="Planlanan Kümülatif" stroke={COLORS.lightBlue} strokeWidth={2} strokeDasharray="6 4" dot={false} />
         <Line type="monotone" dataKey="actual" name="Gerçekleşen Kümülatif" stroke={COLORS.primary} strokeWidth={2} dot={false} />
       </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Margin Bridge — waterfall (CR-003-G). Components flow left-to-right.
+export function MarginBridgeChart({ bridge, height = 300 }: { bridge: Record<string, string>; height?: number }) {
+  const n = (k: string) => Number(bridge?.[k] ?? 0);
+  const steps = [
+    { name: "Orijinal Marj", value: n("original_margin_try"), kind: "total" as const },
+    { name: "Onaylı Ek İş", value: n("approved_variations_try"), kind: "delta" as const },
+    { name: "Bekleyen Ek İş", value: n("pending_variations_try"), kind: "delta" as const },
+    { name: "Maliyet Aşımı", value: n("cost_overruns_try"), kind: "delta" as const },
+    { name: "Tasarruf", value: n("cost_savings_try"), kind: "delta" as const },
+    { name: "Güncel Marj", value: n("current_margin_try"), kind: "total" as const },
+  ];
+
+  // Build stacked bars: a transparent base + a coloured value segment.
+  let running = 0;
+  const data = steps.map((s) => {
+    if (s.kind === "total") {
+      const row = { name: s.name, base: 0, val: s.value, fill: COLORS.primary };
+      running = s.value;
+      return row;
+    }
+    const base = s.value >= 0 ? running : running + s.value;
+    const fill = s.value >= 0 ? COLORS.success : COLORS.danger;
+    const row = { name: s.name, base, val: Math.abs(s.value), fill };
+    running += s.value;
+    return row;
+  });
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} vertical={false} />
+        <XAxis dataKey="name" {...axisProps} interval={0} angle={-15} textAnchor="end" height={60} />
+        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} {...axisProps} width={70} />
+        <Tooltip formatter={(v: any, _n: any, p: any) => [formatCurrencyAbbrev(p?.payload?.name?.includes("Aşım") ? -v : v), "Tutar"]} />
+        <Bar dataKey="base" stackId="a" fill="transparent" />
+        <Bar dataKey="val" stackId="a" radius={[2, 2, 0, 0]}>
+          {data.map((d, i) => (
+            <Cell key={i} fill={d.fill} />
+          ))}
+        </Bar>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }
