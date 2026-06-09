@@ -206,6 +206,50 @@ def assistant_answer(question: str, context: dict) -> str:
         return "AI şu an kullanılamıyor. Lütfen daha sonra tekrar deneyin."
 
 
+def _plain_text(prompt: str, max_tokens: int = 600) -> str:
+    client = _client()
+    msg = client.messages.create(
+        model=settings.anthropic_model, max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+
+
+def management_summary(context: dict) -> str:
+    """CR-003-K: 1-page Turkish executive summary (3 başarı, 3 risk, 3 eylem)."""
+    payload = json.dumps(context, default=_decimal_default, ensure_ascii=False)
+    try:
+        return _plain_text(
+            "Sen bir Türk inşaat şirketi için yönetim kurulu raporu yazıyorsun. "
+            "Aşağıdaki verilere göre 1 paragraflık Türkçe yönetici özeti yaz: en önemli "
+            "3 başarı, en önemli 3 risk ve önerilen 3 eylem. Veriler: " + payload, 800
+        )
+    except Exception:
+        return (
+            f"{context.get('sirket', 'Şirket')} portföyünde {context.get('proje_sayisi', 0)} aktif proje "
+            f"bulunmaktadır. Toplam sözleşme değeri {context.get('toplam_sozlesme', '0')}₺, bekleyen "
+            f"tahsilat {context.get('toplam_bekleyen_tahsilat', '0')}₺'dir. Öncelikli eylem: vadesi geçmiş "
+            "tahsilatların takibi ve bütçe aşımı olan kategorilerin gözden geçirilmesidir."
+        )
+
+
+def management_actions(context: dict) -> str:
+    """CR-003-K: prioritised action list (Turkish)."""
+    payload = json.dumps(context, default=_decimal_default, ensure_ascii=False)
+    try:
+        return _plain_text(
+            "Aşağıdaki proje portföyü için öncelikli eylem listesi yaz (madde madde, "
+            "Türkçe). Veriler: " + payload, 600
+        )
+    except Exception:
+        return (
+            "1. Vadesi geçmiş hakedişleri takip edin.\n"
+            "2. Bütçe aşımı olan kategorileri inceleyin.\n"
+            "3. Onay bekleyen işlemleri sonuçlandırın.\n"
+            "4. Nakit açığı riski olan projeler için tahsilatı hızlandırın."
+        )
+
+
 def build_import_prompt(excel_text: str) -> str:
     """Prompt for the AI Excel importer (extracted so it is testable)."""
     from app.constants import COST_CATEGORY_KEYS

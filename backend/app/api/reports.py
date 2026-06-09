@@ -35,3 +35,25 @@ def project_report(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/management-pack")
+def management_pack(
+    user: InvoiceCreatorUser,
+    db: Session = Depends(get_db),
+    period: str | None = None,
+):
+    """CR-003-K: monthly management pack PDF (7 pages)."""
+    company = db.get(Company, user.company_id)
+    period_label = period or "Bu Ay"
+    try:
+        from app.services.reports import render_management_pack
+
+        pdf = render_management_pack(db, company, period_label)
+    except Exception as exc:
+        raise APIError(500, "REPORT_ERROR", f"Rapor oluşturulamadı: {exc}")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="aylik-yonetim-paketi.pdf"'},
+    )

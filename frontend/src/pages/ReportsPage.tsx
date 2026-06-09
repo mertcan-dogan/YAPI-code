@@ -42,9 +42,43 @@ export default function ReportsPage() {
     }
   };
 
+  // CR-003-K: monthly management pack.
+  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [packLoading, setPackLoading] = useState(false);
+  const downloadPack = async () => {
+    setPackLoading(true);
+    try {
+      const res = await api.get("/reports/management-pack", { params: { period }, responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "aylik-yonetim-paketi.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Rapor indirildi");
+    } catch (e: any) {
+      toast.error(e.message ?? "Rapor oluşturulamadı");
+    } finally {
+      setPackLoading(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader title="Raporlar" />
+
+      <Card className="mb-6">
+        <CardBody className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-text-secondary">Aylık Yönetim Paketi</label>
+            <input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="rounded-md border border-border bg-surface px-3 py-2 text-sm" />
+          </div>
+          <Button loading={packLoading} onClick={downloadPack}>
+            <Download className="h-4 w-4" /> Aylık Yönetim Paketi İndir
+          </Button>
+          <p className="text-xs text-text-secondary">7 sayfalık AI destekli yönetim raporu (oluşturma 15-30 sn sürebilir).</p>
+        </CardBody>
+      </Card>
       <div className="mb-4 max-w-sm">
         <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
           <option value="">Proje seçin...</option>
