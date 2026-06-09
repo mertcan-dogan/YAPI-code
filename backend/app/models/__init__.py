@@ -11,6 +11,7 @@ from app.models.budget_line_item import BudgetLineItem
 from app.models.audit_log import AuditLog
 from app.models.ai_alert import AIAlert
 from app.models.custom_category import CustomCostCategory
+from app.models.variation import Variation
 
 __all__ = [
     "Base",
@@ -25,4 +26,5 @@ __all__ = [
     "AuditLog",
     "AIAlert",
     "CustomCostCategory",
+    "Variation",
 ]

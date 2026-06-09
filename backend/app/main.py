@@ -28,6 +28,7 @@ from app.api import (
     settings as settings_router,
     subcontractors,
     uploads,
+    variations,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -83,5 +84,6 @@ for r in (
     settings_router.router,
     custom_categories.router,
     ai_import.router,
+    variations.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

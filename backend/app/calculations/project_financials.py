@@ -252,8 +252,8 @@ def _compute_category_rows(
         rows.append(
             {
                 "cost_category": cat,
-                "original_budget_try": original,
-                "approved_variations_try": variations,
+                "original_budget_try": money(original),
+                "approved_variations_try": money(variations),
                 "revised_budget_try": revised,
                 "committed_try": committed,
                 "invoiced_try": invoiced,

@@ -22,6 +22,7 @@ import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SubcontractorsPage from "./pages/SubcontractorsPage";
 import TwoFactorSetupPage from "./pages/TwoFactorSetupPage";
+import VariationsPage from "./pages/VariationsPage";
 
 function FullScreenLoader() {
   return (
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="/projects/:id/dashboard" element={<ProjectDashboardPage />} />
           <Route path="/projects/:id/budget" element={<BudgetPage />} />
           <Route path="/projects/:id/invoices" element={<InvoicesPage />} />
+          <Route path="/projects/:id/variations" element={<VariationsPage />} />
           <Route path="/projects/:id/subcontractors" element={<SubcontractorsPage />} />
           <Route path="/projects/:id/cashflow" element={<CashFlowPage />} />
           <Route path="/projects/:id/equipment" element={<EquipmentPage />} />

@@ -176,6 +176,24 @@ export interface Reminder {
   record_id: string;
 }
 
+export interface Variation {
+  id: string;
+  project_id: string;
+  variation_number: string;
+  title: string;
+  description: string | null;
+  submitted_date: string;
+  approved_date: string | null;
+  status: string;
+  value_try: string;
+  approved_value_try: string | null;
+  cost_impact_try: string;
+  margin_impact_try: string;
+  cost_category: string | null;
+  document_url: string | null;
+  notes: string | null;
+}
+
 export interface AIAlert {
   id: string;
   project_id: string | null;
