@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   Plus,
   Settings,
   Sparkles,
@@ -41,6 +42,7 @@ const BOTTOM_NAV = [
   { icon: Bell, label: "Hatırlatıcılar", to: "/reminders" },
   { icon: FileBarChart, label: "Raporlar", to: "/reports" },
   { icon: Sparkles, label: "Yapay Zeka Uyarıları", to: "/ai-alerts" },
+  { icon: MessageSquare, label: "AI Asistan", to: "/ai-assistant" },
   { icon: Settings, label: "Ayarlar", to: "/settings" },
 ];
 

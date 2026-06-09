@@ -176,6 +176,36 @@ def project_narrative(summary: dict) -> str:
         return " ".join(parts)
 
 
+ASSISTANT_SYSTEM = (
+    "Sen bir Türk inşaat şirketinin AI finansal asistanısın. Yalnızca verilen proje "
+    "finansal verilerine dayanarak Türkçe yanıt ver. Yanıtların kısa, net ve eyleme "
+    "yönelik olsun, madde madde yaz. Sayısal değerleri Türkçe formatta (₺, %) ver. "
+    "Belirsiz verilere dayanarak tahmin yapma — yalnızca bilinen verileri kullan."
+)
+
+
+def assistant_answer(question: str, context: dict) -> str:
+    """CR-003-H: answer a natural-language financial question from project data."""
+    payload = json.dumps(context, default=_decimal_default, ensure_ascii=False)
+    try:
+        client = _client()
+        msg = client.messages.create(
+            model=settings.anthropic_model,
+            max_tokens=1000,
+            system=ASSISTANT_SYSTEM,
+            messages=[{"role": "user", "content": f"Veriler:\n{payload}\n\nSoru: {question}"}],
+        )
+        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+    except AIUnavailable:
+        return (
+            "AI şu an kullanılamıyor. Sorunuzu yanıtlamak için yapay zeka servisi "
+            "gereklidir. Lütfen daha sonra tekrar deneyin."
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("assistant_answer failed: %s", exc)
+        return "AI şu an kullanılamıyor. Lütfen daha sonra tekrar deneyin."
+
+
 def build_import_prompt(excel_text: str) -> str:
     """Prompt for the AI Excel importer (extracted so it is testable)."""
     from app.constants import COST_CATEGORY_KEYS

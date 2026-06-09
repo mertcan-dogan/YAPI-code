@@ -6,6 +6,7 @@ import { Toaster } from "./components/Toaster";
 import { useAuth } from "./store/auth";
 
 import AIAlertsPage from "./pages/AIAlertsPage";
+import AIAssistantPage from "./pages/AIAssistantPage";
 import AuditLogPage from "./pages/AuditLogPage";
 import BudgetPage from "./pages/BudgetPage";
 import CashFlowPage from "./pages/CashFlowPage";
@@ -83,6 +84,7 @@ export default function App() {
           <Route path="/reminders" element={<RemindersPage />} />
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
+          <Route path="/ai-assistant" element={<AIAssistantPage />} />
           <Route path="/settings/*" element={<SettingsPage />} />
           <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />
         </Route>

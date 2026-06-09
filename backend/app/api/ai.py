@@ -6,18 +6,70 @@ from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pydantic import BaseModel
+
 from app.db import get_db
 from app.deps import CurrentUser, DirectorOrPMUser
 from app.models.ai_alert import AIAlert
+from app.models.project import Project
 from app.responses import APIError, success
 from app.services import ai as ai_service
 from app.services.access import get_company_project
 from app.services.alert_engine import analyze_project
-from app.services.financials import project_financials
+from app.services.financials import forecast_at_completion, project_financials
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
+
+
+class AssistantQuestion(BaseModel):
+    question: str
+    project_id: uuid.UUID | None = None
+
+
+def _active_projects(db: Session, company_id):
+    return db.execute(
+        select(Project).where(
+            Project.company_id == company_id, Project.is_deleted.is_(False), Project.status == "active"
+        )
+    ).scalars().all()
+
+
+@router.post("/assistant")
+def assistant(payload: AssistantQuestion, user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-003-H: natural-language financial Q&A scoped to the user's company."""
+    from app.models.company import Company
+
+    company = db.get(Company, user.company_id)
+    context: dict = {"company": company.name if company else "", "soru": payload.question}
+
+    if payload.project_id:
+        project = get_company_project(db, payload.project_id, user)  # RLS/scoping
+        f = project_financials(db, project)
+        fac = forecast_at_completion(db, project)
+        context["proje"] = {
+            "ad": project.name,
+            "sozlesme_degeri": str(f["contract_value_try"]),
+            "guncel_marj_pct": str(f["margin_pct"]),
+            "tahmini_final_marj_pct": fac["forecast_final_margin_pct"],
+            "net_nakit": str(f["net_cash_position_try"]),
+            "vadesi_gecmis_adet": f["overdue_count"],
+            "rag": f["rag_status"],
+        }
+    else:
+        rows = []
+        for p in _active_projects(db, user.company_id):
+            f = project_financials(db, p)
+            rows.append({
+                "ad": p.name, "marj_pct": str(f["margin_pct"]),
+                "net_nakit": str(f["net_cash_position_try"]),
+                "vadesi_gecmis_adet": f["overdue_count"], "rag": f["rag_status"],
+            })
+        context["projeler"] = rows
+
+    answer = ai_service.assistant_answer(payload.question, context)
+    return success({"answer": answer, "data_points": context, "generated_at": datetime.now(timezone.utc).isoformat()})
 
 
 @router.post("/analyze-project/{project_id}")
