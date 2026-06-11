@@ -1,5 +1,6 @@
 """Yapı FastAPI application entrypoint (Section 2.5, 8.1, 13.2)."""
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from app.config import settings
 from app.middleware.errors import CatchAllErrorMiddleware, register_error_handlers
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.startup import run_migrations
 
 # Routers
 from app.api import (
@@ -37,12 +39,22 @@ from app.api import (
 
 logging.basicConfig(level=logging.INFO)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Reconcile the database schema to the models on every boot, regardless of
+    # how the platform builds/starts the container (see app/startup.py).
+    run_migrations()
+    yield
+
+
 app = FastAPI(
     title="Yapı API",
     description="İnşaat Proje Yönetim Yazılımı — REST API",
     version="1.0.0",
     docs_url="/docs",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 # --- Security middleware (Section 8.1) ---
