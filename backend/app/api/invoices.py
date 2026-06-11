@@ -132,6 +132,14 @@ def update_invoice(
         record_id=inv.id, action="UPDATE", old_values=old, new_values=snapshot(inv),
         ip_address=_ip(request),
     )
+    # CR-006-C: hakediş tahsil edildiğinde zil bildirimi oluştur (tek seferlik geçiş).
+    if inv.payment_status == "paid" and (old or {}).get("payment_status") != "paid":
+        try:
+            from app.services.triggers import notify_invoice_received
+
+            notify_invoice_received(db, inv, project)
+        except Exception:
+            pass
     db.commit()
     db.refresh(inv)
     return success(ClientInvoiceOut.model_validate(inv).model_dump(mode="json"))

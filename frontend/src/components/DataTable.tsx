@@ -11,6 +11,7 @@ export interface Column<T> {
   sortable?: boolean;
   render?: (row: T) => React.ReactNode;
   sortValue?: (row: T) => string | number;
+  maxWidth?: number; // CR-004-E: truncate long text with ellipsis
 }
 
 interface DataTableProps<T> {
@@ -21,6 +22,7 @@ interface DataTableProps<T> {
   emptyAction?: { label: string; onClick: () => void };
   onRowClick?: (row: T) => void;
   rowClassName?: (row: T) => string;
+  minWidth?: number; // CR-004-E: minimum table width before horizontal scroll kicks in
 }
 
 // Data Table — sticky navy header, zebra rows, sortable (Section 6.5)
@@ -32,6 +34,7 @@ export function DataTable<T extends Record<string, any>>({
   emptyAction,
   onRowClick,
   rowClassName,
+  minWidth = 640,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = React.useState<string | null>(null);
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
@@ -81,12 +84,13 @@ export function DataTable<T extends Record<string, any>>({
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full min-w-[640px] border-collapse text-sm">
+      <table className="w-full border-collapse text-sm" style={{ minWidth: minWidth }}>
         <thead className="sticky top-0">
           <tr className="bg-primary text-white">
             {columns.map((c) => (
               <th
                 key={c.key}
+                style={c.maxWidth ? { maxWidth: c.maxWidth } : undefined}
                 className={cn(
                   "px-3 py-2.5 text-left text-xs font-semibold",
                   c.align === "right" && "text-right",
@@ -118,11 +122,14 @@ export function DataTable<T extends Record<string, any>>({
               {columns.map((c) => (
                 <td
                   key={c.key}
+                  style={c.maxWidth ? { maxWidth: c.maxWidth } : undefined}
                   className={cn(
                     "px-3 py-2.5",
                     c.align === "right" && "text-right tabular",
-                    c.align === "center" && "text-center"
+                    c.align === "center" && "text-center",
+                    c.maxWidth && "truncate"
                   )}
+                  title={c.maxWidth && typeof row[c.key] === "string" ? row[c.key] : undefined}
                 >
                   {c.render ? c.render(row) : row[c.key]}
                 </td>

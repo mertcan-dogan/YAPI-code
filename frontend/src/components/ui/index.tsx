@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 import * as React from "react";
-import { Loader2 } from "lucide-react";
+import { Info, Loader2, X } from "lucide-react";
 
 // --- Button ---
 type ButtonVariant = "primary" | "ghost" | "danger" | "outline";
@@ -130,4 +130,52 @@ export function Checkbox({
 // --- Skeleton (Section 6.7) ---
 export function Skeleton({ className }: { className?: string }) {
   return <div className={cn("skeleton h-4 w-full", className)} />;
+}
+
+// --- Modal (CR-004-D / CR-004-K) — centred overlay dialog ---
+export function Modal({
+  open,
+  title,
+  onClose,
+  children,
+  footer,
+  size = "lg",
+}: {
+  open: boolean;
+  title: React.ReactNode;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  size?: "md" | "lg" | "xl";
+}) {
+  if (!open) return null;
+  const widths: Record<string, string> = { md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl" };
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className={cn("relative z-10 my-4 w-full rounded-lg bg-surface shadow-xl animate-slide-in", widths[size])}>
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h3 className="text-base font-semibold text-primary">{title}</h3>
+          <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Kapat">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        {footer && <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// --- AI Disclaimer (CR-004-F) — shown under every AI-generated output ---
+export function AIDisclaimer({ short = false, className }: { short?: boolean; className?: string }) {
+  const text = short
+    ? "Bu yanıt yapay zeka tarafından oluşturulmuştur ve hatalar içerebilir."
+    : "Bu içerik yapay zeka tarafından oluşturulmuştur ve hatalar içerebilir. Önemli finansal kararlar almadan önce lütfen doğrulayın.";
+  return (
+    <p className={cn("mt-2 flex items-start gap-1 text-[11px] italic", className)} style={{ color: "#94A3B8" }}>
+      <Info className="mt-0.5 h-3 w-3 shrink-0" />
+      <span>{text}</span>
+    </p>
+  );
 }

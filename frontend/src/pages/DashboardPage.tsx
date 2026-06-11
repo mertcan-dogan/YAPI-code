@@ -1,13 +1,15 @@
 import { CashFlowChart } from "@/components/charts";
-import { Card, CardBody } from "@/components/ui";
+import { AIDisclaimer, Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
+import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
 import { DataTable, type Column } from "@/components/DataTable";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
-import { formatCurrency, formatCurrencyAbbrev, formatDate, formatPct, toNumber } from "@/utils/format";
-import { Sparkles } from "lucide-react";
+import { useAISummaryStore } from "@/store/aiSummary";
+import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
+import { CheckCircle2, Info, RefreshCw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -24,12 +26,53 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { data, loading } = useFetch<DashboardData>("/dashboard");
+  const { data, loading, refetch } = useFetch<DashboardData>("/dashboard");
   const [briefing, setBriefing] = useState<any[]>([]);
+  const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [overdueOpen, setOverdueOpen] = useState(false);
+  const [marginOpen, setMarginOpen] = useState(false);
+  const { getSummary, setSummary, clearSummary } = useAISummaryStore();
+  const CACHE_KEY = "dashboard-summary";
+
+  // CR-005-G: fetch the briefing and cache it (per-page) so navigating away and
+  // back does not re-trigger the AI call.
+  const fetchBriefing = () => {
+    setBriefingState("loading");
+    apiGet("/ai/daily-briefing")
+      .then((r) => {
+        setBriefing(r.data);
+        setBriefingState("ready");
+        setSummary(CACHE_KEY, JSON.stringify(r.data));
+        setGeneratedAt(getSummary(CACHE_KEY)?.generatedAt ?? new Date().toISOString());
+      })
+      .catch(() => {
+        setBriefing([]);
+        setBriefingState("error");
+      });
+  };
 
   useEffect(() => {
-    apiGet("/ai/daily-briefing").then((r) => setBriefing(r.data)).catch(() => setBriefing([]));
+    const cached = getSummary(CACHE_KEY);
+    if (cached) {
+      // Cache hit — show stored briefing, skip the API call.
+      try {
+        setBriefing(JSON.parse(cached.content));
+      } catch {
+        setBriefing([]);
+      }
+      setGeneratedAt(cached.generatedAt);
+      setBriefingState("ready");
+      return;
+    }
+    fetchBriefing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleRefreshBriefing = () => {
+    clearSummary(CACHE_KEY);
+    fetchBriefing();
+  };
 
   const k = data?.kpis;
   const marginNum = toNumber(k?.weighted_avg_margin_pct);
@@ -39,13 +82,14 @@ export default function DashboardPage() {
       key: "name",
       header: "Proje Adı",
       sortable: true,
+      maxWidth: 220,
       render: (r) => (
-        <span className="flex items-center gap-2 font-medium text-primary">
-          <RAGIndicator status={r.rag_status} reason={r.rag_label_tr} /> {r.name}
+        <span className="flex items-center gap-2 truncate font-medium text-primary" title={r.name}>
+          <RAGIndicator status={r.rag_status} reason={r.rag_label_tr} /> <span className="truncate">{r.name}</span>
         </span>
       ),
     },
-    { key: "client_name", header: "İşveren" },
+    { key: "client_name", header: "İşveren", maxWidth: 160 },
     { key: "contract_value_try", header: "Sözleşme Değeri", align: "right", render: (r) => formatCurrency(r.contract_value_try), sortValue: (r) => toNumber(r.contract_value_try) },
     {
       key: "spent_pct",
@@ -100,35 +144,85 @@ export default function DashboardPage() {
       <PageHeader title="Ana Sayfa" subtitle="Tüm aktif projelerin finansal durumu" />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="Aktif Proje Sayısı" value={String(k?.active_project_count ?? 0)} />
+        <KPICard
+          loading={loading}
+          label="Aktif Proje Sayısı"
+          value={String(k?.active_project_count ?? 0)}
+          onClick={() => navigate("/projects")}
+        />
         <KPICard loading={loading} label="Toplam Sözleşme Değeri" value={formatCurrencyAbbrev(k?.total_contract_value_try)} />
         <KPICard
           loading={loading}
           label="Ağırlıklı Ort. Kar Marjı"
           value={formatPct(k?.weighted_avg_margin_pct)}
           alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null}
+          onClick={() => setMarginOpen(true)}
         />
         <KPICard
           loading={loading}
           label="Vadesi Geçmiş Ödemeler"
           value={String(k?.overdue_payment_count ?? 0)}
           alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null}
+          onClick={() => setOverdueOpen(true)}
         />
       </div>
+
+      <OverduePaymentsModal
+        open={overdueOpen}
+        onClose={() => setOverdueOpen(false)}
+        onChanged={refetch}
+        onGoToReminders={() => navigate("/reminders")}
+      />
+      <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <h2 className="mb-3 text-lg font-semibold text-primary">Proje Durumu</h2>
-          <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
+          <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} minWidth={900} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
         </div>
 
         <div>
-          <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-primary">
-            <Sparkles className="h-4 w-4 text-accent" /> Bugün Ne Yapmalısın
-          </h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-primary">
+              <Sparkles className="h-4 w-4 text-accent" /> Bugün Ne Yapmalısın
+            </h2>
+            <div className="flex items-center gap-2">
+              {generatedAt && (
+                <span className="text-[11px] italic text-text-secondary">
+                  Son güncelleme: {formatDateTime(generatedAt)}
+                </span>
+              )}
+              <button
+                onClick={handleRefreshBriefing}
+                disabled={briefingState === "loading"}
+                title="Yenile"
+                className="rounded p-1 text-text-secondary hover:text-primary disabled:opacity-50"
+                aria-label="Yenile"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${briefingState === "loading" ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+          </div>
           <Card>
             <CardBody className="space-y-3">
-              {briefing.length === 0 && <p className="text-sm text-text-secondary">Bugün için öncelikli bir işlem bulunmuyor.</p>}
+              {briefingState === "loading" && (
+                <div className="flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-accent">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+                  Yapay zeka projelerinizi analiz ediyor…
+                </div>
+              )}
+              {briefingState === "error" && (
+                <div className="flex items-center gap-2 rounded-md bg-bg px-3 py-2 text-sm text-text-secondary">
+                  <Info className="h-4 w-4" />
+                  Yapay zeka şu an kullanılamıyor. Lütfen bekleyin.
+                </div>
+              )}
+              {briefingState === "ready" && briefing.length === 0 && (
+                <div className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-sm text-success">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Bugün için öncelikli işlem bulunmuyor.
+                </div>
+              )}
               {briefing.slice(0, 8).map((item, i) => (
                 <div key={i} className="border-b border-border pb-2 last:border-0">
                   <div className="flex items-center justify-between">
@@ -139,6 +233,7 @@ export default function DashboardPage() {
                   <p className="mt-0.5 text-xs text-text-secondary">→ {item.recommended_action}</p>
                 </div>
               ))}
+              {briefingState === "ready" && <AIDisclaimer />}
             </CardBody>
           </Card>
         </div>

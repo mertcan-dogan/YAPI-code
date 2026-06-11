@@ -66,6 +66,8 @@ class CompanyOut(ORMModel):
     cost_approval_threshold_try: float
     require_budget_approval: bool
     require_subcontractor_approval: bool
+    require_deletion_approval: bool
+    require_variation_approval: bool
 
 
 class CompanyUpdate(BaseModel):
@@ -83,3 +85,5 @@ class CompanyUpdate(BaseModel):
     cost_approval_threshold_try: float | None = None
     require_budget_approval: bool | None = None
     require_subcontractor_approval: bool | None = None
+    require_deletion_approval: bool | None = None
+    require_variation_approval: bool | None = None

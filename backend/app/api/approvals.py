@@ -9,12 +9,23 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import DirectorUser
+from app.models.approval_request import ApprovalRequest
 from app.models.cost_entry import CostEntry
 from app.models.project import Project
 from app.responses import APIError, success
+from app.services import approvals as approvals_service
 from app.services.audit import record_audit, snapshot
 
 router = APIRouter(tags=["approvals"])
+
+# Turkish labels for the generic request kinds.
+KIND_LABELS = {
+    "cost_entry": "Maliyet Girişi",
+    "budget_change": "Bütçe Değişikliği",
+    "subcontractor_change": "Alt Yüklenici Değişikliği",
+    "cost_deletion": "Maliyet Silme",
+    "variation_approval": "Ek İş Onayı",
+}
 
 
 class RejectBody(BaseModel):
@@ -40,6 +51,7 @@ def list_approvals(user: DirectorUser, db: Session = Depends(get_db)):
     items = [
         {
             "kind": "cost_entry",
+            "kind_label": KIND_LABELS["cost_entry"],
             "id": str(c.id),
             "project_id": str(c.project_id),
             "project_name": project_names.get(c.project_id, ""),
@@ -50,7 +62,61 @@ def list_approvals(user: DirectorUser, db: Session = Depends(get_db)):
         }
         for c in costs
     ]
+
+    # CR-004-N: generic approval requests (budget / subcontractor / deletion / variation).
+    requests = db.execute(
+        select(ApprovalRequest).where(
+            ApprovalRequest.company_id == user.company_id,
+            ApprovalRequest.status == "pending",
+            ApprovalRequest.is_deleted.is_(False),
+        ).order_by(ApprovalRequest.created_at.desc())
+    ).scalars().all()
+    for r in requests:
+        items.append({
+            "kind": r.kind,
+            "kind_label": KIND_LABELS.get(r.kind, r.kind),
+            "id": str(r.id),
+            "request_id": str(r.id),
+            "project_id": str(r.project_id) if r.project_id else None,
+            "project_name": project_names.get(r.project_id, "") if r.project_id else "",
+            "description": r.description or "",
+            "amount_try": str(r.amount_try) if r.amount_try is not None else None,
+            "created_by": str(r.requested_by),
+            "created_at": r.created_at.isoformat(),
+        })
     return success(items, meta={"total": len(items)})
+
+
+def _get_pending_request(db: Session, user, req_id: uuid.UUID) -> ApprovalRequest:
+    req = db.execute(
+        select(ApprovalRequest).where(
+            ApprovalRequest.id == req_id,
+            ApprovalRequest.company_id == user.company_id,
+            ApprovalRequest.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if req is None or req.status != "pending":
+        raise APIError(404, "NOT_FOUND", "Onay bekleyen kayıt bulunamadı")
+    return req
+
+
+@router.put("/approvals/request/{req_id}/approve")
+def approve_request(req_id: uuid.UUID, user: DirectorUser, db: Session = Depends(get_db)):
+    req = _get_pending_request(db, user, req_id)
+    approvals_service.apply_request(db, req)
+    approvals_service.mark_decided(req, user_id=user.id, status="approved")
+    db.commit()
+    return success({"id": str(req_id), "message": "Onaylandı"})
+
+
+@router.put("/approvals/request/{req_id}/reject")
+def reject_request(req_id: uuid.UUID, payload: RejectBody, user: DirectorUser, db: Session = Depends(get_db)):
+    if not payload.reason.strip():
+        raise APIError(422, "VALIDATION_ERROR", "Red nedeni zorunludur", field="reason")
+    req = _get_pending_request(db, user, req_id)
+    approvals_service.mark_decided(req, user_id=user.id, status="rejected", reason=payload.reason.strip())
+    db.commit()
+    return success({"id": str(req_id), "message": "Reddedildi"})
 
 
 def _get_pending_cost(db: Session, user, cost_id: uuid.UUID) -> CostEntry:

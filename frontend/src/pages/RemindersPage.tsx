@@ -8,6 +8,7 @@ import { apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
 import type { Reminder } from "@/types";
 import { formatCurrency, toNumber } from "@/utils/format";
+import * as React from "react";
 import { useState } from "react";
 
 // CR-003-D: derive border/bg from days remaining (guarantees the 31-60 blue rule).
@@ -35,14 +36,39 @@ const TABS = [
   { key: "receivable", label: "Tahsilat" },
 ] as const;
 
+// CR-005-F: "Tümü" sola taşındı — Tür satırıyla tutarlı olması için ilk sırada.
 const TIME_FILTERS = [
+  { key: "all", label: "Tümü" },
   { key: "overdue", label: "Vadesi Geçmiş" },
   { key: "today", label: "Bugün" },
   { key: "7", label: "7 Gün" },
   { key: "30", label: "30 Gün" },
   { key: "60", label: "60 Gün" },
-  { key: "all", label: "Tümü" },
 ];
+
+// CR-004-G: active = navy bg / white text; passive = white bg / grey border.
+function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "rounded-md border px-3 py-1 text-xs transition-colors",
+        active ? "border-primary bg-primary font-medium text-white" : "border-border bg-surface text-text-secondary hover:border-primary"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+// CR-004-G: descriptive label for the summary line, e.g. "vadesi geçmiş ödeme".
+function filterSummaryLabel(tab: string, time: string): string {
+  const timeWord =
+    time === "overdue" ? "vadesi geçmiş " : time === "today" ? "bugün vadesi dolan " :
+    time === "7" ? "7 gün içindeki " : time === "30" ? "30 gün içindeki " : time === "60" ? "60 gün içindeki " : "";
+  const kindWord = tab === "payable" ? "ödeme" : tab === "receivable" ? "tahsilat" : "kayıt";
+  return `${timeWord}${kindWord}`;
+}
 
 export default function RemindersPage() {
   const { data, loading, refetch } = useFetch<Reminder[]>("/reminders");
@@ -86,6 +112,9 @@ export default function RemindersPage() {
   const weekSum = sumWhere((d) => d > 0 && d <= 7);
   const monthSum = sumWhere((d) => d > 0 && d <= 30);
 
+  // CR-004-G: total of the currently filtered view (drives the summary line).
+  const filteredTotal = items.reduce((s, i) => s + toNumber(i.amount_try), 0);
+
   return (
     <div>
       <PageHeader title="Hatırlatıcılar" subtitle="Tüm projelerdeki vadesi yaklaşan ve geçmiş ödemeler" />
@@ -95,15 +124,24 @@ export default function RemindersPage() {
         <KpiChip label="Bu Hafta (7 Gün)" value={formatCurrency(weekSum)} bg="#FEFCE8" border="#EAB308" />
         <KpiChip label="Bu Ay (30 Gün)" value={formatCurrency(monthSum)} bg="#EFF6FF" border="#93C5FD" />
       </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex gap-1 rounded-md border border-border p-0.5">
+      {/* CR-004-G: summary line above the filter bar — updates with the filters. */}
+      <div className="mb-2 text-sm text-text-secondary">
+        <span className="font-semibold text-text-primary">{items.length}</span> {filterSummaryLabel(tab, time)} ·{" "}
+        Toplam: <span className="tabular font-semibold text-text-primary">{formatCurrency(filteredTotal)}</span>
+      </div>
+
+      {/* CR-004-G: two labelled filter rows — Tür (type) and Zaman (time), independent. */}
+      <div className="mb-3 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-14 shrink-0 text-xs font-bold text-text-secondary">Tür:</span>
           {TABS.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)} className={cn("rounded px-3 py-1 text-sm", tab === t.key ? "bg-primary text-white" : "text-text-secondary")}>{t.label}</button>
+            <FilterButton key={t.key} active={tab === t.key} onClick={() => setTab(t.key)}>{t.label}</FilterButton>
           ))}
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-14 shrink-0 text-xs font-bold text-text-secondary">Zaman:</span>
           {TIME_FILTERS.map((t) => (
-            <button key={t.key} onClick={() => setTime(t.key)} className={cn("rounded-md border px-2.5 py-1 text-xs", time === t.key ? "border-primary bg-primary text-white" : "border-border text-text-secondary")}>{t.label}</button>
+            <FilterButton key={t.key} active={time === t.key} onClick={() => setTime(t.key)}>{t.label}</FilterButton>
           ))}
         </div>
       </div>

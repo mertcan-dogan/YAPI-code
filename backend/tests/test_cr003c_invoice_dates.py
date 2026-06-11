@@ -1,4 +1,8 @@
-"""CR-003-C: backfill date_received for paid invoices."""
+"""CR-003-C / CR-004-C: repair date_received for paid invoices.
+
+CR-004-C corrected the target from due_date to the invoice's own period
+(invoice_date), so collections land in the right month rather than clustering.
+"""
 import sys
 from datetime import date
 
@@ -13,9 +17,11 @@ def _paid_invoice(db, seed, **over):
     a = seed["a"]
     inv = ClientInvoice(
         project_id=a["project"].id, company_id=a["company"].id,
-        invoice_number=over.get("invoice_number", "HAK-C1"), invoice_date=date(2026, 1, 1),
+        invoice_number=over.get("invoice_number", "HAK-C1"),
+        invoice_date=over.get("invoice_date", date(2026, 1, 1)),
         amount_try=100000, vat_amount_try=0, total_with_vat_try=100000, net_due_try=100000,
-        amount_received_try=100000, payment_status="paid", due_date=date(2026, 2, 1),
+        amount_received_try=100000, payment_status="paid",
+        due_date=over.get("due_date", date(2026, 2, 1)),
         date_received=over.get("date_received"), created_by=a["users"]["director"].id,
     )
     db.add(inv)
@@ -23,20 +29,20 @@ def _paid_invoice(db, seed, **over):
     return inv
 
 
-def test_backfill_sets_date_received_to_due_date(db, seed):
+def test_backfill_sets_null_date_received_to_invoice_date(db, seed):
     inv = _paid_invoice(db, seed, date_received=None)
     assert inv.date_received is None
     n = backfill_invoice_dates(db, apply=True)
     assert n == 1
     db.refresh(inv)
-    assert inv.date_received == date(2026, 2, 1)
+    assert inv.date_received == date(2026, 1, 1)  # invoice period, not due_date
 
 
 def test_backfill_leaves_existing_dates_untouched(db, seed):
     inv = _paid_invoice(db, seed, invoice_number="HAK-C2", date_received=date(2026, 1, 20))
     backfill_invoice_dates(db, apply=True)
     db.refresh(inv)
-    assert inv.date_received == date(2026, 1, 20)  # unchanged
+    assert inv.date_received == date(2026, 1, 20)  # genuine collection date kept
 
 
 def test_dry_run_does_not_modify(db, seed):

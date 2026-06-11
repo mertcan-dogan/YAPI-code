@@ -102,8 +102,40 @@ def update_variation(
     ).scalar_one_or_none()
     if v is None:
         raise APIError(404, "NOT_FOUND", "Ek iş bulunamadı")
+
+    changes = payload.model_dump(exclude_unset=True)
+    # CR-004-N: approving a variation may require director approval first.
+    becoming_approved = changes.get("status") == "approved" and v.status != "approved"
+    if becoming_approved:
+        from app.models.company import Company
+        from app.services import approvals as approvals_service
+
+        company = db.get(Company, user.company_id)
+        if approvals_service.is_required(company, "variation_approval"):
+            # Apply any non-status edits now; route the approval itself through the workflow.
+            non_status = {k: val for k, val in changes.items() if k != "status"}
+            old_cat = v.cost_category
+            for k, val in non_status.items():
+                setattr(v, k, val)
+            db.flush()
+            approvals_service.create_request(
+                db, company_id=user.company_id, project_id=project.id,
+                kind="variation_approval", target_table="variations", target_id=v.id,
+                payload={
+                    "approved_value_try": str(changes.get("approved_value_try")) if changes.get("approved_value_try") is not None else None,
+                    "approved_date": changes["approved_date"].isoformat() if changes.get("approved_date") else None,
+                },
+                description=f"Ek iş onayı — {v.variation_number}: {v.title}",
+                amount_try=v.value_try, requested_by=user.id,
+            )
+            db.commit()
+            db.refresh(v)
+            out = VariationOut.model_validate(v).model_dump(mode="json")
+            out["pending_approval"] = True
+            return success(out)
+
     old_cat = v.cost_category
-    for k, val in payload.model_dump(exclude_unset=True).items():
+    for k, val in changes.items():
         setattr(v, k, val)
     db.flush()
     # Recompute affected categories (old + new).

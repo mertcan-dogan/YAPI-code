@@ -36,9 +36,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-5"
 
-    # Email
+    # Email (CR-006-B: Resend)
     resend_api_key: str = ""
     email_from: str = "Yapı <bildirim@yapi.app>"
+    # Resend free-tier test sender; override once a verified domain is added.
+    resend_from_email: str = "onboarding@resend.dev"
+    resend_from_name: str = "Yapı Bildirimleri"
 
     # Security
     rate_limit_per_ip_per_minute: int = 100

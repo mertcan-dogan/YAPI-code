@@ -21,10 +21,13 @@ import {
   TrendingUp,
   Users,
   Wrench,
+  X,
 } from "lucide-react";
 import * as React from "react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiGet } from "@/lib/api";
+import { useProjectStore } from "@/store/project";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
@@ -66,27 +69,78 @@ function NavItem({ icon: Icon, label, to, active }: any) {
 
 function Sidebar() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const params = useParams();
-  const projectId = params.id;
   const isDirector = useAuth((s) => s.user?.role === "director");
+  const logoUrl = useAuth((s) => s.user?.company_logo_url);
+  const companyName = useAuth((s) => s.user?.company_name);
+  const { activeProjectId, activeProjectName, setActiveProject, clearActiveProject } = useProjectStore();
   const [approvalCount, setApprovalCount] = React.useState(0);
+  const [projects, setProjects] = React.useState<{ id: string; name: string; status: string }[]>([]);
+
+  // CR-004-H: the active project comes from the URL when on a project page,
+  // otherwise from the persisted store — so the submenu survives global pages.
+  const effectiveId = params.id ?? activeProjectId ?? undefined;
+  const effectiveName = params.id
+    ? projects.find((p) => p.id === params.id)?.name ?? activeProjectName ?? "Proje"
+    : activeProjectName ?? "Proje";
+
   React.useEffect(() => {
     if (isDirector) apiGet<any[]>("/approvals").then(({ data }) => setApprovalCount(data?.length ?? 0)).catch(() => setApprovalCount(0));
   }, [isDirector, pathname]);
+
+  React.useEffect(() => {
+    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+      .then(({ data }) => setProjects(data ?? []))
+      .catch(() => setProjects([]));
+  }, [params.id]);
+
+  // Remember the project the user is viewing.
+  React.useEffect(() => {
+    if (params.id) {
+      const p = projects.find((x) => x.id === params.id);
+      if (p) setActiveProject(p.id, p.name);
+    }
+  }, [params.id, projects, setActiveProject]);
+
+  // Auto-clear when the active project is deleted or no longer active.
+  React.useEffect(() => {
+    if (activeProjectId && projects.length && !projects.some((p) => p.id === activeProjectId && p.status === "active")) {
+      clearActiveProject();
+    }
+  }, [projects, activeProjectId, clearActiveProject]);
+
+  const closeContext = () => {
+    clearActiveProject();
+    navigate("/projects");
+  };
+
   return (
     <aside className="hidden w-64 shrink-0 flex-col bg-primary lg:flex">
       <div className="flex items-center gap-2 px-5 py-4 text-white">
-        <div className="flex h-8 w-8 items-center justify-center rounded bg-accent font-bold text-primary">Y</div>
-        <span className="text-lg font-bold">Yapı</span>
+        {logoUrl ? (
+          <img src={logoUrl} alt={companyName ?? "Şirket"} className="max-h-10 max-w-[180px] object-contain" />
+        ) : (
+          <>
+            <div className="flex h-8 w-8 items-center justify-center rounded bg-accent font-bold text-primary">Y</div>
+            <span className="text-lg font-bold">{companyName ?? "Yapı"}</span>
+          </>
+        )}
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {GLOBAL_NAV.map((n) => (
           <NavItem key={n.to} {...n} active={pathname === n.to} />
         ))}
-        {projectId && (
+        {effectiveId && (
           <div className="mt-3 border-t border-white/10 pt-3">
-            <p className="px-3 pb-1 text-[10px] uppercase tracking-wide text-white/40">Proje</p>
-            {PROJECT_NAV(projectId).map((n) => (
+            <div className="flex items-center justify-between px-3 pb-1">
+              <span className="text-[10px] uppercase tracking-wide text-white/40">Aktif Proje</span>
+              <button onClick={closeContext} className="text-white/40 hover:text-white" aria-label="Proje bağlamını kapat">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <p className="truncate px-3 pb-2 text-[13px] font-bold text-white" title={effectiveName}>{effectiveName}</p>
+            {PROJECT_NAV(effectiveId).map((n) => (
               <NavItem key={n.to} {...n} active={pathname === n.to} />
             ))}
             {/* CR-001-H: Denetim İzi — director only, under Ekipman */}
@@ -94,8 +148,8 @@ function Sidebar() {
               <NavItem
                 icon={History}
                 label="Denetim İzi"
-                to={`/projects/${projectId}/audit-log`}
-                active={pathname === `/projects/${projectId}/audit-log`}
+                to={`/projects/${effectiveId}/audit-log`}
+                active={pathname === `/projects/${effectiveId}/audit-log`}
               />
             )}
           </div>
@@ -129,6 +183,7 @@ function Sidebar() {
 function ProjectSelector() {
   const navigate = useNavigate();
   const params = useParams();
+  const { activeProjectId, setActiveProject } = useProjectStore();
   const [open, setOpen] = React.useState(false);
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([]);
 
@@ -138,7 +193,13 @@ function ProjectSelector() {
       .catch(() => setProjects([]));
   }, []);
 
-  const current = projects.find((p) => p.id === params.id);
+  const selectedId = params.id ?? activeProjectId;
+  const current = projects.find((p) => p.id === selectedId);
+  const choose = (p: { id: string; name: string }) => {
+    setActiveProject(p.id, p.name);
+    setOpen(false);
+    navigate(`/projects/${p.id}/dashboard`);
+  };
 
   return (
     <div className="relative hidden lg:block">
@@ -158,8 +219,8 @@ function ProjectSelector() {
             {projects.map((p) => (
               <button
                 key={p.id}
-                onClick={() => { setOpen(false); navigate(`/projects/${p.id}/dashboard`); }}
-                className={cn("flex w-full items-center px-3 py-2 text-left text-sm hover:bg-navy-50", p.id === params.id && "font-semibold text-primary")}
+                onClick={() => choose(p)}
+                className={cn("flex w-full items-center px-3 py-2 text-left text-sm hover:bg-navy-50", p.id === selectedId && "font-semibold text-primary")}
               >
                 <span className="truncate">{p.name}</span>
               </button>
@@ -191,9 +252,7 @@ function TopNav() {
         <ProjectSelector />
       </div>
       <div className="relative flex items-center gap-3">
-        <Link to="/reminders" className="text-text-secondary hover:text-primary">
-          <Bell className="h-5 w-5" />
-        </Link>
+        <NotificationBell />
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-white">
             {user?.full_name?.charAt(0) ?? "K"}

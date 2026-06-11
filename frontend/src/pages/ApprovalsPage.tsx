@@ -11,14 +11,30 @@ import { Navigate } from "react-router-dom";
 
 interface ApprovalItem {
   kind: string;
+  kind_label?: string;
   id: string;
+  request_id?: string;
   project_name: string;
   description: string;
-  amount_try: string;
+  amount_try: string | null;
   created_at: string;
 }
 
-const KIND_LABELS: Record<string, string> = { cost_entry: "Maliyet Girişi" };
+const KIND_LABELS: Record<string, string> = {
+  cost_entry: "Maliyet Girişi",
+  budget_change: "Bütçe Değişikliği",
+  subcontractor_change: "Alt Yüklenici Değişikliği",
+  cost_deletion: "Maliyet Silme",
+  variation_approval: "Ek İş Onayı",
+};
+
+// CR-004-N: cost-entry items use the legacy cost endpoint; everything else is a
+// generic approval request.
+function decideUrl(it: ApprovalItem, action: "approve" | "reject"): string {
+  return it.kind === "cost_entry"
+    ? `/approvals/cost/${it.id}/${action}`
+    : `/approvals/request/${it.request_id}/${action}`;
+}
 
 export default function ApprovalsPage() {
   const { user } = useAuth();
@@ -29,7 +45,7 @@ export default function ApprovalsPage() {
 
   const approve = async (it: ApprovalItem) => {
     try {
-      await apiPut(`/approvals/cost/${it.id}/approve`, {});
+      await apiPut(decideUrl(it, "approve"), {});
       toast.success("Onaylandı");
       refetch();
     } catch (e: any) {
@@ -38,10 +54,10 @@ export default function ApprovalsPage() {
   };
 
   const columns: Column<ApprovalItem>[] = [
-    { key: "kind", header: "İşlem Türü", render: (r) => KIND_LABELS[r.kind] ?? r.kind },
+    { key: "kind", header: "İşlem Türü", render: (r) => r.kind_label ?? KIND_LABELS[r.kind] ?? r.kind },
     { key: "project_name", header: "Proje" },
     { key: "description", header: "Açıklama" },
-    { key: "amount_try", header: "Tutar", align: "right", render: (r) => formatCurrency(r.amount_try) },
+    { key: "amount_try", header: "Tutar", align: "right", render: (r) => (r.amount_try ? formatCurrency(r.amount_try) : "—") },
     { key: "created_at", header: "Tarih", render: (r) => formatDateTime(r.created_at) },
     {
       key: "actions",
@@ -71,7 +87,7 @@ function RejectModal({ item, onClose, onDone }: { item: ApprovalItem; onClose: (
     if (!reason.trim()) { toast.error("Red nedeni zorunludur"); return; }
     setSaving(true);
     try {
-      await apiPut(`/approvals/cost/${item.id}/reject`, { reason });
+      await apiPut(decideUrl(item, "reject"), { reason });
       toast.success("Reddedildi");
       onDone();
     } catch (e: any) {

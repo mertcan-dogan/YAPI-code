@@ -178,9 +178,14 @@ def project_narrative(summary: dict) -> str:
 
 ASSISTANT_SYSTEM = (
     "Sen bir Türk inşaat şirketinin AI finansal asistanısın. Yalnızca verilen proje "
-    "finansal verilerine dayanarak Türkçe yanıt ver. Yanıtların kısa, net ve eyleme "
-    "yönelik olsun, madde madde yaz. Sayısal değerleri Türkçe formatta (₺, %) ver. "
-    "Belirsiz verilere dayanarak tahmin yapma — yalnızca bilinen verileri kullan."
+    "finansal verilerine dayanarak Türkçe yanıt ver. Sayısal değerleri Türkçe formatta "
+    "(₺, %) ver. Belirsiz verilere dayanarak tahmin yapma — yalnızca bilinen verileri kullan.\n"
+    # CR-004-I: response formatting rules.
+    "Yanıt biçimi:\n"
+    "- Yanıtı madde madde formatla; her noktayı ayrı satırda yaz.\n"
+    "- Önemli rakamları markdown ile kalın yap (**değer** biçiminde).\n"
+    "- Yanıtın sonunda hangi projeyi veya veriyi baz aldığını belirt.\n"
+    "- En fazla 300 kelime kullan — özlü tut."
 )
 
 

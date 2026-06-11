@@ -13,6 +13,9 @@ export interface User {
   preferred_language: string;
   is_active: boolean;
   last_login_at: string | null;
+  // CR-006-D: surfaced via /auth/me so the sidebar can render the company logo.
+  company_name?: string | null;
+  company_logo_url?: string | null;
 }
 
 export interface ProjectFinancials {

@@ -4,13 +4,13 @@ import { Button, Card, CardBody, Input, Label, Select } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
 import { COST_CATEGORIES, ROLE_LABELS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
-import { apiPost, apiPut } from "@/lib/api";
+import { api, apiDelete, apiPost, apiPut } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { User } from "@/types";
 import { formatDateTime } from "@/utils/format";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 
 const TABS = [
@@ -41,6 +41,96 @@ export default function SettingsPage() {
   );
 }
 
+// CR-006-D: şirket logosu yükleme bölümü.
+function CompanyLogoSection({ logoUrl, onChange }: { logoUrl: string | null; onChange: () => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const pick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!["image/png", "image/jpeg"].includes(f.type)) {
+      toast.error("Sadece PNG veya JPEG yükleyebilirsiniz");
+      return;
+    }
+    if (f.size > 2 * 1024 * 1024) {
+      toast.error("Logo en fazla 2MB olabilir");
+      return;
+    }
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+  };
+
+  const save = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      await api.post("/settings/company/logo", fd);
+      toast.success("Logo yüklendi");
+      setFile(null);
+      setPreview(null);
+      onChange();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error?.message ?? "Logo yüklenemedi");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await apiDelete("/settings/company/logo");
+      toast.success("Logo kaldırıldı");
+      setPreview(null);
+      setFile(null);
+      onChange();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error?.message ?? "Logo kaldırılamadı");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const shown = preview ?? logoUrl;
+
+  return (
+    <div className="rounded-md border border-border bg-bg p-3">
+      <Label>Şirket Logosu</Label>
+      <div className="mt-2 flex items-center gap-4">
+        {shown ? (
+          <img src={shown} alt="Şirket logosu" className="h-[60px] w-[120px] rounded border border-border bg-white object-contain p-1" />
+        ) : (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="flex h-[60px] w-[120px] items-center justify-center rounded border border-dashed border-border text-center text-[11px] text-text-secondary hover:bg-surface"
+          >
+            Logo yüklemek için tıklayın
+          </button>
+        )}
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={busy}>
+              {shown ? "Logo Değiştir" : "Logo Seç"}
+            </Button>
+            {logoUrl && !preview && (
+              <Button type="button" variant="danger" onClick={remove} loading={busy}>Logoyu Kaldır</Button>
+            )}
+            {file && <Button type="button" onClick={save} loading={busy}>Kaydet</Button>}
+          </div>
+          <span className="text-[11px] text-text-secondary">PNG veya JPEG, max 2MB</span>
+        </div>
+      </div>
+      <input ref={inputRef} type="file" accept="image/png,image/jpeg" className="hidden" onChange={pick} />
+    </div>
+  );
+}
+
 function CompanyTab() {
   const { data, refetch } = useFetch<any>("/settings/company");
   const [form, setForm] = useState<any>(null);
@@ -65,6 +155,7 @@ function CompanyTab() {
   return (
     <Card className="max-w-2xl">
       <CardBody className="space-y-3">
+        <CompanyLogoSection logoUrl={data?.logo_url ?? null} onChange={refetch} />
         <div><Label>Şirket Adı</Label><Input value={f.name ?? ""} onChange={(e) => set("name", e.target.value)} /></div>
         <div className="grid grid-cols-2 gap-3">
           <div><Label>Vergi No</Label><Input value={f.tax_number ?? ""} onChange={(e) => set("tax_number", e.target.value)} /></div>
@@ -88,11 +179,20 @@ function CompanyTab() {
           <div className="py-1"><Label>Maliyet Girişi Onay Eşiği (TRY)</Label><Input type="number" value={f.cost_approval_threshold_try ?? 500000} onChange={(e) => set("cost_approval_threshold_try", Number(e.target.value))} /></div>
           <label className="flex items-center justify-between py-1 text-sm">
             <span>Bütçe değişikliği onay zorunlu</span>
-            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_budget_approval ?? false} onChange={(e) => set("require_budget_approval", e.target.checked)} />
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_budget_approval ?? true} onChange={(e) => set("require_budget_approval", e.target.checked)} />
           </label>
           <label className="flex items-center justify-between py-1 text-sm">
-            <span>Alt yüklenici değişikliği onay zorunlu</span>
-            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_subcontractor_approval ?? false} onChange={(e) => set("require_subcontractor_approval", e.target.checked)} />
+            <span>Alt yüklenici sözleşmesi değişikliği onay zorunlu</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_subcontractor_approval ?? true} onChange={(e) => set("require_subcontractor_approval", e.target.checked)} />
+          </label>
+          {/* CR-004-N: deletion + variation triggers */}
+          <label className="flex items-center justify-between py-1 text-sm">
+            <span>Kayıt silme onay zorunlu</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_deletion_approval ?? true} onChange={(e) => set("require_deletion_approval", e.target.checked)} />
+          </label>
+          <label className="flex items-center justify-between py-1 text-sm">
+            <span>Ek iş onayı onay zorunlu</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.require_variation_approval ?? true} onChange={(e) => set("require_variation_approval", e.target.checked)} />
           </label>
         </div>
 

@@ -4,10 +4,16 @@ import { Button, Select } from "@/components/ui";
 import { api, apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
-import { formatDateTime, formatNumber, toNumber } from "@/utils/format";
+import { formatCurrency, formatDate, formatDateTime, formatNumber, toNumber } from "@/utils/format";
 import { Download } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
+
+interface ChangedField {
+  field: string;
+  old: any;
+  new: any;
+}
 
 interface AuditRow {
   id: string;
@@ -18,6 +24,7 @@ interface AuditRow {
   table_name: string;
   old_values: Record<string, any> | null;
   new_values: Record<string, any> | null;
+  changed_fields: ChangedField[];
   created_at: string;
 }
 
@@ -29,6 +36,48 @@ const ACTION_BADGE: Record<string, string> = {
 
 // Numeric fields worth surfacing in the "Fark" column.
 const NUMERIC_KEYS = ["amount_try", "total_with_vat_try", "contract_value_try", "amount_received_try", "net_due_try", "forecast_final_try", "original_budget_try"];
+
+// CR-005-E: friendly Turkish labels for the common changed fields.
+const FIELD_LABELS: Record<string, string> = {
+  amount_try: "Tutar",
+  total_with_vat_try: "KDV Dahil Tutar",
+  amount_paid_try: "Ödenen",
+  amount_received_try: "Tahsil Edilen",
+  net_due_try: "Net Tutar",
+  contract_value_try: "Sözleşme Bedeli",
+  original_budget_try: "Orijinal Bütçe",
+  approved_variations_try: "Onaylı Ek İş",
+  forecast_final_try: "Final Tahmin",
+  payment_due_date: "Vade Tarihi",
+  due_date: "Vade Tarihi",
+  date_paid: "Ödeme Tarihi",
+  date_received: "Tahsilat Tarihi",
+  entry_date: "Giriş Tarihi",
+  payment_status: "Ödeme Durumu",
+  cost_category: "Kategori",
+  supplier_name: "Tedarikçi",
+  description: "Açıklama",
+  invoice_number: "Fatura No",
+  vat_rate: "KDV Oranı",
+};
+
+function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
+// CR-005-E: Türkçe formatting per field type — money "1.234.567,89 ₺", dates
+// DD.MM.YYYY, booleans Evet/Hayır.
+function formatAuditValue(field: string, value: any): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Evet" : "Hayır";
+  if (field.endsWith("_try") || field.includes("amount") || field.includes("budget") || field === "contract_value_try") {
+    return formatCurrency(value);
+  }
+  if (field.includes("date") && /^\d{4}-\d{2}-\d{2}/.test(String(value))) {
+    return formatDate(String(value));
+  }
+  return String(value);
+}
 
 function diff(row: AuditRow): string {
   if (!row.old_values || !row.new_values) return "—";
@@ -45,16 +94,26 @@ function diff(row: AuditRow): string {
   return "—";
 }
 
-function JsonCell({ data }: { data: Record<string, any> | null }) {
-  if (!data) return <span className="text-text-disabled">—</span>;
-  const keys = Object.keys(data).slice(0, 40);
+// CR-005-E: show only the changed fields as "alan: eski → yeni" — no JSON dump.
+function ChangedFieldsCell({ row }: { row: AuditRow }) {
+  const changed = row.changed_fields ?? [];
+  if (changed.length === 0) {
+    // INSERT/DELETE (or no-op): describe the action instead of an empty diff.
+    const label =
+      row.action === "INSERT" ? "Kayıt eklendi" : row.action === "DELETE" ? "Kayıt silindi" : row.action_label;
+    return <span className="text-xs text-text-secondary">{label}</span>;
+  }
   return (
-    <details className="max-w-[220px]">
-      <summary className="cursor-pointer text-xs text-primary-light">{keys.length} alan</summary>
-      <pre className="mt-1 max-h-48 overflow-auto rounded bg-bg p-2 text-[10px] leading-snug">
-        {JSON.stringify(data, null, 1)}
-      </pre>
-    </details>
+    <div className="max-w-[320px] space-y-0.5">
+      {changed.map((c) => (
+        <div key={c.field} className="text-xs">
+          <span className="font-medium text-text-secondary">{fieldLabel(c.field)}: </span>
+          <span className="tabular text-text-disabled line-through">{formatAuditValue(c.field, c.old)}</span>
+          <span className="px-1">→</span>
+          <span className="tabular font-medium">{formatAuditValue(c.field, c.new)}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -99,8 +158,7 @@ export default function AuditLogPage() {
       render: (r) => <span className={`rounded-full px-2 py-0.5 text-xs ${ACTION_BADGE[r.action] ?? "bg-bg"}`}>{r.action_label}</span>,
     },
     { key: "table_label", header: "Kayıt Türü" },
-    { key: "old_values", header: "Eski Değer", render: (r) => <JsonCell data={r.old_values} /> },
-    { key: "new_values", header: "Yeni Değer", render: (r) => <JsonCell data={r.new_values} /> },
+    { key: "changed_fields", header: "Değişiklik Detayı", render: (r) => <ChangedFieldsCell row={r} /> },
     { key: "diff", header: "Fark", align: "right", render: (r) => <span className={diff(r).startsWith("↑") ? "text-danger" : diff(r).startsWith("↓") ? "text-success" : ""}>{diff(r)}</span> },
   ];
 

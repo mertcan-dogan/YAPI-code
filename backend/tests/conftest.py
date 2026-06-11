@@ -60,7 +60,14 @@ def seed(db):
     """Two isolated companies, each with a full set of role users + a project."""
     data = {}
     for label in ("a", "b"):
-        company = Company(name=f"Şirket {label.upper()}", slug=f"sirket-{label}")
+        # CR-004-N: the generic approval gates default On in production; the broad
+        # test suite opts out so it exercises CRUD directly. CR-004-N tests flip
+        # the relevant toggle back on for the trigger they cover.
+        company = Company(
+            name=f"Şirket {label.upper()}", slug=f"sirket-{label}",
+            require_budget_approval=False, require_subcontractor_approval=False,
+            require_deletion_approval=False, require_variation_approval=False,
+        )
         db.add(company)
         db.flush()
         users = {}

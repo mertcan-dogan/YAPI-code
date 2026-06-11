@@ -45,6 +45,31 @@ def _user_names(db: Session, company_id) -> dict:
     return {u.id: u.full_name for u in rows}
 
 
+# CR-005-E: audit rows used to dump the entire 31-field record. Surface only the
+# fields that actually changed so the UI can show "alan: eski → yeni" instead of a
+# raw JSON blob. These housekeeping columns always differ on UPDATE and are noise.
+_IGNORED_DIFF_FIELDS = {"updated_at", "created_at", "id", "is_deleted"}
+
+
+def compute_changed_fields(old_values, new_values) -> list[dict]:
+    """Return [{field, old, new}] for keys whose value changed (UPDATE only).
+
+    INSERT/DELETE carry a single-sided snapshot, not a field-level change, so they
+    return an empty list — the action label ("Eklendi"/"Silindi") tells that story.
+    """
+    if not old_values or not new_values:
+        return []
+    changed = []
+    for key in sorted(set(old_values) | set(new_values)):
+        if key in _IGNORED_DIFF_FIELDS:
+            continue
+        old_v = old_values.get(key)
+        new_v = new_values.get(key)
+        if old_v != new_v:
+            changed.append({"field": key, "old": old_v, "new": new_v})
+    return changed
+
+
 @router.get("/audit-log")
 def get_audit_log(
     user: DirectorUser,
@@ -76,6 +101,7 @@ def get_audit_log(
             "action_label": ACTION_LABELS.get(r.action, r.action),
             "old_values": r.old_values,
             "new_values": r.new_values,
+            "changed_fields": compute_changed_fields(r.old_values, r.new_values),
             "ip_address": str(r.ip_address) if r.ip_address else None,
             "created_at": r.created_at.isoformat(),
         }

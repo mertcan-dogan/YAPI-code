@@ -13,6 +13,8 @@ from app.models.ai_alert import AIAlert
 from app.models.custom_category import CustomCostCategory
 from app.models.variation import Variation
 from app.models.budget_template import CustomBudgetTemplate
+from app.models.approval_request import ApprovalRequest
+from app.models.notification import Notification
 
 __all__ = [
     "Base",
@@ -29,4 +31,6 @@ __all__ = [
     "CustomCostCategory",
     "Variation",
     "CustomBudgetTemplate",
+    "ApprovalRequest",
+    "Notification",
 ]

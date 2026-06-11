@@ -164,5 +164,11 @@ def logout(user: CurrentUser):
 
 
 @router.get("/me")
-def me(user: CurrentUser):
-    return success(UserOut.model_validate(user).model_dump(mode="json"))
+def me(user: CurrentUser, db: Session = Depends(get_db)):
+    data = UserOut.model_validate(user).model_dump(mode="json")
+    # CR-006-D: expose company name + logo so the sidebar can show the logo for
+    # every role (the /settings/company endpoint is director-only).
+    company = db.get(Company, user.company_id)
+    data["company_name"] = company.name if company else None
+    data["company_logo_url"] = company.logo_url if company else None
+    return success(data)

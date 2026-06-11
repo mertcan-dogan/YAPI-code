@@ -1,4 +1,4 @@
-import { Button, Input, Select } from "@/components/ui";
+import { AIDisclaimer, Button, Input, Select } from "@/components/ui";
 import { COST_CATEGORIES, COST_CATEGORY_OPTIONS } from "@/constants";
 import { api, apiPost } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -170,6 +170,7 @@ export function AIImportPreview({ projectId, file, onClose, onDone }: { projectI
           {analysis?.truncated && <div className="bg-amber-50 px-6 py-2 text-xs">Dosyanızın ilk 500 satırı işlendi. Kalan veriler için tekrar yükleyin.</div>}
 
           <div className="flex-1 overflow-auto p-6">
+            <AIDisclaimer className="mb-3 mt-0" />
             {rows.length === 0 ? (
               <p className="text-sm text-text-secondary">Bu kategoride kayıt bulunamadı.</p>
             ) : (

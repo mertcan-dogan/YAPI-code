@@ -26,7 +26,7 @@ def project_report(
         from app.services.reports import render_project_report
 
         pdf = render_project_report(db, project, company)
-    except Exception as exc:  # WeasyPrint/system lib issues
+    except Exception as exc:  # ReportLab/render issues
         raise APIError(500, "REPORT_ERROR", f"Rapor oluşturulamadı: {exc}")
 
     filename = f"proje-durum-{project.project_code}.pdf"

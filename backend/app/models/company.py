@@ -37,8 +37,11 @@ class Company(TimestampSoftDeleteMixin, Base):
     cost_approval_threshold_try: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), default=Decimal("500000"), server_default="500000"
     )
-    require_budget_approval: Mapped[bool] = mapped_column(default=False, server_default="false")
-    require_subcontractor_approval: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # CR-004-N: each trigger has its own toggle (default On per spec).
+    require_budget_approval: Mapped[bool] = mapped_column(default=True, server_default="true")
+    require_subcontractor_approval: Mapped[bool] = mapped_column(default=True, server_default="true")
+    require_deletion_approval: Mapped[bool] = mapped_column(default=True, server_default="true")
+    require_variation_approval: Mapped[bool] = mapped_column(default=True, server_default="true")
 
     users: Mapped[list["User"]] = relationship(back_populates="company")  # noqa: F821
     projects: Mapped[list["Project"]] = relationship(back_populates="company")  # noqa: F821

@@ -1,16 +1,18 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
-import { Button, Card, CardBody } from "@/components/ui";
+import { AIDisclaimer, Button, Card, CardBody } from "@/components/ui";
+import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { EmptyState } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost } from "@/lib/api";
+import { useAISummaryStore } from "@/store/aiSummary";
 import type { ProjectFinancials, Project } from "@/types";
 import { formatCurrency, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 interface FAC {
   original_budget_try: string;
@@ -24,6 +26,8 @@ interface FAC {
 
 export default function ProjectDashboardPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const [costDrawer, setCostDrawer] = useState(false);
   const { data, loading } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
     `/projects/${id}/dashboard`
   );
@@ -31,16 +35,41 @@ export default function ProjectDashboardPage() {
   const f = data?.financials;
   const fac = data?.forecast_at_completion;
 
-  // CR-003-F: AI narrative (fetched once on load; manual refresh button).
+  // CR-003-F + CR-005-G: AI narrative, cached per project so it runs once and
+  // survives navigation/reload; manual refresh re-runs it.
   const [narrative, setNarrative] = useState<{ narrative: string; generated_at: string } | null>(null);
   const [narrLoading, setNarrLoading] = useState(false);
-  const loadNarrative = () => {
+  const [narrCachedAt, setNarrCachedAt] = useState<string | null>(null);
+  const { getSummary, setSummary, clearSummary } = useAISummaryStore();
+  const cacheKey = `project-summary-${id}`;
+
+  const fetchNarrative = () => {
     setNarrLoading(true);
     apiPost<{ narrative: string; generated_at: string }>(`/projects/${id}/ai-narrative`)
-      .then(setNarrative)
+      .then((r) => {
+        setNarrative(r);
+        setSummary(cacheKey, r.narrative, id);
+        setNarrCachedAt(getSummary(cacheKey)?.generatedAt ?? new Date().toISOString());
+      })
       .catch(() => setNarrative(null))
       .finally(() => setNarrLoading(false));
   };
+
+  const loadNarrative = () => {
+    const cached = getSummary(cacheKey);
+    if (cached) {
+      setNarrative({ narrative: cached.content, generated_at: cached.generatedAt });
+      setNarrCachedAt(cached.generatedAt);
+      return;
+    }
+    fetchNarrative();
+  };
+
+  const refreshNarrative = () => {
+    clearSummary(cacheKey);
+    fetchNarrative();
+  };
+
   useEffect(() => { if (id) loadNarrative(); /* eslint-disable-next-line */ }, [id]);
 
   const facMargin = toNumber(fac?.forecast_final_margin_pct);
@@ -76,17 +105,19 @@ export default function ProjectDashboardPage() {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrency(f?.contract_value_try)} />
-        <KPICard loading={loading} label="Gerçekleşen Maliyet" value={formatCurrency(f?.total_actual_with_vat_try)} alert={actualVsBudget > 0.8 ? "amber" : null} />
-        <KPICard loading={loading} label="Kalan Bütçe" value={formatCurrency(f?.remaining_budget_try)} alert={remaining < 0 ? "red" : null} />
+        <KPICard loading={loading} label="Gerçekleşen Maliyet" value={formatCurrency(f?.total_actual_with_vat_try)} alert={actualVsBudget > 0.8 ? "amber" : null} onClick={() => setCostDrawer(true)} />
+        <KPICard loading={loading} label="Kalan Bütçe" value={formatCurrency(f?.remaining_budget_try)} alert={remaining < 0 ? "red" : null} onClick={() => navigate(`/projects/${id}/budget`)} />
         <KPICard loading={loading} label="Güncel Kar Marjı" value={formatPct(f?.margin_pct)} alert={margin < 5 ? "red" : margin < 10 ? "amber" : null} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="İşverene Faturalanan" value={formatCurrency(f?.total_invoiced_try)} />
-        <KPICard loading={loading} label="Tahsil Edilen" value={formatCurrency(f?.total_collected_try)} />
-        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrency(f?.total_outstanding_try)} />
-        <KPICard loading={loading} label="Hakediş Kesintisi" value={formatCurrency(f?.total_retention_try)} />
+        <KPICard loading={loading} label="İşverene Faturalanan" value={formatCurrency(f?.total_invoiced_try)} onClick={() => navigate(`/projects/${id}/invoices`)} />
+        <KPICard loading={loading} label="Tahsil Edilen" value={formatCurrency(f?.total_collected_try)} onClick={() => navigate(`/projects/${id}/invoices`)} />
+        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrency(f?.total_outstanding_try)} onClick={() => navigate(`/projects/${id}/invoices`)} />
+        <KPICard loading={loading} label="Hakediş Kesintisi" value={formatCurrency(f?.total_retention_try)} onClick={() => navigate(`/projects/${id}/invoices`)} />
       </div>
+
+      {id && <CostEntriesDrawer open={costDrawer} onClose={() => setCostDrawer(false)} projectId={id} />}
 
       {/* CR-003-F: Forecast-at-Completion */}
       <div className="mt-8">
@@ -104,12 +135,17 @@ export default function ProjectDashboardPage() {
           <CardBody>
             <div className="mb-2 flex items-center justify-between">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-primary"><Sparkles className="h-4 w-4 text-accent" /> AI Proje Özeti</h3>
-              <Button variant="ghost" className="px-2 py-1 text-xs" loading={narrLoading} onClick={loadNarrative}>
-                <RefreshCw className="h-3.5 w-3.5" /> Yenile
-              </Button>
+              <div className="flex items-center gap-2">
+                {narrCachedAt && (
+                  <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(narrCachedAt)}</span>
+                )}
+                <Button variant="ghost" className="px-2 py-1 text-xs" loading={narrLoading} onClick={refreshNarrative}>
+                  <RefreshCw className="h-3.5 w-3.5" /> Yenile
+                </Button>
+              </div>
             </div>
             <p className="text-sm text-text-primary">{narrative?.narrative ?? (narrLoading ? "AI özeti hazırlanıyor…" : "Özet bulunamadı.")}</p>
-            {narrative?.generated_at && <p className="mt-2 text-[11px] text-text-secondary">{formatDateTime(narrative.generated_at)} itibarıyla</p>}
+            {!narrLoading && narrative?.narrative && <AIDisclaimer />}
           </CardBody>
         </Card>
       </div>

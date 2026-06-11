@@ -102,8 +102,31 @@ def update_sub(
     ).scalar_one_or_none()
     if sub is None:
         raise APIError(404, "NOT_FOUND", "Alt yüklenici bulunamadı")
+
+    changes = payload.model_dump(exclude_unset=True)
+    real_changes = {k: v for k, v in changes.items() if getattr(sub, k, None) != v}
+
+    # CR-004-N: contract changes may require director approval first.
+    from app.models.company import Company
+    from app.services import approvals as approvals_service
+
+    company = db.get(Company, user.company_id)
+    if real_changes and approvals_service.is_required(company, "subcontractor_change"):
+        approvals_service.create_request(
+            db, company_id=user.company_id, project_id=project.id,
+            kind="subcontractor_change", target_table="subcontractors", target_id=sub.id,
+            payload={"changes": {k: (str(v) if hasattr(v, "quantize") else v) for k, v in real_changes.items()}},
+            description=f"Alt yüklenici değişikliği — {sub.name}",
+            amount_try=real_changes.get("contract_value_try"),
+            requested_by=user.id,
+        )
+        db.commit()
+        out = _sub_totals(db, sub)
+        out["pending_approval"] = True
+        return success(out)
+
     old = snapshot(sub)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    for k, v in changes.items():
         setattr(sub, k, v)
     db.flush()
     record_audit(

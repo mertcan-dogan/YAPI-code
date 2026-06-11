@@ -1,10 +1,12 @@
 """Settings router — company & user management, director only (Section 11)."""
 import uuid
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import settings as app_settings
 from app.constants import ROLE_DIRECTOR
 from app.db import get_db
 from app.deps import DirectorUser
@@ -15,6 +17,15 @@ from app.schemas.user import CompanyOut, CompanyUpdate, UserInvite, UserOut, Use
 from app.services.email import send_user_invitation
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+# CR-006-D: company logo upload (Supabase Storage, public bucket).
+LOGO_BUCKET = "company-logos"
+LOGO_MAX_BYTES = 2 * 1024 * 1024  # 2MB
+LOGO_ALLOWED = {"image/png": "png", "image/jpeg": "jpg"}
+_LOGO_MAGIC = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+}
 
 
 @router.get("/company")
@@ -32,6 +43,78 @@ def update_company(
     company = db.get(Company, user.company_id)
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(company, k, v)
+    db.commit()
+    db.refresh(company)
+    return success(CompanyOut.model_validate(company).model_dump(mode="json"))
+
+
+@router.post("/company/logo")
+async def upload_company_logo(
+    user: DirectorUser,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Şirket logosunu yükle (PNG/JPEG, max 2MB) ve companies.logo_url güncelle."""
+    if file.content_type not in LOGO_ALLOWED:
+        raise APIError(422, "VALIDATION_ERROR",
+                       "Sadece PNG veya JPEG yükleyebilirsiniz", field="file")
+    data = await file.read()
+    if len(data) > LOGO_MAX_BYTES:
+        raise APIError(422, "VALIDATION_ERROR", "Logo en fazla 2MB olabilir", field="file")
+    if not any(data.startswith(sig) for sig in _LOGO_MAGIC.get(file.content_type, ())):
+        raise APIError(422, "VALIDATION_ERROR",
+                       "Dosya içeriği belirtilen türle uyuşmuyor", field="file")
+
+    if not app_settings.supabase_url or not app_settings.supabase_service_key:
+        raise APIError(503, "STORAGE_UNAVAILABLE", "Dosya depolama yapılandırılmadı")
+
+    ext = LOGO_ALLOWED[file.content_type]
+    object_path = f"company_logos/{user.company_id}/logo.{ext}"
+    url = f"{app_settings.supabase_url}/storage/v1/object/{LOGO_BUCKET}/{object_path}"
+    try:
+        resp = httpx.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {app_settings.supabase_service_key}",
+                "Content-Type": file.content_type,
+                "x-upsert": "true",
+            },
+            content=data,
+            timeout=30,
+        )
+    except httpx.HTTPError:
+        raise APIError(502, "STORAGE_ERROR", "Logo yüklenemedi")
+    if resp.status_code not in (200, 201):
+        raise APIError(502, "STORAGE_ERROR", "Logo yüklenemedi")
+
+    public_url = (
+        f"{app_settings.supabase_url}/storage/v1/object/public/{LOGO_BUCKET}/{object_path}"
+    )
+    company = db.get(Company, user.company_id)
+    company.logo_url = public_url
+    db.commit()
+    db.refresh(company)
+    return success(CompanyOut.model_validate(company).model_dump(mode="json"))
+
+
+@router.delete("/company/logo")
+def delete_company_logo(user: DirectorUser, db: Session = Depends(get_db)):
+    """Şirket logosunu kaldır — depolamadan sil ve logo_url'i temizle."""
+    company = db.get(Company, user.company_id)
+    if company.logo_url and app_settings.supabase_url and app_settings.supabase_service_key:
+        # Best-effort delete; never fail the request if storage cleanup errors.
+        for ext in ("png", "jpg"):
+            object_path = f"company_logos/{user.company_id}/logo.{ext}"
+            try:
+                httpx.request(
+                    "DELETE",
+                    f"{app_settings.supabase_url}/storage/v1/object/{LOGO_BUCKET}/{object_path}",
+                    headers={"Authorization": f"Bearer {app_settings.supabase_service_key}"},
+                    timeout=15,
+                )
+            except httpx.HTTPError:
+                pass
+    company.logo_url = None
     db.commit()
     db.refresh(company)
     return success(CompanyOut.model_validate(company).model_dump(mode="json"))

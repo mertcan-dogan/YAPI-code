@@ -1,11 +1,18 @@
-import { Button, Input, Select } from "@/components/ui";
+import { AIDisclaimer, Button, Input, Select } from "@/components/ui";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost } from "@/lib/api";
 import type { Project } from "@/types";
 import { formatDateTime } from "@/utils/format";
 import { Send, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+// CR-004-I: render **bold** segments from the AI's markdown-style numbers.
+function renderRich(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : <span key={i}>{part}</span>
+  );
+}
 
 const PRESETS = [
   "Hangi proje en fazla para kaybetme riski taşıyor?",
@@ -32,6 +39,12 @@ export default function AIAssistantPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  // CR-004-I: auto-scroll to the newest message instead of growing the page.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
   const ask = async (question: string) => {
     if (!question.trim() || loading) return;
@@ -65,23 +78,25 @@ export default function AIAssistantPage() {
             ))}
           </div>
 
-          {/* Chat */}
-          <div className="mb-3 min-h-[240px] space-y-3 rounded-lg border border-border bg-surface p-4">
+          {/* Chat — fixed height, scrollable (CR-004-I) */}
+          <div className="mb-3 space-y-3 overflow-y-auto rounded-lg border border-border bg-surface p-4" style={{ height: "calc(100vh - 320px)" }}>
             {messages.length === 0 && <p className="text-sm text-text-secondary">Bir soru seçin veya yazın.</p>}
             {messages.map((m, i) => (
               <div key={i} className={m.role === "user" ? "text-right" : ""}>
                 <div className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-bg text-text-primary"}`}>
                   {m.role === "ai" && <Sparkles className="mr-1 inline h-3.5 w-3.5 text-accent" />}
-                  <span className="whitespace-pre-wrap">{m.text}</span>
+                  <span className="whitespace-pre-wrap">{m.role === "ai" ? renderRich(m.text) : m.text}</span>
                   {m.at && <div className="mt-1 text-[10px] text-text-secondary">Bu yanıt {formatDateTime(m.at)} itibarıyla hesaplanmıştır</div>}
+                  {m.role === "ai" && <AIDisclaimer short className="mt-1" />}
                 </div>
               </div>
             ))}
             {loading && <div className="flex items-center gap-2 text-sm text-text-secondary"><Sparkles className="h-4 w-4 animate-pulse text-accent" /> Yanıt hazırlanıyor…</div>}
+            <div ref={endRef} />
           </div>
 
-          {/* Input */}
-          <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); ask(input); }}>
+          {/* Input — sticky at the bottom (CR-004-I) */}
+          <form className="sticky bottom-0 flex gap-2 bg-bg py-2" onSubmit={(e) => { e.preventDefault(); ask(input); }}>
             <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Sorunuzu yazın…" />
             <Button type="submit" loading={loading}><Send className="h-4 w-4" /> Gönder</Button>
           </form>

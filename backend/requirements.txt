@@ -27,7 +27,8 @@ anthropic==0.42.0
 resend==2.5.1
 
 # PDF + Excel
-weasyprint==63.1
+# CR-004-A: ReportLab replaces WeasyPrint — renders on Windows without GTK/Pango/Cairo.
+reportlab==4.2.5
 openpyxl==3.1.5
 jinja2==3.1.5
 

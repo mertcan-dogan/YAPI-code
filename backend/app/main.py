@@ -24,12 +24,14 @@ from app.api import (
     equipment,
     imports,
     invoices,
+    notifications,
     projects,
     reminders,
     reports,
     settings as settings_router,
     subcontractors,
     uploads,
+    users,
     variations,
 )
 
@@ -89,5 +91,7 @@ for r in (
     variations.router,
     approvals.router,
     budget_templates.router,
+    users.router,
+    notifications.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

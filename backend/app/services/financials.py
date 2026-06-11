@@ -99,6 +99,139 @@ def project_cashflow(db: Session, project: Project, today: date | None = None) -
     return compute_monthly_cashflow(costs, invoices, today=today)
 
 
+def cash_need_windows(db: Session, project: Project, today: date | None = None) -> list[dict]:
+    """CR-004-M: net cash need over the next 30/60/90 days.
+
+    need = planned outflows (unpaid costs due in window) - expected inflows
+    (outstanding invoices due in window). Positive => cash shortfall (red),
+    negative => surplus (green).
+    """
+    from datetime import timedelta
+
+    from app.calculations.money import D, money
+
+    today = today or date.today()
+    costs = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+            CostEntry.payment_status != "paid",
+            CostEntry.payment_due_date.is_not(None),
+        )
+    ).scalars().all()
+    invoices = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id == project.id,
+            ClientInvoice.is_deleted.is_(False),
+            ClientInvoice.payment_status != "paid",
+        )
+    ).scalars().all()
+
+    windows = []
+    for days in (30, 60, 90):
+        horizon = today + timedelta(days=days)
+        out = sum(
+            (D(c.total_with_vat_try) - D(c.amount_paid_try) for c in costs
+             if c.payment_due_date and today <= c.payment_due_date <= horizon),
+            D(0),
+        )
+        inflow = sum(
+            (D(i.outstanding_try) for i in invoices
+             if i.due_date and today <= i.due_date <= horizon and D(i.outstanding_try) > 0),
+            D(0),
+        )
+        need = out - inflow
+        windows.append({
+            "days": days,
+            "planned_out_try": str(money(out)),
+            "expected_in_try": str(money(inflow)),
+            "net_need_try": str(money(need)),
+            "shortfall": need > 0,  # True => need cash (red)
+        })
+    return windows
+
+
+def cashflow_month_detail(db: Session, project: Project, month_str: str) -> dict:
+    """CR-005-D: per-month drill-down for the cash-flow drawer.
+
+    Returns the unpaid cost entries due in the month ("Gider Tahminleri") and the
+    uncollected client invoices due in the month ("Beklenen Tahsilat"), filtered
+    server-side with a proper [first_day, last_day] date range (no timezone/string
+    slicing issues), plus the period totals.
+    """
+    import calendar
+    from datetime import date as _date
+
+    from app.calculations.money import D, money
+
+    year, month = int(month_str.split("-")[0]), int(month_str.split("-")[1])
+    first_day = _date(year, month, 1)
+    last_day = _date(year, month, calendar.monthrange(year, month)[1])
+
+    cost_rows = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+            CostEntry.payment_status != "paid",
+            CostEntry.payment_due_date >= first_day,
+            CostEntry.payment_due_date <= last_day,
+        )
+    ).scalars().all()
+
+    invoice_rows = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id == project.id,
+            ClientInvoice.is_deleted.is_(False),
+            ClientInvoice.payment_status != "paid",
+            ClientInvoice.due_date >= first_day,
+            ClientInvoice.due_date <= last_day,
+        )
+    ).scalars().all()
+
+    costs = []
+    out_total = D(0)
+    for c in cost_rows:
+        remaining = D(c.total_with_vat_try) - D(c.amount_paid_try)
+        out_total += remaining
+        costs.append({
+            "id": str(c.id),
+            "cost_category": c.cost_category,
+            "supplier_name": c.supplier_name,
+            "description": c.description,
+            "total_with_vat_try": str(money(D(c.total_with_vat_try))),
+            "amount_paid_try": str(money(D(c.amount_paid_try))),
+            "remaining_try": str(money(remaining)),
+            "payment_due_date": c.payment_due_date.isoformat() if c.payment_due_date else None,
+            "payment_status": c.payment_status,
+        })
+
+    invoices = []
+    in_total = D(0)
+    for i in invoice_rows:
+        outstanding = D(i.outstanding_try)
+        in_total += outstanding
+        invoices.append({
+            "id": str(i.id),
+            "invoice_number": i.invoice_number,
+            "hakkedis_period": i.hakkedis_period,
+            "outstanding_try": str(money(outstanding)),
+            "net_due_try": str(money(D(i.net_due_try))),
+            "due_date": i.due_date.isoformat() if i.due_date else None,
+            "payment_status": i.payment_status,
+        })
+
+    return {
+        "month": month_str,
+        "costs": costs,
+        "invoices": invoices,
+        "total_out_try": str(money(out_total)),
+        "total_in_try": str(money(in_total)),
+        "net_try": str(money(in_total - out_total)),
+    }
+
+
 def forecast_at_completion(db: Session, project: Project) -> dict:
     """CR-003-F: Forecast-at-Completion KPIs (uses VAT-inclusive cost totals)."""
     from app.calculations.money import D, money, pct, safe_div

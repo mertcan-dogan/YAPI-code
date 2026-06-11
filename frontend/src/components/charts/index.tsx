@@ -66,31 +66,30 @@ export function SCurveChart({
   );
 }
 
-// Margin Bridge — waterfall (CR-003-G). Components flow left-to-right.
+// Margin Bridge — waterfall (CR-003-G, CR-004-J). Each column starts where the
+// previous one ended; colours follow the step's meaning, not just its sign.
 export function MarginBridgeChart({ bridge, height = 300 }: { bridge: Record<string, string>; height?: number }) {
   const n = (k: string) => Number(bridge?.[k] ?? 0);
   const steps = [
-    { name: "Orijinal Marj", value: n("original_margin_try"), kind: "total" as const },
-    { name: "Onaylı Ek İş", value: n("approved_variations_try"), kind: "delta" as const },
-    { name: "Bekleyen Ek İş", value: n("pending_variations_try"), kind: "delta" as const },
-    { name: "Maliyet Aşımı", value: n("cost_overruns_try"), kind: "delta" as const },
-    { name: "Tasarruf", value: n("cost_savings_try"), kind: "delta" as const },
-    { name: "Güncel Marj", value: n("current_margin_try"), kind: "total" as const },
+    { name: "Orijinal Marj", value: n("original_margin_try"), kind: "total" as const, color: COLORS.primary },
+    { name: "Onaylı Ek İş", value: n("approved_variations_try"), kind: "delta" as const, color: COLORS.success },
+    { name: "Bekleyen Ek İş", value: n("pending_variations_try"), kind: "delta" as const, color: COLORS.warning },
+    { name: "Maliyet Aşımı", value: n("cost_overruns_try"), kind: "delta" as const, color: COLORS.danger },
+    { name: "Tasarruf", value: n("cost_savings_try"), kind: "delta" as const, color: COLORS.success },
+    { name: "Güncel Marj", value: n("current_margin_try"), kind: "total" as const, color: COLORS.primary },
   ];
 
-  // Build stacked bars: a transparent base + a coloured value segment.
+  // Two stacked bars: an invisible offset (base) + the coloured value segment,
+  // so each delta floats from the running total — the standard Recharts waterfall.
   let running = 0;
   const data = steps.map((s) => {
     if (s.kind === "total") {
-      const row = { name: s.name, base: 0, val: s.value, fill: COLORS.primary };
       running = s.value;
-      return row;
+      return { name: s.name, base: 0, val: s.value, raw: s.value, fill: s.color };
     }
     const base = s.value >= 0 ? running : running + s.value;
-    const fill = s.value >= 0 ? COLORS.success : COLORS.danger;
-    const row = { name: s.name, base, val: Math.abs(s.value), fill };
     running += s.value;
-    return row;
+    return { name: s.name, base, val: Math.abs(s.value), raw: s.value, fill: s.color };
   });
 
   return (
@@ -99,13 +98,31 @@ export function MarginBridgeChart({ bridge, height = 300 }: { bridge: Record<str
         <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} vertical={false} />
         <XAxis dataKey="name" {...axisProps} interval={0} angle={-15} textAnchor="end" height={60} />
         <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} {...axisProps} width={70} />
-        <Tooltip formatter={(v: any, _n: any, p: any) => [formatCurrencyAbbrev(p?.payload?.name?.includes("Aşım") ? -v : v), "Tutar"]} />
-        <Bar dataKey="base" stackId="a" fill="transparent" />
+        <Tooltip
+          cursor={{ fill: "transparent" }}
+          formatter={(_v: any, _n: any, p: any) => [formatCurrencyAbbrev(p?.payload?.raw ?? 0), "Tutar"]}
+        />
+        <Bar dataKey="base" stackId="a" fill="transparent" fillOpacity={0} isAnimationActive={false} legendType="none" />
         <Bar dataKey="val" stackId="a" radius={[2, 2, 0, 0]}>
           {data.map((d, i) => (
             <Cell key={i} fill={d.fill} />
           ))}
         </Bar>
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Mini monthly bar chart (CR-004-L) — compact spend trend inside a drawer.
+export function MiniBarChart({ data, height = 120 }: { data: { month: string; value: number }[]; height?: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} vertical={false} />
+        <XAxis dataKey="month" tick={{ fontSize: 9, fill: COLORS.primary }} stroke={COLORS.border} />
+        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tick={{ fontSize: 9, fill: COLORS.primary }} stroke={COLORS.border} width={48} />
+        <Tooltip formatter={moneyTooltip} />
+        <Bar dataKey="value" name="Harcama" fill={COLORS.primary} radius={[2, 2, 0, 0]} />
       </ComposedChart>
     </ResponsiveContainer>
   );

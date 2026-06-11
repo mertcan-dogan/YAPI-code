@@ -3,6 +3,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
+import { BudgetCategoryDrawer } from "@/components/budget/BudgetCategoryDrawer";
+import { BudgetSummaryCharts } from "@/components/budget/BudgetSummaryCharts";
 import { ImportPreview } from "@/components/ImportPreview";
 import { AIImportPreview } from "@/components/AIImportPreview";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -14,7 +16,7 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
-import { Download, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowUpRight, Download, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -32,6 +34,7 @@ export default function BudgetPage() {
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingCost, setEditingCost] = useState<CostEntry | null>(null);
+  const [catRow, setCatRow] = useState<BudgetCategoryRow | null>(null); // CR-004-L
   const [importFile, setImportFile] = useState<File | null>(null);
   const [aiImportFile, setAiImportFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -81,7 +84,16 @@ export default function BudgetPage() {
   };
 
   const budgetColumns: Column<BudgetCategoryRow>[] = [
-    { key: "label_tr", header: "Kategori", render: (r) => r.label_tr ?? COST_CATEGORIES[r.cost_category] },
+    {
+      key: "label_tr",
+      header: "Kategori",
+      render: (r) => (
+        <button onClick={() => setCatRow(r)} className="group inline-flex items-center gap-1 text-left font-medium text-primary hover:underline">
+          {r.label_tr ?? COST_CATEGORIES[r.cost_category]}
+          <ArrowUpRight className="h-3 w-3 opacity-0 group-hover:opacity-100" />
+        </button>
+      ),
+    },
     {
       key: "revised_budget_try",
       header: "Revize Bütçe",
@@ -92,7 +104,22 @@ export default function BudgetPage() {
     { key: "invoiced_try", header: "Faturalanan", align: "right", render: (r) => formatCurrency(r.invoiced_try) },
     { key: "paid_try", header: "Ödenen", align: "right", render: (r) => formatCurrency(r.paid_try) },
     { key: "remaining_try", header: "Kalan", align: "right", render: (r) => <span className={toNumber(r.remaining_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.remaining_try)}</span> },
-    { key: "pct_spent", header: "% Harcanan", align: "right", render: (r) => formatPct(r.pct_spent) },
+    {
+      key: "pct_spent",
+      header: "% Harcanan",
+      align: "right",
+      // CR-005-C: <%85 normal, %85–%100 amber, >%100 kırmızı + kalın. Tıklanınca
+      // ilgili kategorinin detay drawer'ını açar.
+      render: (r) => {
+        const pct = toNumber(r.pct_spent);
+        const cls = pct > 100 ? "text-danger font-bold" : pct >= 85 ? "text-accent" : "";
+        return (
+          <button onClick={() => setCatRow(r)} className={cn("tabular cursor-pointer hover:underline", cls)} title="Kategori detayını aç">
+            {formatPct(r.pct_spent)}
+          </button>
+        );
+      },
+    },
     {
       key: "forecast_final",
       header: "Final Tahmin",
@@ -216,6 +243,14 @@ export default function BudgetPage() {
         }
       />
 
+      {/* CR-005-H: sayfa üstü özet — 4 KPI kartı + bütçe kullanım bar chart. */}
+      <BudgetSummaryCharts
+        categories={budget.data?.categories ?? []}
+        totals={budget.data?.totals}
+        loading={budget.loading}
+        onAddBudget={() => setDrawerOpen(true)}
+      />
+
       <h2 className="mb-2 text-lg font-semibold text-primary">Bütçe & Gerçekleşen</h2>
       <DataTable columns={budgetColumns} rows={budget.data?.categories ?? []} loading={budget.loading} emptyMessage="Bu proje için henüz bütçe verisi yok." />
       {budget.data?.totals && (
@@ -254,6 +289,15 @@ export default function BudgetPage() {
         editing={editingCost}
         onClose={() => { setDrawerOpen(false); setEditingCost(null); }}
         onSaved={() => { setEditingCost(null); refetchAll(); }}
+      />
+
+      {/* CR-004-L: budget category detail drawer */}
+      <BudgetCategoryDrawer
+        open={!!catRow}
+        row={catRow}
+        projectId={id!}
+        onClose={() => setCatRow(null)}
+        onEdit={(c) => { setCatRow(null); openEdit(c); }}
       />
 
       {importFile && (

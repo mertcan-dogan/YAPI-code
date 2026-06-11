@@ -139,7 +139,19 @@ def create_cost(
     )
     db.commit()
     db.refresh(cost)
+    _notify_margin(db, project)
     return success(CostEntryOut.model_validate(cost).model_dump(mode="json"))
+
+
+def _notify_margin(db: Session, project) -> None:
+    """CR-006-B/C: cost değişikliği sonrası marj e-postası + uygulama içi bildirimler."""
+    try:
+        from app.services.triggers import check_margin_warning, notify_cost_change
+
+        check_margin_warning(db, project)        # CR-006-B: e-posta (<%5)
+        notify_cost_change(db, project)          # CR-006-C: zil bildirimleri (<%10, bütçe %95)
+    except Exception:  # tetikleyici hiçbir koşulda isteği bozmamalı
+        pass
 
 
 def _get_cost(db: Session, project, cost_id: uuid.UUID) -> CostEntry:
@@ -190,6 +202,7 @@ def update_cost(
     )
     db.commit()
     db.refresh(cost)
+    _notify_margin(db, project)
     return success(CostEntryOut.model_validate(cost).model_dump(mode="json"))
 
 
@@ -206,6 +219,22 @@ def delete_cost(
         raise APIError(403, "FORBIDDEN", "Maliyet kaydını yalnızca yönetici veya proje müdürü silebilir")
     project = get_company_project(db, project_id, user)
     cost = _get_cost(db, project, cost_id)
+
+    # CR-004-N: deletions may require director approval first.
+    from app.models.company import Company
+    from app.services import approvals as approvals_service
+
+    company = db.get(Company, user.company_id)
+    if approvals_service.is_required(company, "cost_deletion"):
+        approvals_service.create_request(
+            db, company_id=user.company_id, project_id=project.id,
+            kind="cost_deletion", target_table="cost_entries", target_id=cost.id,
+            payload=None, description=cost.description or cost.cost_category,
+            amount_try=cost.total_with_vat_try, requested_by=user.id,
+        )
+        db.commit()
+        return success({"id": str(cost_id), "pending_approval": True, "message": "Silme işlemi onaya gönderildi"})
+
     old = snapshot(cost)
     cost.is_deleted = True
     cost.deleted_at = datetime.now(timezone.utc)

@@ -87,6 +87,12 @@ def _parse_date(value) -> date | None:
     raise ValueError("Geçersiz tarih")
 
 
+# CR-006-F: kullanıcıya görünen Türkçe doğrulama mesajları.
+ERR_DATE_FORMAT = "Geçersiz tarih formatı — DD.MM.YYYY kullanın"
+ERR_AMOUNT_NUMERIC = "Tutar sayısal olmalı — para birimi sembolü girmeyin"
+ERR_DATE_ORDER = "Vade tarihi fatura tarihinden önce olamaz"
+
+
 def _parse_amount(value) -> Decimal:
     if value in (None, ""):
         raise ValueError("Tutar zorunludur")
@@ -94,7 +100,7 @@ def _parse_amount(value) -> Decimal:
     try:
         d = Decimal(str(s))
     except (InvalidOperation, ValueError):
-        raise ValueError("Geçersiz tutar")
+        raise ValueError(ERR_AMOUNT_NUMERIC)
     if d <= 0:
         raise ValueError("Tutar 0'dan büyük olmalıdır")
     return d
@@ -104,6 +110,24 @@ def _looks_like_header(cells: list) -> int:
     """Count how many header keywords appear in a row's cells."""
     text = " ".join(str(c).lower() for c in cells if c not in (None, ""))
     return sum(1 for kw in HEADER_KEYWORDS if kw in text)
+
+
+def _numeric_ratio(cells: list) -> float:
+    """CR-006-F: oran of cells that parse as a number (header rows are mostly text)."""
+    values = [c for c in cells if c not in (None, "")]
+    if not values:
+        return 1.0  # boş satır başlık olamaz
+    numeric = 0
+    for c in values:
+        if isinstance(c, (int, float)):
+            numeric += 1
+            continue
+        try:
+            Decimal(str(c).replace(".", "").replace(",", "."))
+            numeric += 1
+        except (InvalidOperation, ValueError):
+            pass
+    return numeric / len(values)
 
 
 def _is_total_row(cells: list) -> bool:
@@ -123,12 +147,19 @@ def validate_rows(file_bytes: bytes, sheet_name: str | None = None) -> dict:
 
     raw = [list(r) for r in ws.iter_rows(values_only=True)]
 
-    # --- Header detection: scan first 5 rows for >=2 header keywords. ---
+    # --- Header detection (CR-002-F + CR-006-F) ---
+    # 1) scan first 5 rows for >=2 header keywords; 2) fall back to the first row
+    #    whose numeric-cell ratio is < %30 (header rows are mostly text labels).
     header_row = None
     for i, cells in enumerate(raw[:5]):
         if _looks_like_header(cells) >= 2:
             header_row = i
             break
+    if header_row is None:
+        for i, cells in enumerate(raw[:5]):
+            if any(c not in (None, "") for c in cells) and _numeric_ratio(cells) < 0.30:
+                header_row = i
+                break
     header_detected = header_row is not None
     if header_row is None:
         header_row = 0  # assume the first row is the header
@@ -165,7 +196,9 @@ def validate_rows(file_bytes: bytes, sheet_name: str | None = None) -> dict:
         cat_label = (str(cells[1]).strip().lower() if cells[1] else "")
         key = LABEL_TO_KEY.get(cat_label)
         if not key:
-            errors.append("Kategori tanınmıyor")
+            shown = str(cells[1]).strip() if cells[1] else "(boş)"
+            valid = ", ".join(list(COST_CATEGORIES.values())[:8]) + "…"
+            errors.append(f"Kategori tanınmıyor: {shown} — Geçerli kategoriler: {valid}")
         else:
             parsed["cost_category"] = key
 
@@ -187,7 +220,11 @@ def validate_rows(file_bytes: bytes, sheet_name: str | None = None) -> dict:
         try:
             parsed["payment_due_date"] = _parse_date(cells[8])
         except ValueError:
-            errors.append("Geçersiz vade tarihi")
+            errors.append(ERR_DATE_FORMAT)
+        # CR-006-F: vade tarihi fatura (giriş) tarihinden önce olamaz.
+        if parsed.get("entry_date") and parsed.get("payment_due_date") \
+                and parsed["payment_due_date"] < parsed["entry_date"]:
+            errors.append(ERR_DATE_ORDER)
 
         status_raw = (str(cells[9]).strip().lower() if cells[9] else "ödenmedi")
         parsed["payment_status"] = "paid" if status_raw in ("ödendi", "odendi", "paid") else "unpaid"
@@ -195,7 +232,7 @@ def validate_rows(file_bytes: bytes, sheet_name: str | None = None) -> dict:
         try:
             parsed["date_paid"] = _parse_date(cells[10])
         except ValueError:
-            errors.append("Geçersiz ödeme tarihi")
+            errors.append(ERR_DATE_FORMAT)
         if parsed["payment_status"] == "paid" and not parsed.get("date_paid"):
             errors.append("Ödendi durumunda ödeme tarihi zorunludur")
 

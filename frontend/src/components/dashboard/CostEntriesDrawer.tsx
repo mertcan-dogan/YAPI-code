@@ -1,0 +1,71 @@
+import { SideDrawer } from "@/components/SideDrawer";
+import { StatusBadge } from "@/components/StatusBadge";
+import { COST_CATEGORIES } from "@/constants";
+import { apiGet } from "@/lib/api";
+import { formatCurrency, formatDate, toNumber } from "@/utils/format";
+import { useEffect, useState } from "react";
+
+interface CostRow {
+  id: string;
+  entry_date: string;
+  cost_category: string;
+  supplier_name?: string | null;
+  description?: string | null;
+  total_with_vat_try: string;
+  payment_status: string;
+}
+
+// CR-004-K: "Gerçekleşen Maliyet" drill-down — all cost entries for the project.
+export function CostEntriesDrawer({
+  open,
+  onClose,
+  projectId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  projectId: string;
+}) {
+  const [rows, setRows] = useState<CostRow[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || !projectId) return;
+    setLoading(true);
+    apiGet<CostRow[]>(`/projects/${projectId}/costs`)
+      .then((r) => setRows(r.data))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [open, projectId]);
+
+  const total = rows.reduce((s, r) => s + toNumber(r.total_with_vat_try), 0);
+
+  return (
+    <SideDrawer open={open} onClose={onClose} title={`Maliyet Kayıtları — ${rows.length} adet`}>
+      {loading ? (
+        <p className="text-sm text-text-secondary">Yükleniyor…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-text-secondary">Bu projede maliyet kaydı bulunmuyor.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.id} className="rounded-md border border-border p-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-primary">{COST_CATEGORIES[r.cost_category] ?? r.cost_category}</span>
+                <span className="tabular font-semibold">{formatCurrency(r.total_with_vat_try)}</span>
+              </div>
+              <div className="mt-0.5 flex items-center justify-between text-xs text-text-secondary">
+                <span>{r.supplier_name || r.description || "—"}</span>
+                <span>{formatDate(r.entry_date)}</span>
+              </div>
+              <div className="mt-1"><StatusBadge status={r.payment_status} /></div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
+            <span>Toplam</span>
+            <span className="tabular">{formatCurrency(total)}</span>
+          </div>
+        </div>
+      )}
+    </SideDrawer>
+  );
+}

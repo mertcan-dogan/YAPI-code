@@ -1,6 +1,6 @@
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
-import { Button, Card, CardBody } from "@/components/ui";
+import { AIDisclaimer, Button, Card, CardBody } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost, apiPut } from "@/lib/api";
@@ -104,6 +104,7 @@ export default function AIAlertsPage() {
                   <button onClick={() => sendFeedback(a.id, "irrelevant")} className={cn("rounded px-1 hover:bg-bg", (a as any).feedback === "irrelevant" && "text-text-primary")} title="İlgisiz">İlgisiz</button>
                 </div>
               </div>
+              <AIDisclaimer />
             </div>
           ))}
         </div>

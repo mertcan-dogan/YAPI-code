@@ -106,6 +106,7 @@ def list_reminders(user: CurrentUser, db: Session = Depends(get_db)):
                 "party": inv.hakkedis_period or inv.invoice_number,
                 "description": inv.description or f"Hakediş {inv.invoice_number}",
                 "amount_try": str(inv.outstanding_try),
+                "net_due_try": str(inv.net_due_try),  # CR-004-D: full amount for "Tahsil Edildi"
                 "due_date": inv.due_date.isoformat(),
                 "days_remaining": days,
                 "days_label": _days_label(days),

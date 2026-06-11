@@ -23,11 +23,20 @@ interface Row {
 
 const CATEGORY_KEYS = new Set(COST_CATEGORY_OPTIONS.map((c) => c.value));
 
+// CR-006-F: Türkçe doğrulama mesajları (backend ile aynı ifadeler).
 function rowErrors(r: Row): string[] {
   const errs: string[] = [];
-  if (!r.entry_date) errs.push("Tarih zorunlu");
+  if (!r.entry_date) errs.push("Geçersiz tarih formatı — DD.MM.YYYY kullanın");
   if (!r.cost_category || !CATEGORY_KEYS.has(r.cost_category)) errs.push("Kategori tanınmıyor");
-  if (toNumber(r.amount_try) <= 0) errs.push("Tutar 0'dan büyük olmalı");
+  const amt = r.amount_try?.toString().trim() ?? "";
+  if (amt !== "" && Number.isNaN(Number(amt.replace(",", ".")))) {
+    errs.push("Tutar sayısal olmalı — para birimi sembolü girmeyin");
+  } else if (toNumber(r.amount_try) <= 0) {
+    errs.push("Tutar 0'dan büyük olmalı");
+  }
+  if (r.entry_date && r.payment_due_date && r.payment_due_date < r.entry_date) {
+    errs.push("Vade tarihi fatura tarihinden önce olamaz");
+  }
   return errs;
 }
 
@@ -45,6 +54,7 @@ export function ImportPreview({
 }) {
   const [phase, setPhase] = useState<"loading" | "sheet" | "preview">("loading");
   const [sheets, setSheets] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [skippedCount, setSkippedCount] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -70,6 +80,7 @@ export function ImportPreview({
 
   const loadPreview = (sheet?: string) => {
     setPhase("loading");
+    if (sheet) setSelectedSheet(sheet);
     const fd = new FormData();
     fd.append("file", file);
     if (sheet) fd.append("sheet_name", sheet);
@@ -149,6 +160,7 @@ export function ImportPreview({
           <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
             <div>
               <h2 className="text-lg font-bold text-primary">İçe Aktarma Önizlemesi — {computed.length} satır bulundu</h2>
+              {selectedSheet && <p className="mt-0.5 text-xs text-text-secondary">Aktarılan sayfa: <b>{selectedSheet}</b></p>}
               <div className="mt-1 flex gap-4 text-sm">
                 <span>Toplam: <b>{computed.length}</b></span>
                 <span className="text-success">Geçerli: <b>{validCount}</b></span>

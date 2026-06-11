@@ -58,6 +58,9 @@ function EquipDrawer({ open, projectId, editing, onClose, onSaved }: { open: boo
   const [saving, setSaving] = useState(false);
   const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
 
+  // CR-006-E: süre + tahmini toplam maliyet anlık hesaplanır (tarihler değiştikçe).
+  const preview = computeEquipmentCost(form);
+
   useEffect(() => {
     if (open && editing) {
       setForm({
@@ -113,6 +116,26 @@ function EquipDrawer({ open, projectId, editing, onClose, onSaved }: { open: boo
           <div><Label>Bitiş</Label><Input type="date" value={form.deployment_end} onChange={(e) => set("deployment_end", e.target.value)} /></div>
         </div>
         <div><Label>Yakıt / Bakım (TRY)</Label><Input type="number" value={form.fuel_maintenance_try} onChange={(e) => set("fuel_maintenance_try", e.target.value)} /></div>
+        <div><Label>Notlar</Label><Input value={form.notes} onChange={(e) => set("notes", e.target.value)} /></div>
+
+        {/* Anlık hesaplanan süre + tahmini toplam maliyet */}
+        <div className="rounded-md border border-border bg-bg p-3 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-text-secondary">Süre</span>
+            <span className="font-medium text-text-primary">
+              {form.ownership_type === "owned"
+                ? "—"
+                : preview.hasDates
+                  ? `${preview.units} ${form.rate_unit === "month" ? "ay" : "gün"}`
+                  : "Bitiş tarihi girin"}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-text-secondary">Tahmini Toplam Maliyet</span>
+            <span className="font-bold text-primary">{formatCurrency(preview.total)}</span>
+          </div>
+        </div>
+
         {!editing && (
           <div className="rounded-md border border-border bg-bg p-3">
             <Checkbox
@@ -126,4 +149,29 @@ function EquipDrawer({ open, projectId, editing, onClose, onSaved }: { open: boo
       </div>
     </SideDrawer>
   );
+}
+
+// CR-006-E: ekipman maliyet önizlemesi (backend app/calculations/equipment.py ile aynı mantık).
+//   Kiralık (gün):  ücret × (bitiş - başlangıç + 1 gün) + yakıt/bakım
+//   Kiralık (ay):   ücret × max(1, ay) + yakıt/bakım
+//   Şirkete ait:    yalnızca yakıt/bakım
+export function computeEquipmentCost(form: {
+  ownership_type: string;
+  rate_try: string | number;
+  rate_unit: string;
+  deployment_start: string;
+  deployment_end: string;
+  fuel_maintenance_try: string | number;
+}): { units: number; total: number; hasDates: boolean } {
+  const fuel = Number(form.fuel_maintenance_try) || 0;
+  const hasDates = Boolean(form.deployment_start && form.deployment_end);
+  if (form.ownership_type === "owned" || !hasDates) {
+    return { units: 0, total: fuel, hasDates };
+  }
+  const start = new Date(form.deployment_start);
+  const end = new Date(form.deployment_end);
+  const days = Math.max(Math.floor((end.getTime() - start.getTime()) / 86400000) + 1, 0);
+  const units = form.rate_unit === "month" ? Math.max(1, Math.round(days / 30)) : days;
+  const rate = Number(form.rate_try) || 0;
+  return { units, total: rate * units + fuel, hasDates };
 }

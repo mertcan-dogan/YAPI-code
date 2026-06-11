@@ -255,8 +255,28 @@ def update_budget(
         line = BudgetLineItem(project_id=project.id, company_id=user.company_id, cost_category=category)
         db.add(line)
         db.flush()
+
+    changes = payload.model_dump(exclude_unset=True)
+    # CR-004-N: budget changes may require director approval first.
+    from app.models.company import Company
+    from app.services import approvals as approvals_service
+
+    company = db.get(Company, user.company_id)
+    if changes and approvals_service.is_required(company, "budget_change"):
+        approvals_service.create_request(
+            db, company_id=user.company_id, project_id=project.id,
+            kind="budget_change", target_table="budget_line_items", target_id=line.id,
+            payload={"category": category, "changes": {k: str(v) for k, v in changes.items()}},
+            description=f"Bütçe değişikliği — {COST_CATEGORIES.get(category, category)}",
+            requested_by=user.id,
+        )
+        db.commit()
+        out = BudgetLineOut.model_validate(line).model_dump(mode="json")
+        out["pending_approval"] = True
+        return success(out)
+
     old = snapshot(line)
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    for k, v in changes.items():
         setattr(line, k, v)
     db.flush()
     record_audit(
@@ -270,6 +290,77 @@ def update_budget(
 
 
 # --- Company dashboard (Section 4.1) ---
+def _last_n_months(n: int, anchor: date | None = None) -> list[str]:
+    """Return the last `n` month keys (YYYY-MM), oldest first, ending at `anchor`."""
+    anchor = anchor or date.today()
+    y, m = anchor.year, anchor.month
+    keys: list[str] = []
+    for _ in range(n):
+        keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    keys.reverse()
+    return keys
+
+
+def _combined_cashflow_chart(db: Session, project_ids: list, anchor: date | None = None) -> list[dict]:
+    """CR-004-B: combined cash flow over the last 6 months across all active projects.
+
+    Expense per month = SUM(cost_entries.total_with_vat_try) WHERE entry_date in month.
+    Income per month  = SUM(client_invoices.amount_received_try) WHERE date_received in month.
+    Net cumulative is carried forward across the window.
+    """
+    from app.models.client_invoice import ClientInvoice
+    from app.models.cost_entry import CostEntry
+
+    month_keys = _last_n_months(6, anchor)
+    buckets = {k: {"out": D(0), "in": D(0)} for k in month_keys}
+
+    if project_ids:
+        start_y, start_m = (int(x) for x in month_keys[0].split("-"))
+        window_start = date(start_y, start_m, 1)
+
+        cost_rows = db.execute(
+            select(CostEntry.entry_date, CostEntry.total_with_vat_try).where(
+                CostEntry.project_id.in_(project_ids),
+                CostEntry.is_deleted.is_(False),
+                CostEntry.pending_approval.is_(False),
+                CostEntry.entry_date >= window_start,
+            )
+        ).all()
+        for entry_date, total in cost_rows:
+            k = f"{entry_date.year:04d}-{entry_date.month:02d}"
+            if k in buckets:
+                buckets[k]["out"] += D(total or 0)
+
+        inv_rows = db.execute(
+            select(ClientInvoice.date_received, ClientInvoice.amount_received_try).where(
+                ClientInvoice.project_id.in_(project_ids),
+                ClientInvoice.is_deleted.is_(False),
+                ClientInvoice.date_received.is_not(None),
+                ClientInvoice.date_received >= window_start,
+            )
+        ).all()
+        for received, amount in inv_rows:
+            if received is None:
+                continue
+            k = f"{received.year:04d}-{received.month:02d}"
+            if k in buckets:
+                buckets[k]["in"] += D(amount or 0)
+
+    chart = []
+    cumulative = D(0)
+    for k in month_keys:
+        b = buckets[k]
+        cumulative += b["in"] - b["out"]
+        chart.append(
+            {"month": k, "out": str(money(b["out"])), "in": str(money(b["in"])),
+             "net_cumulative": str(money(cumulative))}
+        )
+    return chart
+
+
 @router.get("/dashboard")
 def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     projects = _list_visible_projects(db, user, only_active=True)
@@ -277,7 +368,6 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     total_contract = D(0)
     weighted_margin_num = D(0)
     overdue_total = 0
-    combined_cashflow: dict[str, dict] = {}
 
     for p in projects:
         f = fin_service.project_financials(db, p)
@@ -300,29 +390,10 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "overdue": p.planned_end_date < date.today(),
             }
         )
-        for cf in fin_service.project_cashflow(db, p):
-            agg = combined_cashflow.setdefault(
-                cf["month"], {"month": cf["month"], "out": D(0), "in": D(0)}
-            )
-            out_v = cf["actual_out_try"] if (cf["is_past"] or cf["is_current"]) else cf["planned_out_try"]
-            in_v = cf["actual_in_try"] if (cf["is_past"] or cf["is_current"]) else cf["planned_in_try"]
-            agg["out"] += out_v
-            agg["in"] += in_v
 
     weighted_margin = pct(safe_div(weighted_margin_num, total_contract) * 100)
 
-    # Last 6 months combined cash flow for the chart.
-    cashflow_chart = []
-    cumulative = D(0)
-    for month in sorted(combined_cashflow):
-        c = combined_cashflow[month]
-        net = c["in"] - c["out"]
-        cumulative += net
-        cashflow_chart.append(
-            {"month": month, "out": str(money(c["out"])), "in": str(money(c["in"])),
-             "net_cumulative": str(money(cumulative))}
-        )
-    cashflow_chart = cashflow_chart[-6:]
+    cashflow_chart = _combined_cashflow_chart(db, [p.id for p in projects])
 
     return success(
         {
