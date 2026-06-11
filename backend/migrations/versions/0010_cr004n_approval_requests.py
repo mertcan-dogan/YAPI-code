@@ -8,6 +8,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from migrations.idempotent import add_column, create_index, create_table
+
 revision = "0010_cr004n_approval_requests"
 down_revision = "0009_cr003m_alert_feedback"
 branch_labels = None
@@ -17,11 +19,11 @@ depends_on = None
 def upgrade() -> None:
     # New per-trigger toggles (default On per CR-004-N). Existing companies also
     # get the budget/subcontractor toggles flipped on to enforce the workflow.
-    op.add_column("companies", sa.Column("require_deletion_approval", sa.Boolean(), server_default="true"))
-    op.add_column("companies", sa.Column("require_variation_approval", sa.Boolean(), server_default="true"))
+    add_column("companies", sa.Column("require_deletion_approval", sa.Boolean(), server_default="true"))
+    add_column("companies", sa.Column("require_variation_approval", sa.Boolean(), server_default="true"))
     op.execute("UPDATE companies SET require_budget_approval = true, require_subcontractor_approval = true")
 
-    op.create_table(
+    create_table(
         "approval_requests",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("company_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("companies.id"), nullable=False),
@@ -42,7 +44,7 @@ def upgrade() -> None:
         sa.Column("is_deleted", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.create_index("ix_approval_requests_company_status", "approval_requests", ["company_id", "status"])
+    create_index("ix_approval_requests_company_status", "approval_requests", ["company_id", "status"])
 
 
 def downgrade() -> None:

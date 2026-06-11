@@ -32,9 +32,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # On boot: apply DB migrations (idempotent), then start the server.
 #   * alembic upgrade head — keeps the prod schema in sync with the models;
 #     without this, new columns/tables (e.g. companies.logo_url) are missing
-#     and every query against them 500s.
+#     and every query against them 500s. Migrations are idempotent, so this is
+#     safe to run on every boot. We intentionally do NOT '&&' it with uvicorn:
+#     if a migration fails we still start the server (logging the failure) so
+#     the container never crash-loops — a crash loop makes Railway return 502s
+#     with no CORS headers, which the browser misreports as a CORS error.
 #   * --proxy-headers + --forwarded-allow-ips=* — makes uvicorn trust Railway's
 #     X-Forwarded-Proto. Otherwise the app sees scheme=http behind the
 #     TLS-terminating proxy, HTTPSRedirectMiddleware issues a 307 redirect loop,
 #     and the browser reports it as a (false) CORS / ERR_FAILED error.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*"]
+CMD ["sh", "-c", "alembic upgrade head || echo '[boot] WARNING: alembic upgrade head failed; starting server anyway'; uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*"]

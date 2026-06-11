@@ -7,6 +7,8 @@ Create Date: 2026-06-08
 import sqlalchemy as sa
 from alembic import op
 
+from migrations.idempotent import create_policy, create_table, enable_rls
+
 revision = "0006_cr003i_variations"
 down_revision = "0005_fix_rls_no_force"
 branch_labels = None
@@ -16,7 +18,7 @@ CURRENT_COMPANY = "(SELECT company_id FROM users WHERE id = auth.uid())"
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table(
         "variations",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True,
                   server_default=sa.text("gen_random_uuid()")),
@@ -42,9 +44,11 @@ def upgrade() -> None:
         sa.Column("is_deleted", sa.Boolean(), server_default="false"),
         sa.Column("deleted_at", sa.DateTime(timezone=True)),
     )
-    op.execute("ALTER TABLE variations ENABLE ROW LEVEL SECURITY;")
-    op.execute(f"CREATE POLICY variations_company_isolation ON variations FOR ALL USING (company_id = {CURRENT_COMPANY});")
-    op.execute("CREATE POLICY variations_hide_deleted ON variations FOR SELECT USING (is_deleted = false);")
+    enable_rls("variations")
+    create_policy("variations_company_isolation", "variations",
+                  f"FOR ALL USING (company_id = {CURRENT_COMPANY})")
+    create_policy("variations_hide_deleted", "variations",
+                  "FOR SELECT USING (is_deleted = false)")
 
 
 def downgrade() -> None:
