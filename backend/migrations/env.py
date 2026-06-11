@@ -41,7 +41,10 @@ def run_migrations_online() -> None:
     # the psycopg3 URL is what reaches create_engine — there is no raw
     # DATABASE_URL or ConfigParser interpolation step that could reintroduce the
     # psycopg2 dialect.
-    connectable = create_engine(DB_URL, poolclass=pool.NullPool, future=True)
+    connect_args = {"prepare_threshold": None} if DB_URL.startswith("postgresql+psycopg://") else {}
+    connectable = create_engine(
+        DB_URL, poolclass=pool.NullPool, future=True, connect_args=connect_args
+    )
     with connectable.connect() as connection:
         context.configure(
             connection=connection,

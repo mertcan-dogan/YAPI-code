@@ -38,7 +38,21 @@ def _normalize_db_url(db_url: str) -> str:
         "postgres://",
     ):
         if db_url.startswith(prefix):
-            return "postgresql+psycopg://" + db_url[len(prefix):]
+            db_url = "postgresql+psycopg://" + db_url[len(prefix):]
+            break
+
+    # Strip connection params that some platforms append for Supabase's pooler
+    # but psycopg 3 / libpq reject (e.g. ``pgbouncer=true`` -> ``invalid
+    # connection option "pgbouncer"``, which aborts every connect — including
+    # ``alembic upgrade head`` on boot — and surfaces as a 500 on DB routes).
+    # Done by surgical string edit so every other param is preserved verbatim.
+    if db_url.startswith("postgresql+psycopg://") and "?" in db_url:
+        base, _, query = db_url.partition("?")
+        kept = [
+            kv for kv in query.split("&")
+            if kv and kv.split("=", 1)[0].lower() != "pgbouncer"
+        ]
+        db_url = base + ("?" + "&".join(kept) if kept else "")
     return db_url
 
 
@@ -46,7 +60,14 @@ def get_engine() -> Engine:
     global _engine
     if _engine is None:
         db_url = _normalize_db_url(settings.database_url)
-        _engine = create_engine(db_url, pool_pre_ping=True, future=True)
+        connect_args: dict = {}
+        if db_url.startswith("postgresql+psycopg://"):
+            # pgbouncer (transaction mode) can't preserve server-side prepared
+            # statements across pooled backends; disable psycopg 3 auto-prepare.
+            connect_args["prepare_threshold"] = None
+        _engine = create_engine(
+            db_url, pool_pre_ping=True, future=True, connect_args=connect_args
+        )
     return _engine
 
 
