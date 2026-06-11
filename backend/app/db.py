@@ -16,10 +16,27 @@ _engine: Engine | None = None
 _SessionLocal: sessionmaker | None = None
 
 
+def _normalize_db_url(db_url: str) -> str:
+    """Force the psycopg 3 driver for Postgres URLs.
+
+    Platforms like Railway/Heroku inject DATABASE_URL as ``postgres://…`` or
+    ``postgresql://…`` (no driver suffix); SQLAlchemy resolves those to the
+    psycopg2 dialect, which the app doesn't ship. Rewrite the scheme to
+    ``postgresql+psycopg://`` so psycopg 3 is always used. Non-Postgres URLs
+    (e.g. ``sqlite://`` in tests) are returned unchanged.
+    """
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return db_url
+
+
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        _engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
+        db_url = _normalize_db_url(settings.database_url)
+        _engine = create_engine(db_url, pool_pre_ping=True, future=True)
     return _engine
 
 

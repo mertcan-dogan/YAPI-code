@@ -8,11 +8,9 @@ email-validator==2.2.0
 # Database
 sqlalchemy==2.0.36
 alembic==1.14.0
-psycopg[binary]==3.3.4          # psycopg 3 — used by the app's default postgresql+psycopg:// URL
-# Railway injects DATABASE_URL as postgresql://… (no driver suffix); SQLAlchemy
-# resolves that scheme to the psycopg2 dialect, so ship the precompiled binary
-# wheel too (no libpq build needed on the Railway image).
-psycopg2-binary==2.9.10
+# psycopg 3 only. DATABASE_URL is normalized to postgresql+psycopg:// in
+# app/db.py so Railway's bare postgresql:// URL also uses psycopg 3 (no psycopg2).
+psycopg[binary]==3.3.4
 
 # Auth / security
 pyjwt[crypto]==2.10.1          # [crypto] pulls cryptography — required for ES256/RS256 (JWKS) verification
