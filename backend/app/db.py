@@ -17,18 +17,28 @@ _SessionLocal: sessionmaker | None = None
 
 
 def _normalize_db_url(db_url: str) -> str:
-    """Force the psycopg 3 driver for Postgres URLs.
+    """Force the psycopg 3 driver for any Postgres URL.
 
-    Platforms like Railway/Heroku inject DATABASE_URL as ``postgres://…`` or
-    ``postgresql://…`` (no driver suffix); SQLAlchemy resolves those to the
-    psycopg2 dialect, which the app doesn't ship. Rewrite the scheme to
-    ``postgresql+psycopg://`` so psycopg 3 is always used. Non-Postgres URLs
-    (e.g. ``sqlite://`` in tests) are returned unchanged.
+    We ship psycopg 3 only (no psycopg2). A DATABASE_URL can arrive in several
+    shapes that SQLAlchemy would otherwise resolve to the psycopg2 dialect:
+
+    * ``postgres://…`` / ``postgresql://…`` — bare, as Railway/Heroku inject it
+      (no driver suffix defaults to psycopg2).
+    * ``postgresql+psycopg2://…`` — an explicit psycopg2 driver, e.g. left over
+      in a platform env var from an earlier psycopg2 deployment.
+
+    All of these are rewritten to ``postgresql+psycopg://`` so psycopg 3 is
+    always used. URLs that already specify ``+psycopg`` are left untouched, as
+    are non-Postgres URLs (e.g. ``sqlite://`` in tests).
     """
-    if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
-    elif db_url.startswith("postgresql://"):
-        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    for prefix in (
+        "postgresql+psycopg2://",
+        "postgres+psycopg2://",
+        "postgresql://",
+        "postgres://",
+    ):
+        if db_url.startswith(prefix):
+            return "postgresql+psycopg://" + db_url[len(prefix):]
     return db_url
 
 

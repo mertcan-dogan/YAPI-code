@@ -2,7 +2,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 from app.config import settings
 from app.db import _normalize_db_url
@@ -36,13 +36,12 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = DB_URL
-    connectable = engine_from_config(
-        configuration,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    # Build the engine directly from the already-normalized DB_URL rather than
+    # going through engine_from_config + the alembic.ini section. This guarantees
+    # the psycopg3 URL is what reaches create_engine — there is no raw
+    # DATABASE_URL or ConfigParser interpolation step that could reintroduce the
+    # psycopg2 dialect.
+    connectable = create_engine(DB_URL, poolclass=pool.NullPool, future=True)
     with connectable.connect() as connection:
         context.configure(
             connection=connection,
