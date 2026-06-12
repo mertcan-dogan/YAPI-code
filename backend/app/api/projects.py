@@ -369,12 +369,27 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     total_contract = D(0)
     weighted_margin_num = D(0)
     overdue_total = 0
+    # Company-wide financial roll-ups (Ana Sayfa executive band + portfolio budget chart).
+    total_invoiced = D(0)
+    total_outstanding = D(0)
+    total_forecast_cost = D(0)
+    total_net_cash = D(0)
+    total_revised_budget = D(0)
+    total_committed = D(0)
+    total_actual = D(0)
 
     for p in projects:
         f = fin_service.project_financials(db, p)
         total_contract += f["contract_value_try"]
         weighted_margin_num += f["current_profit_try"]
         overdue_total += f["overdue_count"]
+        total_invoiced += f["total_invoiced_try"]
+        total_outstanding += f["total_outstanding_try"]
+        total_forecast_cost += f["forecast_final_cost_try"]
+        total_net_cash += f["net_cash_position_try"]
+        total_revised_budget += f["revised_budget_try"]
+        total_committed += f["total_committed_try"]
+        total_actual += f["total_actual_try"]
         rows.append(
             {
                 "id": str(p.id),
@@ -414,6 +429,21 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "overdue_payment_count": overdue_total,
             },
             "kpi_trends": kpi_trends,
+            "exec_kpis": {
+                # Backlog = remaining (unbilled) contract revenue across active projects.
+                "backlog_try": str(money(total_contract - total_invoiced)),
+                # Projected profit at completion = contract - forecast final cost.
+                "projected_profit_try": str(money(total_contract - total_forecast_cost)),
+                "total_receivables_try": str(money(total_outstanding)),
+                "net_cash_position_try": str(money(total_net_cash)),
+            },
+            "portfolio_budget": {
+                "contract_try": str(money(total_contract)),
+                "revised_budget_try": str(money(total_revised_budget)),
+                "committed_try": str(money(total_committed)),
+                "actual_try": str(money(total_actual)),
+                "forecast_final_cost_try": str(money(total_forecast_cost)),
+            },
             "projects": rows,
             "cashflow_chart": cashflow_chart,
         }

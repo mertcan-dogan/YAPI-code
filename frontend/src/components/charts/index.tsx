@@ -3,6 +3,7 @@ import { formatCurrencyAbbrev } from "@/utils/format";
 import {
   Area,
   Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   ComposedChart,
@@ -172,6 +173,25 @@ export function MarginAreaChart({ data, height = 220 }: { data: { month: string;
         <ReferenceLine y={5} stroke={COLORS.danger} strokeDasharray="4 4" />
         <Area type="monotone" dataKey="margin" name="Kar Marjı %" stroke={COLORS.primary} fill="url(#marginFill)" strokeWidth={2} />
       </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Portfolio Budget — company-wide contract / budget / committed / actual / forecast (Ana Sayfa).
+export function PortfolioBudgetChart({ data, height = 260 }: { data: { name: string; value: number; fill: string }[]; height?: number }) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
+        <XAxis dataKey="name" tickLine={false} axisLine={false} {...axisProps} />
+        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tickLine={false} axisLine={false} {...axisProps} width={70} />
+        <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(37,99,235,0.05)" }} />
+        <Bar dataKey="value" name="Tutar" radius={[4, 4, 0, 0]} maxBarSize={70}>
+          {data.map((d, i) => (
+            <Cell key={i} fill={d.fill} />
+          ))}
+        </Bar>
+      </BarChart>
     </ResponsiveContainer>
   );
 }

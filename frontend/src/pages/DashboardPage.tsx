@@ -1,4 +1,4 @@
-import { CashFlowChart } from "@/components/charts";
+import { CashFlowChart, PortfolioBudgetChart } from "@/components/charts";
 import { AIDisclaimer, Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
@@ -9,7 +9,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, AlertTriangle, Building2, CheckCircle2, Info, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import { AlarmClock, AlertTriangle, Banknote, Building2, CheckCircle2, Info, Layers, PiggyBank, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -23,6 +23,8 @@ interface DashboardData {
   projects: any[];
   cashflow_chart: { month: string; out: string; in: string; net_cumulative: string }[];
   kpi_trends?: Record<string, { series: number[]; delta_pct: number | null }>;
+  exec_kpis?: { backlog_try: string; projected_profit_try: string; total_receivables_try: string; net_cash_position_try: string };
+  portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
 }
 
 export default function DashboardPage() {
@@ -147,6 +149,18 @@ export default function DashboardPage() {
     cumulative: toNumber(c.net_cumulative),
   }));
 
+  const ex = data?.exec_kpis;
+  const pb = data?.portfolio_budget;
+  const budgetChartData = pb
+    ? [
+        { name: "Sözleşme", value: toNumber(pb.contract_try), fill: "#059669" },
+        { name: "Revize Bütçe", value: toNumber(pb.revised_budget_try), fill: "#2563EB" },
+        { name: "Taahhüt", value: toNumber(pb.committed_try), fill: "#3B82F6" },
+        { name: "Harcanan", value: toNumber(pb.actual_try), fill: "#1E40AF" },
+        { name: "Tahmini Final", value: toNumber(pb.forecast_final_cost_try), fill: "#D97706" },
+      ]
+    : [];
+
   return (
     <div>
       <PageHeader title="Ana Sayfa" subtitle="Tüm aktif projelerin finansal durumu" />
@@ -193,6 +207,13 @@ export default function DashboardPage() {
           alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null}
           onClick={() => setOverdueOpen(true)}
         />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <KPICard loading={loading} label="Bekleyen İş (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} />
+        <KPICard loading={loading} label="Tahmini Proje Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
+        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} />
+        <KPICard loading={loading} label="Net Nakit Pozisyonu" value={formatCurrencyAbbrev(ex?.net_cash_position_try)} valueTitle={formatCurrency(ex?.net_cash_position_try)} icon={Wallet} alert={toNumber(ex?.net_cash_position_try) < 0 ? "red" : null} />
       </div>
 
       <OverduePaymentsModal
@@ -277,6 +298,16 @@ export default function DashboardPage() {
         <Card>
           <CardBody>
             <CashFlowChart data={chartData} />
+          </CardBody>
+        </Card>
+      </div>
+
+      <div className="mt-6">
+        <h2 className="mb-1 text-lg font-semibold text-primary">Portföy Bütçe &amp; Tahmin</h2>
+        <p className="mb-3 text-xs text-text-secondary">Tüm aktif projelerin toplamı — sözleşme geliri, bütçe, taahhüt, harcanan ve tahmini final maliyet.</p>
+        <Card>
+          <CardBody>
+            <PortfolioBudgetChart data={budgetChartData} />
           </CardBody>
         </Card>
       </div>
