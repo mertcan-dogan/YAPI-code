@@ -14,6 +14,7 @@ from app.deps import CurrentUser, DirectorUser
 from app.models.budget_line_item import BudgetLineItem
 from app.models.project import Project
 from app.models.kpi_snapshot import KPISnapshot
+from app.models.client_invoice import ClientInvoice
 from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
@@ -411,6 +412,8 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
 
     cashflow_chart = _combined_cashflow_chart(db, [p.id for p in projects])
 
+    ar_aging = _ar_aging(db, [p.id for p in projects], date.today())
+
     kpi_trends = _record_and_build_kpi_trends(
         db,
         company_id=user.company_id,
@@ -441,6 +444,7 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "total_receivables_try": str(money(total_outstanding)),
                 "net_cash_position_try": str(money(total_net_cash)),
             },
+            "ar_aging": ar_aging,
             "portfolio_budget": {
                 "contract_try": str(money(total_contract)),
                 "revised_budget_try": str(money(total_revised_budget)),
@@ -452,6 +456,49 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
             "cashflow_chart": cashflow_chart,
         }
     )
+
+
+def _ar_aging(db, project_ids, today):
+    """Receivables aging buckets + DSO (avg collection period), over active projects.
+
+    Buckets by days past due_date; DSO = outstanding-weighted average age since
+    invoice_date (real, computed from the ledger). Returns None DSO if no AR.
+    """
+    if not project_ids:
+        return {"not_due_try": "0", "d1_30_try": "0", "d31_60_try": "0", "d60_plus_try": "0", "total_outstanding_try": "0", "dso_days": None}
+    invs = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id.in_(project_ids),
+            ClientInvoice.is_deleted.is_(False),
+        )
+    ).scalars().all()
+    b = {"not_due": D(0), "d1_30": D(0), "d31_60": D(0), "d60_plus": D(0)}
+    total = D(0)
+    weighted_age = D(0)
+    for i in invs:
+        out = D(i.outstanding_try)
+        if out <= 0:
+            continue
+        total += out
+        overdue = (today - i.due_date).days
+        if overdue <= 0:
+            b["not_due"] += out
+        elif overdue <= 30:
+            b["d1_30"] += out
+        elif overdue <= 60:
+            b["d31_60"] += out
+        else:
+            b["d60_plus"] += out
+        weighted_age += out * D((today - i.invoice_date).days)
+    dso = int(round(float(weighted_age / total))) if total > 0 else None
+    return {
+        "not_due_try": str(money(b["not_due"])),
+        "d1_30_try": str(money(b["d1_30"])),
+        "d31_60_try": str(money(b["d31_60"])),
+        "d60_plus_try": str(money(b["d60_plus"])),
+        "total_outstanding_try": str(money(total)),
+        "dso_days": dso,
+    }
 
 
 def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count, backlog, projected_profit, total_receivables, net_cash):

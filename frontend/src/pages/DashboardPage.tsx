@@ -25,6 +25,7 @@ interface DashboardData {
   kpi_trends?: Record<string, { series: number[]; delta_pct: number | null }>;
   exec_kpis?: { backlog_try: string; projected_profit_try: string; total_receivables_try: string; net_cash_position_try: string };
   portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
+  ar_aging?: { not_due_try: string; d1_30_try: string; d31_60_try: string; d60_plus_try: string; total_outstanding_try: string; dso_days: number | null };
 }
 
 export default function DashboardPage() {
@@ -160,6 +161,19 @@ export default function DashboardPage() {
         { name: "Tahmini Final", value: toNumber(pb.forecast_final_cost_try), fill: "#D97706" },
       ]
     : [];
+
+  const ar = data?.ar_aging;
+  const arTotal = toNumber(ar?.total_outstanding_try);
+  const arSeg = (v?: string) => (arTotal > 0 ? (toNumber(v) / arTotal) * 100 : 0);
+  const dso = ar?.dso_days ?? null;
+  const dsoColor = dso == null ? "text-text-secondary" : dso <= 40 ? "text-success" : dso <= 60 ? "text-warning" : "text-danger";
+  const dsoLabel = dso == null ? "Bekleyen tahsilat yok" : dso <= 40 ? "Sağlıklı" : dso <= 60 ? "İzlenmeli" : "Yüksek — tahsilat yavaş";
+  const arBuckets = [
+    { label: "Vadesi Gelmemiş", v: ar?.not_due_try, color: "#2563EB" },
+    { label: "1–30 gün gecikmiş", v: ar?.d1_30_try, color: "#F59E0B" },
+    { label: "31–60 gün gecikmiş", v: ar?.d31_60_try, color: "#EA580C" },
+    { label: "60+ gün gecikmiş", v: ar?.d60_plus_try, color: "#EF4444" },
+  ];
 
   return (
     <div>
@@ -308,6 +322,42 @@ export default function DashboardPage() {
         <Card>
           <CardBody>
             <PortfolioBudgetChart data={budgetChartData} />
+          </CardBody>
+        </Card>
+      </div>
+
+      <div className="mt-6">
+        <h2 className="mb-1 text-lg font-semibold text-primary">Alacak Yaşlandırma &amp; Tahsilat</h2>
+        <p className="mb-3 text-xs text-text-secondary">Bekleyen tahsilatların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO).</p>
+        <Card>
+          <CardBody>
+            <div className="grid gap-6 lg:grid-cols-3">
+              <div className="border-border lg:border-r lg:pr-6">
+                <div className="text-xs text-text-secondary">Ort. Tahsilat Süresi (DSO)</div>
+                <div className={`tabular mt-1 text-3xl font-bold ${dsoColor}`}>{dso == null ? "—" : `${dso} gün`}</div>
+                <div className={`mt-0.5 text-xs ${dsoColor}`}>{dsoLabel}</div>
+                <div className="mt-3 text-xs text-text-secondary">Toplam bekleyen</div>
+                <div className="tabular text-lg font-semibold text-primary">{formatCurrency(ar?.total_outstanding_try)}</div>
+              </div>
+              <div className="lg:col-span-2">
+                <div className="flex h-3 w-full overflow-hidden rounded-full bg-bg">
+                  {arBuckets.map((bk, i) => (
+                    <div key={i} style={{ width: `${arSeg(bk.v)}%`, backgroundColor: bk.color }} title={bk.label} />
+                  ))}
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
+                  {arBuckets.map((bk, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <span className="flex items-center gap-2 text-xs text-text-secondary">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bk.color }} />
+                        {bk.label}
+                      </span>
+                      <span className="tabular text-sm font-medium text-text-primary">{formatCurrency(bk.v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </CardBody>
         </Card>
       </div>
