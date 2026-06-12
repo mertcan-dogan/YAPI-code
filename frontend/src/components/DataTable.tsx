@@ -2,7 +2,7 @@ import { cn } from "@/lib/cn";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import * as React from "react";
 import { Skeleton } from "./ui";
-import { EmptyState } from "./EmptyState";
+import { EmptyState, LoadError } from "./EmptyState";
 
 export interface Column<T> {
   key: string;
@@ -23,6 +23,8 @@ interface DataTableProps<T> {
   onRowClick?: (row: T) => void;
   rowClassName?: (row: T) => string;
   minWidth?: number; // CR-004-E: minimum table width before horizontal scroll kicks in
+  error?: string | null; // when set (and not loading) shows a retry state, not "empty"
+  onRetry?: () => void;
 }
 
 // Data Table — sticky navy header, zebra rows, sortable (Section 6.5)
@@ -35,6 +37,8 @@ export function DataTable<T extends Record<string, any>>({
   onRowClick,
   rowClassName,
   minWidth = 640,
+  error,
+  onRetry,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = React.useState<string | null>(null);
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
@@ -70,6 +74,14 @@ export function DataTable<T extends Record<string, any>>({
             <Skeleton />
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (error && !loading) {
+    return (
+      <div className="rounded-xl border border-border bg-surface shadow-sm">
+        <LoadError onRetry={onRetry} />
       </div>
     );
   }

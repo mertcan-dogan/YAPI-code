@@ -1,5 +1,6 @@
 import { CashFlowChart } from "@/components/charts";
 import { Card, CardBody } from "@/components/ui";
+import { LoadError } from "@/components/EmptyState";
 import { CashFlowMonthDrawer } from "@/components/cashflow/CashFlowMonthDrawer";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { cn } from "@/lib/cn";
@@ -30,7 +31,7 @@ type Row = {
 
 export default function CashFlowPage() {
   const { id } = useParams();
-  const { data, loading } = useFetch<Row[]>(`/projects/${id}/cashflow`);
+  const { data, loading, error, refetch } = useFetch<Row[]>(`/projects/${id}/cashflow`);
   const { data: risk } = useFetch<RiskWindow[]>(`/projects/${id}/cashflow/risk`);
   const [view, setView] = useState<"both" | "planned" | "actual">("both");
   const [monthDetail, setMonthDetail] = useState<string | null>(null);
@@ -78,6 +79,10 @@ export default function CashFlowPage() {
         })}
       </div>
 
+      {error && !loading ? (
+        <Card className="mb-6"><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
+      ) : (
+      <>
       <Card className="mb-6"><CardBody><CashFlowChart data={chart} height={300} /></CardBody></Card>
 
       <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
@@ -111,6 +116,8 @@ export default function CashFlowPage() {
           </tbody>
         </table>
       </div>
+      </>
+      )}
 
       {id && (
         <CashFlowMonthDrawer

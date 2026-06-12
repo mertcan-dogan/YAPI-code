@@ -217,7 +217,7 @@ function CompanyTab() {
 }
 
 function UsersTab() {
-  const { data, loading, refetch } = useFetch<User[]>("/settings/users");
+  const { data, loading, refetch, error } = useFetch<User[]>("/settings/users");
   const { user: me } = useAuth();
   const [open, setOpen] = useState(false);
 
@@ -253,7 +253,7 @@ function UsersTab() {
   return (
     <div>
       <div className="mb-3 flex justify-end"><Button onClick={() => setOpen(true)}>Kullanıcı Davet Et</Button></div>
-      <DataTable columns={columns} rows={data ?? []} loading={loading} emptyMessage="Henüz kullanıcı yok." />
+      <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} emptyMessage="Henüz kullanıcı yok." />
       <InviteDrawer open={open} onClose={() => setOpen(false)} onSaved={refetch} />
     </div>
   );

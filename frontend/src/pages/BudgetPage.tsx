@@ -291,7 +291,7 @@ export default function BudgetPage() {
         </div>
       </div>
       <div className="mt-2">
-        <DataTable columns={costColumns} rows={costs.data ?? []} loading={costs.loading} emptyMessage="Bu proje için henüz maliyet girişi yapılmamış." emptyAction={{ label: "Maliyet Ekle", onClick: () => setDrawerOpen(true) }} rowClassName={(r) => (r.payment_status === "overdue" ? "!bg-red-50" : "")} />
+        <DataTable columns={costColumns} rows={costs.data ?? []} loading={costs.loading} error={costs.error} onRetry={costs.refetch} emptyMessage="Bu proje için henüz maliyet girişi yapılmamış." emptyAction={{ label: "Maliyet Ekle", onClick: () => setDrawerOpen(true) }} rowClassName={(r) => (r.payment_status === "overdue" ? "!bg-red-50" : "")} />
       </div>
 
       <CostDrawer

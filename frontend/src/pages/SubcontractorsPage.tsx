@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
@@ -23,7 +23,7 @@ function Chip({ label, value }: { label: string; value: string }) {
 
 export default function SubcontractorsPage() {
   const { id } = useParams();
-  const { data, loading, refetch } = useFetch<Subcontractor[]>(`/projects/${id}/subcontractors`);
+  const { data, loading, refetch, error } = useFetch<Subcontractor[]>(`/projects/${id}/subcontractors`);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Subcontractor | null>(null);
   const subs = data ?? [];
@@ -39,6 +39,8 @@ export default function SubcontractorsPage() {
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>
+      ) : error ? (
+        <Card><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
       ) : subs.length === 0 ? (
         <Card><CardBody><EmptyState message="Bu proje için henüz alt yüklenici eklenmemiş." actionLabel="Alt Yüklenici Ekle" onAction={() => setOpen(true)} /></CardBody></Card>
       ) : (

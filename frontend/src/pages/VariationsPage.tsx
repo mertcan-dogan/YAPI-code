@@ -26,7 +26,7 @@ function Chip({ label, value }: { label: string; value: string }) {
 
 export default function VariationsPage() {
   const { id } = useParams();
-  const { data, meta, loading, refetch } = useFetch<Variation[]>(`/projects/${id}/variations`);
+  const { data, meta, loading, refetch, error } = useFetch<Variation[]>(`/projects/${id}/variations`);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Variation | null>(null);
   const rows = data ?? [];
@@ -58,7 +58,7 @@ export default function VariationsPage() {
           <Chip label="Net Marj Etkisi" value={formatCurrency(meta.net_margin_impact)} />
         </div>
       )}
-      <DataTable columns={columns} rows={rows} loading={loading} emptyMessage="Bu proje için henüz ek iş yok." emptyAction={{ label: "Ek İş Ekle", onClick: () => setOpen(true) }} />
+      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} emptyMessage="Bu proje için henüz ek iş yok." emptyAction={{ label: "Ek İş Ekle", onClick: () => setOpen(true) }} />
       <VariationDrawer open={open} projectId={id!} editing={editing} defaultNumber={nextNumber} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
     </div>
   );

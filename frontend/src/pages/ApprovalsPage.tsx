@@ -38,7 +38,7 @@ function decideUrl(it: ApprovalItem, action: "approve" | "reject"): string {
 
 export default function ApprovalsPage() {
   const { user } = useAuth();
-  const { data, loading, refetch } = useFetch<ApprovalItem[]>("/approvals");
+  const { data, loading, refetch, error } = useFetch<ApprovalItem[]>("/approvals");
   const [rejecting, setRejecting] = useState<ApprovalItem | null>(null);
 
   if (user && user.role !== "director") return <Navigate to="/dashboard" replace />;
@@ -74,7 +74,7 @@ export default function ApprovalsPage() {
   return (
     <div>
       <PageHeader title="Onay Bekleyenler" subtitle="Eşiği aşan işlemler onayınızı bekliyor" />
-      <DataTable columns={columns} rows={data ?? []} loading={loading} emptyMessage="Onay bekleyen işlem yok." />
+      <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} emptyMessage="Onay bekleyen işlem yok." />
       {rejecting && <RejectModal item={rejecting} onClose={() => setRejecting(null)} onDone={() => { setRejecting(null); refetch(); }} />}
     </div>
   );

@@ -1,7 +1,7 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
 import { AIDisclaimer, Button, Card, CardBody } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState, LoadError } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
@@ -28,7 +28,7 @@ export default function ProjectDashboardPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [costDrawer, setCostDrawer] = useState(false);
-  const { data, loading } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
     `/projects/${id}/dashboard`
   );
   const p = data?.project;
@@ -94,6 +94,15 @@ export default function ProjectDashboardPage() {
     cum += inV - outV;
     return { month: r.month, out: outV, in: inV, cumulative: cum };
   });
+
+  if (error && !loading) {
+    return (
+      <div>
+        <PageHeader title="Proje Özeti" />
+        <LoadError onRetry={refetch} />
+      </div>
+    );
+  }
 
   return (
     <div>

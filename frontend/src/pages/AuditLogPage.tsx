@@ -129,7 +129,7 @@ export default function AuditLogPage() {
     () => Object.fromEntries(Object.entries(filters).filter(([, v]) => v)),
     [filters]
   );
-  const { data, loading } = useFetchAudit(params);
+  const { data, loading, error, refetch } = useFetchAudit(params);
 
   useEffect(() => {
     apiGet<{ id: string; full_name: string }[]>("/settings/users").then(({ data }) => setUsers(data ?? [])).catch(() => setUsers([]));
@@ -191,7 +191,7 @@ export default function AuditLogPage() {
           <option value="projects">Proje</option>
         </Select>
       </div>
-      <DataTable columns={columns} rows={data ?? []} loading={loading} emptyMessage="Kayıtlı değişiklik bulunmuyor." />
+      <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} emptyMessage="Kayıtlı değişiklik bulunmuyor." />
     </div>
   );
 }
@@ -200,14 +200,17 @@ export default function AuditLogPage() {
 function useFetchAudit(params: Record<string, string>) {
   const [data, setData] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
   const key = JSON.stringify(params);
   useEffect(() => {
     setLoading(true);
+    setError(null);
     apiGet<AuditRow[]>("/audit-log", params)
       .then(({ data }) => setData(data ?? []))
-      .catch(() => setData([]))
+      .catch((e: any) => { setData([]); setError(e?.message ?? "Yükleme hatası"); })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  return { data, loading };
+  }, [key, nonce]);
+  return { data, loading, error, refetch: () => setNonce((n) => n + 1) };
 }

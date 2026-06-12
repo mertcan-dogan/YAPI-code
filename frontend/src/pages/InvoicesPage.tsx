@@ -24,7 +24,7 @@ function Chip({ label, value }: { label: string; value: string }) {
 
 export default function InvoicesPage() {
   const { id } = useParams();
-  const { data, loading, refetch } = useFetch<ClientInvoice[]>(`/projects/${id}/invoices`);
+  const { data, loading, refetch, error } = useFetch<ClientInvoice[]>(`/projects/${id}/invoices`);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ClientInvoice | null>(null);
   const [collecting, setCollecting] = useState<ClientInvoice | null>(null);
@@ -94,7 +94,7 @@ export default function InvoicesPage() {
         <Chip label="Bekleyen" value={formatCurrency(sum("outstanding_try"))} />
         <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
       </div>
-      <DataTable columns={columns} rows={rows} loading={loading} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
+      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
       <InvoiceDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
       {collecting && (
         <CollectModal

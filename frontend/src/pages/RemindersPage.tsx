@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody } from "@/components/ui";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -71,7 +71,7 @@ function filterSummaryLabel(tab: string, time: string): string {
 }
 
 export default function RemindersPage() {
-  const { data, loading, refetch } = useFetch<Reminder[]>("/reminders");
+  const { data, loading, refetch, error } = useFetch<Reminder[]>("/reminders");
   const [tab, setTab] = useState<"all" | "payable" | "receivable">("all");
   const [time, setTime] = useState("all");
 
@@ -148,6 +148,8 @@ export default function RemindersPage() {
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>
+      ) : error ? (
+        <Card><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
       ) : items.length === 0 ? (
         <Card><CardBody><EmptyState message="Vadesi gelen ödeme bulunmuyor." /></CardBody></Card>
       ) : (

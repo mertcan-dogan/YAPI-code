@@ -13,7 +13,7 @@ import { useParams } from "react-router-dom";
 
 export default function EquipmentPage() {
   const { id } = useParams();
-  const { data, meta, loading, refetch } = useFetch<Equipment[]>(`/projects/${id}/equipment`);
+  const { data, meta, loading, refetch, error } = useFetch<Equipment[]>(`/projects/${id}/equipment`);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Equipment | null>(null);
 
@@ -46,7 +46,7 @@ export default function EquipmentPage() {
         subtitle={meta ? `Toplam Ekipman Maliyeti: ${formatCurrency(meta.total_cost_try)} · Bütçenin %${meta.pct_of_budget}'i` : undefined}
         action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Ekipman Ekle</Button>}
       />
-      <DataTable columns={columns} rows={data ?? []} loading={loading} emptyMessage="Bu proje için henüz ekipman kaydı yok." emptyAction={{ label: "Ekipman Ekle", onClick: () => setOpen(true) }} />
+      <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} emptyMessage="Bu proje için henüz ekipman kaydı yok." emptyAction={{ label: "Ekipman Ekle", onClick: () => setOpen(true) }} />
       <EquipDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
     </div>
   );

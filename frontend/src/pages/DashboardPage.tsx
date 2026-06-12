@@ -27,7 +27,7 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { data, loading, refetch } = useFetch<DashboardData>("/dashboard");
+  const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard");
   const [briefing, setBriefing] = useState<any[]>([]);
   const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -206,7 +206,7 @@ export default function DashboardPage() {
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <h2 className="mb-3 text-lg font-semibold text-primary">Proje Durumu</h2>
-          <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} minWidth={900} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
+          <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} error={error} onRetry={refetch} minWidth={900} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
         </div>
 
         <div>

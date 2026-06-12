@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { AIDisclaimer, Button, Card, CardBody } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -22,7 +22,7 @@ function SummaryChip({ label, value, color }: { label: string; value: number; co
 }
 
 export default function AIAlertsPage() {
-  const { data, meta, loading, refetch } = useFetch<AIAlert[]>("/ai/alerts");
+  const { data, meta, loading, refetch, error } = useFetch<AIAlert[]>("/ai/alerts");
   const [refreshing, setRefreshing] = useState(false);
   const alerts = data ?? [];
   const count = (sev: string) => alerts.filter((a) => a.severity === sev).length;
@@ -77,6 +77,8 @@ export default function AIAlertsPage() {
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>
+      ) : error ? (
+        <Card><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
       ) : alerts.length === 0 ? (
         <Card><CardBody><EmptyState message="Aktif yapay zeka uyarısı bulunmuyor." /></CardBody></Card>
       ) : (
