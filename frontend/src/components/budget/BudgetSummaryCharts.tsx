@@ -1,7 +1,8 @@
 import { KPICard } from "@/components/KPICard";
 import { COST_CATEGORIES } from "@/constants";
 import type { BudgetCategoryRow } from "@/types";
-import { formatCurrency, formatPct, toNumber } from "@/utils/format";
+import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
+import { AlertTriangle, ClipboardCheck, FileText, Wallet } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -77,13 +78,13 @@ export function BudgetSummaryCharts({
   return (
     <div className="mb-6 space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KPICard label="Toplam Revize Bütçe" value={formatCurrency(revised)} />
-        <KPICard label="Toplam Taahhüt Edilen" value={formatCurrency(committed)} subtitle={`Bütçenin %${formatPct(committedPct).replace("%", "")} taahhüt edildi`} />
-        <KPICard label="Toplam Faturalanan" value={formatCurrency(invoiced)} />
-        <KPICard label="Bütçe Aşımı Olan Kategoriler" value={String(overBudgetCount)} alert={overBudgetCount > 0 ? "red" : null} />
+        <KPICard label="Toplam Revize Bütçe" value={formatCurrencyAbbrev(revised)} valueTitle={formatCurrency(revised)} icon={Wallet} />
+        <KPICard label="Toplam Taahhüt Edilen" value={formatCurrencyAbbrev(committed)} valueTitle={formatCurrency(committed)} icon={ClipboardCheck} subtitle={`Bütçenin %${formatPct(committedPct).replace("%", "")} taahhüt edildi`} />
+        <KPICard label="Toplam Faturalanan" value={formatCurrencyAbbrev(invoiced)} valueTitle={formatCurrency(invoiced)} icon={FileText} />
+        <KPICard label="Bütçe Aşımı Olan Kategoriler" value={String(overBudgetCount)} icon={AlertTriangle} alert={overBudgetCount > 0 ? "red" : null} />
       </div>
 
-      <div className="rounded-lg border border-border bg-surface p-4">
+      <div className="rounded-xl border border-border bg-surface p-4 shadow-sm">
         <h3 className="mb-3 text-sm font-semibold text-primary">Bütçe Kullanımı — Kategori Bazında</h3>
         <ResponsiveContainer width="100%" height={chartHeight}>
           <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 48, left: 8, bottom: 4 }}>

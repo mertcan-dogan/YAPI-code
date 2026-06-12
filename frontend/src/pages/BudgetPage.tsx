@@ -16,7 +16,7 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
-import { ArrowUpRight, Download, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -41,6 +41,7 @@ export default function BudgetPage() {
   const aiFileRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const canDelete = user?.role === "director" || user?.role === "project_manager";
+  const budgetFailed = !!budget.error && !budget.loading;
 
   const refetchAll = () => {
     costs.refetch();
@@ -243,6 +244,14 @@ export default function BudgetPage() {
         }
       />
 
+      {budgetFailed ? (
+        <div className="mb-6 flex flex-col items-center justify-center gap-3 rounded-xl border border-danger/40 bg-red-50 py-10 text-center">
+          <AlertTriangle className="h-8 w-8 text-danger" />
+          <p className="text-sm text-text-secondary">Bütçe verileri yüklenemedi. Lütfen tekrar deneyin.</p>
+          <Button variant="outline" onClick={() => budget.refetch()}><RefreshCw className="h-4 w-4" /> Tekrar Dene</Button>
+        </div>
+      ) : (
+      <>
       {/* CR-005-H: sayfa üstü özet — 4 KPI kartı + bütçe kullanım bar chart. */}
       <BudgetSummaryCharts
         categories={budget.data?.categories ?? []}
@@ -262,6 +271,8 @@ export default function BudgetPage() {
           <span className="tabular">Ödenen: <b>{formatCurrency(budget.data.totals.paid_try)}</b></span>
           <span className="tabular">Genel Kalan: <b>{formatCurrency(budget.data.totals.remaining_try)}</b></span>
         </div>
+      )}
+      </>
       )}
 
       <div className="mt-6 flex items-center justify-between">
