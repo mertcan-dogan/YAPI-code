@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings as app_settings
 from app.constants import ROLE_DIRECTOR
 from app.db import get_db
-from app.deps import DirectorUser
+from app.deps import CurrentUser, DirectorUser
 from app.models.company import Company
 from app.models.user import User
 from app.responses import APIError, success
@@ -189,3 +189,27 @@ def update_user(
     db.commit()
     db.refresh(target)
     return success(UserOut.model_validate(target).model_dump(mode="json"))
+
+
+from pydantic import BaseModel  # noqa: E402
+
+
+class DashboardLayoutIn(BaseModel):
+    layout: list
+
+
+@router.get("/dashboard-layout")
+def get_dashboard_layout(user: CurrentUser, db: Session = Depends(get_db)):
+    """The current user's saved Ana Sayfa widget layout (null = use default)."""
+    u = db.get(User, user.id)
+    return success({"layout": u.dashboard_layout if u else None})
+
+
+@router.put("/dashboard-layout")
+def set_dashboard_layout(payload: DashboardLayoutIn, user: CurrentUser, db: Session = Depends(get_db)):
+    u = db.get(User, user.id)
+    if u is None:
+        raise APIError(404, "NOT_FOUND", "Kullanıcı bulunamadı")
+    u.dashboard_layout = payload.layout
+    db.commit()
+    return success({"layout": u.dashboard_layout})
