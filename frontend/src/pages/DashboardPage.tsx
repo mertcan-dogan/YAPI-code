@@ -22,6 +22,7 @@ interface DashboardData {
   };
   projects: any[];
   cashflow_chart: { month: string; out: string; in: string; net_cumulative: string }[];
+  kpi_trends?: Record<string, { series: number[]; delta_pct: number | null }>;
 }
 
 export default function DashboardPage() {
@@ -158,6 +159,8 @@ export default function DashboardPage() {
           label="Aktif Proje Sayısı"
           value={String(k?.active_project_count ?? 0)}
           icon={Building2}
+          series={data?.kpi_trends?.active_project_count?.series}
+          delta={data?.kpi_trends?.active_project_count?.delta_pct}
           onClick={() => navigate("/projects")}
         />
         <KPICard
@@ -166,12 +169,16 @@ export default function DashboardPage() {
           value={formatCurrencyAbbrev(k?.total_contract_value_try)}
           valueTitle={formatCurrency(k?.total_contract_value_try)}
           icon={Wallet}
+          series={data?.kpi_trends?.total_contract_value_try?.series}
+          delta={data?.kpi_trends?.total_contract_value_try?.delta_pct}
         />
         <KPICard
           loading={loading}
           label="Ağırlıklı Ort. Kar Marjı"
           value={formatPct(k?.weighted_avg_margin_pct)}
           icon={TrendingUp}
+          series={data?.kpi_trends?.weighted_avg_margin_pct?.series}
+          delta={data?.kpi_trends?.weighted_avg_margin_pct?.delta_pct}
           alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null}
           onClick={() => setMarginOpen(true)}
         />
@@ -180,6 +187,9 @@ export default function DashboardPage() {
           label="Vadesi Geçmiş Ödemeler"
           value={String(k?.overdue_payment_count ?? 0)}
           icon={AlarmClock}
+          series={data?.kpi_trends?.overdue_payment_count?.series}
+          delta={data?.kpi_trends?.overdue_payment_count?.delta_pct}
+          invertDelta
           alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null}
           onClick={() => setOverdueOpen(true)}
         />

@@ -1,6 +1,6 @@
 """Projects router: CRUD, project dashboard, budget, company dashboard (Section 2.5, 4.1-4.3)."""
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from slugify import slugify
@@ -13,6 +13,7 @@ from app.db import get_db
 from app.deps import CurrentUser, DirectorUser
 from app.models.budget_line_item import BudgetLineItem
 from app.models.project import Project
+from app.models.kpi_snapshot import KPISnapshot
 from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
@@ -395,6 +396,15 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
 
     cashflow_chart = _combined_cashflow_chart(db, [p.id for p in projects])
 
+    kpi_trends = _record_and_build_kpi_trends(
+        db,
+        company_id=user.company_id,
+        active_project_count=len(projects),
+        total_contract_value=money(total_contract),
+        weighted_avg_margin=weighted_margin,
+        overdue_payment_count=overdue_total,
+    )
+
     return success(
         {
             "kpis": {
@@ -403,10 +413,61 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "weighted_avg_margin_pct": str(weighted_margin),
                 "overdue_payment_count": overdue_total,
             },
+            "kpi_trends": kpi_trends,
             "projects": rows,
             "cashflow_chart": cashflow_chart,
         }
     )
+
+
+def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count):
+    """Upsert today's KPI snapshot, then return real trend series + deltas.
+
+    Series/deltas are based purely on recorded daily snapshots — they stay empty
+    until at least two distinct days exist, so nothing is ever fabricated.
+    """
+    today = date.today()
+    snap = db.execute(
+        select(KPISnapshot).where(
+            KPISnapshot.company_id == company_id,
+            KPISnapshot.snapshot_date == today,
+        )
+    ).scalar_one_or_none()
+    values = dict(
+        active_project_count=active_project_count,
+        total_contract_value_try=total_contract_value,
+        weighted_avg_margin_pct=weighted_avg_margin,
+        overdue_payment_count=overdue_payment_count,
+    )
+    if snap is None:
+        db.add(KPISnapshot(company_id=company_id, snapshot_date=today, **values))
+    else:
+        for k_, v_ in values.items():
+            setattr(snap, k_, v_)
+    db.commit()
+
+    history = db.execute(
+        select(KPISnapshot)
+        .where(
+            KPISnapshot.company_id == company_id,
+            KPISnapshot.snapshot_date >= today - timedelta(days=30),
+        )
+        .order_by(KPISnapshot.snapshot_date)
+    ).scalars().all()
+
+    def build(attr):
+        series = [float(getattr(h, attr)) for h in history]
+        delta = None
+        if len(series) >= 2 and series[0] != 0:
+            delta = round((series[-1] - series[0]) / abs(series[0]) * 100, 1)
+        return {"series": series, "delta_pct": delta}
+
+    return {
+        "active_project_count": build("active_project_count"),
+        "total_contract_value_try": build("total_contract_value_try"),
+        "weighted_avg_margin_pct": build("weighted_avg_margin_pct"),
+        "overdue_payment_count": build("overdue_payment_count"),
+    }
 
 
 # --- jsonify helpers (Decimal/date -> str) ---
