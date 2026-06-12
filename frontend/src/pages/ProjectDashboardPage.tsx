@@ -134,7 +134,7 @@ export default function ProjectDashboardPage() {
         <Card className="mt-4">
           <CardBody>
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-primary"><Sparkles className="h-4 w-4 text-accent" /> AI Proje Özeti</h3>
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-primary"><Sparkles className="h-4 w-4 text-brand" /> AI Proje Özeti</h3>
               <div className="flex items-center gap-2">
                 {narrCachedAt && (
                   <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(narrCachedAt)}</span>

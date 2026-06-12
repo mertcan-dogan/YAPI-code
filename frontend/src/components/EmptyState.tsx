@@ -14,7 +14,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-full bg-navy-50">
-        <Inbox className="h-8 w-8 text-primary-light" />
+        <Inbox className="h-8 w-8 text-brand" />
       </div>
       <p className="text-sm text-text-secondary">{message}</p>
       {actionLabel && onAction && <Button onClick={onAction}>{actionLabel}</Button>}

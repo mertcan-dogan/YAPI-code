@@ -63,10 +63,10 @@ export function DataTable<T extends Record<string, any>>({
 
   if (loading) {
     return (
-      <div className="overflow-hidden rounded-lg border border-border">
-        <div className="bg-primary px-4 py-3" />
+      <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+        <div className="border-b border-border bg-bg px-4 py-3" />
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="border-b border-border px-4 py-3">
+          <div key={i} className="border-b border-border px-4 py-3 last:border-0">
             <Skeleton />
           </div>
         ))}
@@ -76,23 +76,23 @@ export function DataTable<T extends Record<string, any>>({
 
   if (sorted.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-surface">
+      <div className="rounded-xl border border-border bg-surface shadow-sm">
         <EmptyState message={emptyMessage} actionLabel={emptyAction?.label} onAction={emptyAction?.onClick} />
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
       <table className="w-full border-collapse text-sm" style={{ minWidth: minWidth }}>
         <thead className="sticky top-0">
-          <tr className="bg-primary text-white">
+          <tr className="border-b border-border bg-bg text-text-secondary">
             {columns.map((c) => (
               <th
                 key={c.key}
                 style={c.maxWidth ? { maxWidth: c.maxWidth } : undefined}
                 className={cn(
-                  "px-3 py-2.5 text-left text-xs font-semibold",
+                  "px-3 py-2.5 text-left text-xs font-medium",
                   c.align === "right" && "text-right",
                   c.align === "center" && "text-center",
                   c.sortable && "cursor-pointer select-none"
@@ -112,8 +112,7 @@ export function DataTable<T extends Record<string, any>>({
             <tr
               key={row.id ?? i}
               className={cn(
-                i % 2 === 0 ? "bg-surface" : "bg-bg",
-                "border-b border-border hover:bg-navy-50",
+                "border-b border-border last:border-0 hover:bg-navy-50",
                 onRowClick && "cursor-pointer",
                 rowClassName?.(row)
               )}

@@ -234,8 +234,8 @@ export default function DashboardPage() {
           <Card>
             <CardBody className="space-y-3">
               {briefingState === "loading" && (
-                <div className="flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-accent">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+                <div className="flex items-center gap-2 rounded-md bg-navy-50 px-3 py-2 text-sm text-brand">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-brand" />
                   Yapay zeka projelerinizi analiz ediyor…
                 </div>
               )}

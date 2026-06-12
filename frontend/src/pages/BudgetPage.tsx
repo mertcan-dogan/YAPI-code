@@ -213,7 +213,7 @@ export default function BudgetPage() {
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               <Upload className="h-4 w-4" /> Excel'den İçe Aktar
             </Button>
-            <Button variant="outline" className="border-accent text-accent" onClick={() => aiFileRef.current?.click()}>
+            <Button variant="outline" className="border-brand text-brand" onClick={() => aiFileRef.current?.click()}>
               <Sparkles className="h-4 w-4" /> AI ile İçe Aktar
             </Button>
             <input

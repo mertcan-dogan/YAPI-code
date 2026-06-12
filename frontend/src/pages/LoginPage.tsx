@@ -49,7 +49,7 @@ export default function LoginPage() {
     <div className="flex h-full items-center justify-center bg-primary p-4">
       <div className="w-full max-w-sm rounded-xl bg-surface p-8 shadow-lg">
         <div className="mb-6 flex items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded bg-accent text-xl font-bold text-primary">Y</div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-brand-2 text-xl font-bold text-white">Y</div>
           <div>
             <h1 className="text-xl font-bold text-primary">Yapı</h1>
             <p className="text-xs text-text-secondary">İnşaat Proje Yönetimi</p>

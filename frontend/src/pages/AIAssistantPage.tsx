@@ -82,19 +82,19 @@ export default function AIAssistantPage() {
           </div>
 
           {/* Chat — fixed height, scrollable (CR-004-I) */}
-          <div className="mb-3 space-y-3 overflow-y-auto rounded-lg border border-border bg-surface p-4" style={{ height: "calc(100vh - 320px)" }}>
+          <div className="mb-3 space-y-3 overflow-y-auto rounded-xl border border-border bg-surface p-4" style={{ height: "calc(100vh - 320px)" }}>
             {messages.length === 0 && <p className="text-sm text-text-secondary">Bir soru seçin veya yazın.</p>}
             {messages.map((m, i) => (
               <div key={i} className={m.role === "user" ? "text-right" : ""}>
-                <div className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-bg text-text-primary"}`}>
-                  {m.role === "ai" && <Sparkles className="mr-1 inline h-3.5 w-3.5 text-accent" />}
+                <div className={`inline-block max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-navy-50 text-text-primary"}`}>
+                  {m.role === "ai" && <Sparkles className="mr-1 inline h-3.5 w-3.5 text-brand" />}
                   <span className="whitespace-pre-wrap">{m.role === "ai" ? renderRich(m.text) : m.text}</span>
                   {m.at && <div className="mt-1 text-[10px] text-text-secondary">Bu yanıt {formatDateTime(m.at)} itibarıyla hesaplanmıştır</div>}
                   {m.role === "ai" && <AIDisclaimer short className="mt-1" />}
                 </div>
               </div>
             ))}
-            {loading && <div className="flex items-center gap-2 text-sm text-text-secondary"><Sparkles className="h-4 w-4 animate-pulse text-accent" /> Yanıt hazırlanıyor…</div>}
+            {loading && <div className="flex items-center gap-2 text-sm text-text-secondary"><Sparkles className="h-4 w-4 animate-pulse text-brand" /> Yanıt hazırlanıyor…</div>}
             <div ref={endRef} />
           </div>
 

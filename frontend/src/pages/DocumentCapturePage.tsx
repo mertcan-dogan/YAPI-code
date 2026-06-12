@@ -189,7 +189,7 @@ export default function DocumentCapturePage() {
           <CardBody className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-primary">
-                <Sparkles className="h-4 w-4 text-accent" /> Çıkarılan Bilgiler
+                <Sparkles className="h-4 w-4 text-brand" /> Çıkarılan Bilgiler
               </h3>
               {conf != null && <span className={`text-xs font-semibold ${confColor}`}>Güven: %{conf}</span>}
             </div>
