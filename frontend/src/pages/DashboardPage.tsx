@@ -27,6 +27,7 @@ interface DashboardData {
   portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
   ar_aging?: { not_due_try: string; d1_30_try: string; d31_60_try: string; d60_plus_try: string; total_outstanding_try: string; dso_days: number | null };
   cash_forecast?: { starting_cash_try: string; months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
+  margin_fade?: { has_targets: boolean; weighted_target_pct: string; weighted_current_pct: string; projects: { name: string; target_pct: string; current_pct: string }[] };
 }
 
 export default function DashboardPage() {
@@ -176,6 +177,7 @@ export default function DashboardPage() {
     { label: "60+ gün gecikmiş", v: ar?.d60_plus_try, color: "#EF4444" },
   ];
 
+  const mf = data?.margin_fade;
   const fc = data?.cash_forecast;
   const forecastChartData = (fc?.months ?? []).map((mo) => ({
     month: mo.month,
@@ -392,6 +394,35 @@ export default function DashboardPage() {
           </Card>
         </div>
       </div>
+
+      {mf?.has_targets && (
+        <div className="mt-6">
+          <h2 className="mb-1 text-lg font-semibold text-primary">Kar Marjı Erozyonu</h2>
+          <p className="mb-3 text-xs text-text-secondary">
+            Hedeflenen kar marjına karşı güncel (tahmini) marj. Portföy: Hedef{" "}
+            <span className="font-semibold text-text-primary">{formatPct(mf.weighted_target_pct)}</span> · Güncel{" "}
+            <span className="font-semibold text-text-primary">{formatPct(mf.weighted_current_pct)}</span>.
+          </p>
+          <Card>
+            <CardBody>
+              {mf.projects.map((pr, i) => {
+                const diff = toNumber(pr.current_pct) - toNumber(pr.target_pct);
+                const chip = diff >= 0 ? "bg-green-50 text-success" : "bg-red-50 text-danger";
+                return (
+                  <div key={i} className="flex items-center justify-between gap-3 border-b border-border py-2.5 last:border-0">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary" title={pr.name}>{pr.name}</span>
+                    <div className="flex shrink-0 items-center gap-4 text-sm">
+                      <span className="tabular text-text-secondary">Hedef <span className="font-medium text-text-primary">{formatPct(pr.target_pct)}</span></span>
+                      <span className="tabular text-text-secondary">Güncel <span className="font-medium text-text-primary">{formatPct(pr.current_pct)}</span></span>
+                      <span className={`tabular rounded-full px-2 py-0.5 text-xs font-medium ${chip}`}>{diff >= 0 ? "+" : ""}{diff.toFixed(1)} puan</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardBody>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

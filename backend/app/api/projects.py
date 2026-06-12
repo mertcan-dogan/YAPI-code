@@ -379,6 +379,10 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     total_revised_budget = D(0)
     total_committed = D(0)
     total_actual = D(0)
+    mf_rows = []
+    mf_target_num = D(0)
+    mf_current_num = D(0)
+    mf_contract = D(0)
 
     for p in projects:
         f = fin_service.project_financials(db, p)
@@ -392,6 +396,15 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
         total_revised_budget += f["revised_budget_try"]
         total_committed += f["total_committed_try"]
         total_actual += f["total_actual_try"]
+        if f["target_margin_pct"] is not None:
+            mf_rows.append({
+                "name": p.name,
+                "target_pct": str(f["target_margin_pct"]),
+                "current_pct": str(f["margin_pct"]),
+            })
+            mf_target_num += f["contract_value_try"] * f["target_margin_pct"]
+            mf_current_num += f["current_profit_try"]
+            mf_contract += f["contract_value_try"]
         rows.append(
             {
                 "id": str(p.id),
@@ -415,6 +428,13 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
 
     ar_aging = _ar_aging(db, [p.id for p in projects], date.today())
     cash_forecast = _cash_forecast(db, [p.id for p in projects], date.today(), total_net_cash)
+    mf_rows.sort(key=lambda r: float(r["current_pct"]) - float(r["target_pct"]))
+    margin_fade = {
+        "has_targets": len(mf_rows) > 0,
+        "weighted_target_pct": str(pct(safe_div(mf_target_num, mf_contract))) if mf_contract > 0 else "0",
+        "weighted_current_pct": str(pct(safe_div(mf_current_num, mf_contract) * 100)) if mf_contract > 0 else "0",
+        "projects": mf_rows,
+    }
 
     kpi_trends = _record_and_build_kpi_trends(
         db,
@@ -447,6 +467,7 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "net_cash_position_try": str(money(total_net_cash)),
             },
             "ar_aging": ar_aging,
+            "margin_fade": margin_fade,
             "cash_forecast": cash_forecast,
             "portfolio_budget": {
                 "contract_try": str(money(total_contract)),
