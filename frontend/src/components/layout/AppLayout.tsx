@@ -60,11 +60,13 @@ function NavItem({ icon: Icon, label, to, active, onNavigate }: any) {
       to={to}
       onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-        active ? "bg-primary-light text-white" : "text-white/70 hover:bg-primary-light/60 hover:text-white"
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+        active
+          ? "bg-white/10 text-white shadow-[inset_2px_0_0_var(--color-brand-2)]"
+          : "text-white/60 hover:bg-white/5 hover:text-white"
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className={cn("h-4 w-4 shrink-0", active && "text-brand-2")} />
       <span className="truncate">{label}</span>
     </Link>
   );
@@ -128,7 +130,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <img src={logoUrl} alt={companyName ?? "Şirket"} className="max-h-10 max-w-[180px] object-contain" />
         ) : (
           <>
-            <div className="flex h-8 w-8 items-center justify-center rounded bg-accent font-bold text-primary">Y</div>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-brand-2 font-bold text-white">Y</div>
             <span className="text-lg font-bold">{companyName ?? "Yapı"}</span>
           </>
         )}
@@ -185,7 +187,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       {/* Brand footer — small persistent Yapı mark, shows even when a company logo is set */}
       <div className="flex items-center justify-center gap-1.5 border-t border-white/10 px-5 py-3">
-        <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-accent text-[10px] font-bold leading-none text-primary">Y</span>
+        <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-gradient-to-br from-brand to-brand-2 text-[10px] font-bold leading-none text-white">Y</span>
         <span className="text-[11px] font-medium tracking-wide text-white/40">Powered by Yapı</span>
       </div>
     </>
@@ -275,7 +277,7 @@ function ProjectSelector() {
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm text-text-primary hover:bg-bg sm:px-3"
       >
-        <FolderKanban className="h-4 w-4 text-primary" />
+        <FolderKanban className="h-4 w-4 text-brand" />
         <span className="max-w-[120px] truncate sm:max-w-[200px]">{current?.name ?? "Proje Seç"}</span>
         <ChevronDown className="h-4 w-4 text-text-secondary" />
       </button>
@@ -319,11 +321,19 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
           <Menu className="h-5 w-5" />
         </button>
         <ProjectSelector />
+        <button
+          onClick={() => navigate("/ai-assistant")}
+          className="hidden items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text-secondary transition-colors hover:border-brand md:flex"
+        >
+          <Sparkles className="h-4 w-4 text-brand" />
+          <span>Ara, sor veya komut ver…</span>
+          <span className="ml-2 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-disabled">⌘K</span>
+        </button>
       </div>
       <div className="relative flex items-center gap-3">
         <NotificationBell />
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-white">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-2 text-sm font-medium text-white">
             {user?.full_name?.charAt(0) ?? "K"}
           </div>
           <span className="hidden text-sm text-text-primary sm:block">{user?.full_name}</span>

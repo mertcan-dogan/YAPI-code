@@ -9,7 +9,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { CheckCircle2, Info, RefreshCw, Sparkles } from "lucide-react";
+import { AlarmClock, Building2, CheckCircle2, Info, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -98,7 +98,7 @@ export default function DashboardPage() {
       render: (r) => (
         <div className="flex items-center justify-end gap-2">
           <div className="h-1.5 w-16 overflow-hidden rounded-full bg-border">
-            <div className="h-full bg-primary" style={{ width: `${Math.min(toNumber(r.spent_pct), 100)}%` }} />
+            <div className={`h-full ${toNumber(r.spent_pct) >= 90 ? "bg-danger" : "bg-brand"}`} style={{ width: `${Math.min(toNumber(r.spent_pct), 100)}%` }} />
           </div>
           {formatPct(r.spent_pct)}
         </div>
@@ -123,7 +123,14 @@ export default function DashboardPage() {
       align: "right",
       render: (r) => <span className={toNumber(r.net_cash_position_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.net_cash_position_try)}</span>,
     },
-    { key: "rag_label_tr", header: "Durum", render: (r) => <RAGIndicator status={r.rag_status} label={r.rag_label_tr} reason={r.rag_label_tr} /> },
+    {
+      key: "rag_label_tr",
+      header: "Durum",
+      render: (r) => {
+        const map: Record<string, string> = { green: "bg-green-50 text-success", amber: "bg-amber-50 text-warning", red: "bg-red-50 text-danger" };
+        return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${map[r.rag_status] ?? "bg-bg text-text-secondary"}`}>{r.rag_label_tr}</span>;
+      },
+    },
     {
       key: "planned_end_date",
       header: "Bitiş Tarihi",
@@ -143,11 +150,14 @@ export default function DashboardPage() {
     <div>
       <PageHeader title="Ana Sayfa" subtitle="Tüm aktif projelerin finansal durumu" />
 
+      <AISummaryStrip k={k} briefing={briefing} navigate={navigate} />
+
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard
           loading={loading}
           label="Aktif Proje Sayısı"
           value={String(k?.active_project_count ?? 0)}
+          icon={Building2}
           onClick={() => navigate("/projects")}
         />
         <KPICard
@@ -155,11 +165,13 @@ export default function DashboardPage() {
           label="Toplam Sözleşme Değeri"
           value={formatCurrencyAbbrev(k?.total_contract_value_try)}
           valueTitle={formatCurrency(k?.total_contract_value_try)}
+          icon={Wallet}
         />
         <KPICard
           loading={loading}
           label="Ağırlıklı Ort. Kar Marjı"
           value={formatPct(k?.weighted_avg_margin_pct)}
+          icon={TrendingUp}
           alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null}
           onClick={() => setMarginOpen(true)}
         />
@@ -167,6 +179,7 @@ export default function DashboardPage() {
           loading={loading}
           label="Vadesi Geçmiş Ödemeler"
           value={String(k?.overdue_payment_count ?? 0)}
+          icon={AlarmClock}
           alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null}
           onClick={() => setOverdueOpen(true)}
         />
@@ -189,7 +202,7 @@ export default function DashboardPage() {
         <div>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-lg font-semibold text-primary">
-              <Sparkles className="h-4 w-4 text-accent" /> Bugün Ne Yapmalısın
+              <Sparkles className="h-4 w-4 text-brand" /> Bugün Ne Yapmalısın
             </h2>
             <div className="flex items-center gap-2">
               {generatedAt && (
@@ -252,6 +265,42 @@ export default function DashboardPage() {
           </CardBody>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: any[]; navigate: (p: string) => void }) {
+  const parts: string[] = [];
+  if (k) {
+    parts.push(`${k.active_project_count ?? 0} aktif proje`);
+    parts.push(`${formatCurrencyAbbrev(k.total_contract_value_try)} portföy`);
+    parts.push(`ort. marj ${formatPct(k.weighted_avg_margin_pct)}`);
+    if ((k.overdue_payment_count ?? 0) > 0) parts.push(`${k.overdue_payment_count} vadesi geçmiş ödeme`);
+  }
+  const top = briefing.slice(0, 2);
+  return (
+    <div className="mb-5 flex items-center gap-4 rounded-xl bg-gradient-to-r from-[#1e3a8a] via-[#2563eb] to-[#0891b2] px-4 py-3 text-white shadow-sm">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15">
+        <Sparkles className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold">AI Özeti · Bugün</div>
+        <div className="mt-0.5 text-[13px] leading-snug text-white/90">
+          {parts.length ? parts.join(" · ") : "Projeleriniz analiz ediliyor…"}
+          {top.length > 0 && (
+            <span className="ml-1.5 inline-flex flex-wrap gap-1.5 align-middle">
+              {top.map((t, i) => (
+                <button key={i} onClick={() => navigate("/ai-alerts")} className="rounded-md bg-white/15 px-2 py-0.5 text-[11px] hover:bg-white/25">
+                  {t.project_name}
+                </button>
+              ))}
+            </span>
+          )}
+        </div>
+      </div>
+      <button onClick={() => navigate("/ai-assistant")} className="hidden shrink-0 items-center gap-1 rounded-lg bg-white/15 px-3 py-1.5 text-xs hover:bg-white/25 sm:flex">
+        Detaylı analiz →
+      </button>
     </div>
   );
 }

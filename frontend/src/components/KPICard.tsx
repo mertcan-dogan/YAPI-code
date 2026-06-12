@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { ArrowDown, ArrowUp, ArrowUpRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpRight, type LucideIcon } from "lucide-react";
 import { Skeleton } from "./ui";
 
 interface KPICardProps {
@@ -11,14 +11,15 @@ interface KPICardProps {
   trend?: number; // percentage change
   alert?: "red" | "amber" | null;
   loading?: boolean;
+  icon?: LucideIcon; // top-right accent icon
   onClick?: () => void; // CR-004-D / CR-004-K: clickable drill-down
 }
 
 // KPI Card — Section 6.5
-export function KPICard({ label, value, valueTitle, unit, subtitle, trend, alert, loading, onClick }: KPICardProps) {
+export function KPICard({ label, value, valueTitle, unit, subtitle, trend, alert, loading, icon: Icon, onClick }: KPICardProps) {
   if (loading) {
     return (
-      <div className="rounded-lg border border-border bg-surface p-4">
+      <div className="rounded-xl border border-border bg-surface p-4 shadow-sm">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="mt-3 h-8 w-32" />
         <Skeleton className="mt-3 h-3 w-20" />
@@ -32,14 +33,15 @@ export function KPICard({ label, value, valueTitle, unit, subtitle, trend, alert
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? (e) => (e.key === "Enter" || e.key === " ") && onClick() : undefined}
       className={cn(
-        "group relative rounded-lg border border-border bg-surface p-4 transition-shadow hover:shadow-md",
+        "group relative rounded-xl border border-border bg-surface p-4 shadow-sm transition-shadow hover:shadow-md",
         alert === "red" && "border-l-4 border-l-danger",
         alert === "amber" && "border-l-4 border-l-accent",
-        onClick && "cursor-pointer hover:border-primary"
+        onClick && "cursor-pointer hover:border-brand"
       )}
     >
       <div className="flex items-start justify-between">
         <span className="text-xs text-text-secondary">{label}</span>
+        {Icon && trend === undefined && <Icon className="h-4 w-4 text-text-disabled" />}
         {trend !== undefined && (
           <span className={cn("flex items-center text-xs", trend >= 0 ? "text-success" : "text-danger")}>
             {trend >= 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}

@@ -36,7 +36,7 @@ export function Button({
 
 // --- Card ---
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-lg border border-border bg-surface", className)} {...props} />;
+  return <div className={cn("rounded-xl border border-border bg-surface shadow-sm", className)} {...props} />;
 }
 export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("p-4", className)} {...props} />;
@@ -48,7 +48,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
     <input
       ref={ref}
       className={cn(
-        "w-full rounded-md border bg-surface px-3 py-2 text-sm outline-none transition focus:border-primary",
+        "w-full rounded-md border bg-surface px-3 py-2 text-sm outline-none transition focus:border-brand",
         error ? "border-danger" : "border-border",
         className
       )}
@@ -62,7 +62,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
   ({ className, ...props }, ref) => (
     <textarea
       ref={ref}
-      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary", className)}
+      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand", className)}
       {...props}
     />
   )
@@ -73,7 +73,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
   ({ className, children, ...props }, ref) => (
     <select
       ref={ref}
-      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary", className)}
+      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand", className)}
       {...props}
     >
       {children}

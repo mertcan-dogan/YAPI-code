@@ -4,22 +4,25 @@
 
 /* Design tokens — Section 6.2 */
 :root {
-  --color-primary: #1b2b4b;
-  --color-primary-light: #2e4272;
+  --color-primary: #0e1525;
+  --color-primary-light: #1e293f;
+  --color-brand: #2563eb;
+  --color-brand-light: #3b82f6;
+  --color-brand-2: #06b6d4;
   --color-accent: #f59e0b;
-  --color-success: #10b981;
+  --color-success: #059669;
   --color-danger: #ef4444;
-  --color-warning: #eab308;
-  --color-bg: #f8fafc;
+  --color-warning: #d97706;
+  --color-bg: #f5f7fa;
   --color-surface: #ffffff;
-  --color-border: #e2e8f0;
-  --color-text-primary: #1e293b;
+  --color-border: #e3e8ef;
+  --color-text-primary: #16202e;
   --color-text-secondary: #64748b;
   --color-text-disabled: #94a3b8;
-  --color-navy-50: #eff6ff;
+  --color-navy-50: #eff5ff;
   --color-amber-50: #fffbeb;
   --color-red-50: #fef2f2;
-  --color-green-50: #f0fdf4;
+  --color-green-50: #ecfdf5;
 }
 
 html,
