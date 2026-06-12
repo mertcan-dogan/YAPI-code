@@ -17,6 +17,7 @@ import {
   PlusSquare,
   Plus,
   Settings,
+  ScanLine,
   Sparkles,
   TrendingUp,
   Users,
@@ -49,6 +50,7 @@ const BOTTOM_NAV = [
   { icon: FileBarChart, label: "Raporlar", to: "/reports" },
   { icon: Sparkles, label: "Yapay Zeka Uyarıları", to: "/ai-alerts" },
   { icon: MessageSquare, label: "AI Asistan", to: "/ai-assistant" },
+  { icon: ScanLine, label: "Belge Tara", to: "/document-capture" },
   { icon: Settings, label: "Ayarlar", to: "/settings" },
 ];
 
@@ -345,7 +347,7 @@ function MobileNav() {
   const items = [
     { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
     { icon: FolderKanban, label: "Projeler", to: "/projects" },
-    { icon: Plus, label: "Maliyet", to: "/projects" },
+    { icon: ScanLine, label: "Belge Tara", to: "/document-capture" },
     { icon: Bell, label: "Hatırlatıcı", to: "/reminders" },
     { icon: Settings, label: "Profil", to: "/settings" },
   ];

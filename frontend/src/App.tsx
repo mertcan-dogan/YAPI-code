@@ -12,6 +12,7 @@ import AuditLogPage from "./pages/AuditLogPage";
 import BudgetPage from "./pages/BudgetPage";
 import CashFlowPage from "./pages/CashFlowPage";
 import DashboardPage from "./pages/DashboardPage";
+import DocumentCapturePage from "./pages/DocumentCapturePage";
 import EquipmentPage from "./pages/EquipmentPage";
 import InvoicesPage from "./pages/InvoicesPage";
 import LoginPage from "./pages/LoginPage";
@@ -88,6 +89,7 @@ export default function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/ai-assistant" element={<AIAssistantPage />} />
+          <Route path="/document-capture" element={<DocumentCapturePage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/settings/*" element={<SettingsPage />} />
           <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />

@@ -16,6 +16,7 @@ from app.startup import run_migrations
 from app.api import (
     ai,
     ai_import,
+    document_capture,
     approvals,
     audit,
     budget_templates,
@@ -107,6 +108,7 @@ for r in (
     settings_router.router,
     custom_categories.router,
     ai_import.router,
+    document_capture.router,
     variations.router,
     approvals.router,
     budget_templates.router,
