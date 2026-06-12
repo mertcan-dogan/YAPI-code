@@ -313,7 +313,7 @@ export default function NewProjectPage() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full border-accent text-accent"
+                className="w-full"
                 onClick={() => setCustomCats((rows) => [...rows, { name: "", amount: "" }])}
               >
                 <Plus className="h-4 w-4" /> Yeni Kategori Ekle

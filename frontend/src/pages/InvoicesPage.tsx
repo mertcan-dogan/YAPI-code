@@ -127,7 +127,7 @@ function CollectModal({ projectId, invoice, onClose, onSaved }: { projectId: str
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-lg bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-sm rounded-xl bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-3 text-base font-semibold text-primary">Tahsilat Bilgisi</h3>
         <div className="space-y-3">
           <div><Label required>Tahsil Edilen Tutar (TRY)</Label><Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>

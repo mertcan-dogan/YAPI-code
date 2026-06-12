@@ -84,7 +84,7 @@ export default function AIAlertsPage() {
       ) : (
         <div className="space-y-3">
           {alerts.map((a) => (
-            <div key={a.id} className={cn("rounded-lg border border-l-4 border-border bg-surface p-4", SEV_BORDER[a.severity])}>
+            <div key={a.id} className={cn("rounded-xl border border-l-4 border-border bg-surface p-4 shadow-sm", SEV_BORDER[a.severity])}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-brand" />

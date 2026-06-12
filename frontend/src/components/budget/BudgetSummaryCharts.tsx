@@ -40,7 +40,7 @@ export function BudgetSummaryCharts({
   onAddBudget?: () => void;
 }) {
   if (loading) {
-    return <div className="mb-6 h-72 animate-pulse rounded-lg bg-bg" />;
+    return <div className="mb-6 h-72 animate-pulse rounded-xl bg-bg" />;
   }
 
   const withBudget = categories.filter((c) => toNumber(c.revised_budget_try) > 0);
@@ -48,7 +48,7 @@ export function BudgetSummaryCharts({
   // Empty state — no budget entered yet.
   if (withBudget.length === 0) {
     return (
-      <div className="mb-6 flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-surface py-10">
+      <div className="mb-6 flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-surface py-10">
         <p className="text-sm text-text-secondary">Henüz bütçe girilmemiş.</p>
         {onAddBudget && (
           <button onClick={onAddBudget} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90">

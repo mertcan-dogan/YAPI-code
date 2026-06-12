@@ -98,7 +98,7 @@ function RejectModal({ item, onClose, onDone }: { item: ApprovalItem; onClose: (
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-lg bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-sm rounded-xl bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-3 text-base font-semibold text-primary">İşlemi Reddet</h3>
         <Label required>Red Nedeni</Label>
         <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Neden bu işlemi reddediyorsunuz?" />
