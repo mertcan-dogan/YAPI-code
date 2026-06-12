@@ -22,24 +22,40 @@ const ResponsiveGrid = WidthProvider(Responsive);
 
 const WIDGETS: { id: string; label: string }[] = [
   { id: "ai_summary", label: "AI Özeti" },
-  { id: "kpis_primary", label: "Ana Göstergeler (KPI)" },
-  { id: "kpis_exec", label: "Yönetici Göstergeleri" },
-  { id: "projects_briefing", label: "Proje Durumu & Öneriler" },
+  { id: "kpi_active", label: "KPI · Aktif Proje" },
+  { id: "kpi_contract", label: "KPI · Toplam Sözleşme" },
+  { id: "kpi_margin", label: "KPI · Ort. Kar Marjı" },
+  { id: "kpi_overdue", label: "KPI · Vadesi Geçmiş" },
+  { id: "kpi_backlog", label: "KPI · İş Bakiyesi" },
+  { id: "kpi_proj_profit", label: "KPI · Tahmini Kar" },
+  { id: "kpi_receivables", label: "KPI · Ticari Alacaklar" },
+  { id: "kpi_netcash", label: "KPI · Net Nakit" },
+  { id: "projects_table", label: "Proje Durumu" },
+  { id: "ai_briefing", label: "Bugün Ne Yapmalısın" },
   { id: "portfolio_budget", label: "Portföy Bütçe & Tahmin" },
   { id: "cash_forecast", label: "Nakit Akış Projeksiyonu" },
-  { id: "cashflow_ar", label: "Nakit Akışı & Alacak Yaşlandırması" },
+  { id: "cashflow_trailing", label: "Birleşik Nakit Akışı" },
+  { id: "ar_aging", label: "Alacak Yaşlandırması" },
   { id: "margin_fade", label: "Kar Marjı Erozyonu" },
 ];
 
 // 12-col grid defaults per widget (rowHeight 30 + 16px margin).
 const WIDGET_DEFAULTS: Record<string, { w: number; h: number; minW: number; minH: number }> = {
   ai_summary: { w: 12, h: 3, minW: 6, minH: 2 },
-  kpis_primary: { w: 12, h: 4, minW: 6, minH: 3 },
-  kpis_exec: { w: 12, h: 4, minW: 6, minH: 3 },
-  projects_briefing: { w: 12, h: 13, minW: 6, minH: 6 },
+  kpi_active: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_contract: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_margin: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_overdue: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_backlog: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_proj_profit: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_receivables: { w: 3, h: 4, minW: 2, minH: 3 },
+  kpi_netcash: { w: 3, h: 4, minW: 2, minH: 3 },
+  projects_table: { w: 8, h: 11, minW: 5, minH: 6 },
+  ai_briefing: { w: 4, h: 11, minW: 3, minH: 5 },
   portfolio_budget: { w: 6, h: 10, minW: 4, minH: 6 },
   cash_forecast: { w: 6, h: 10, minW: 4, minH: 6 },
-  cashflow_ar: { w: 12, h: 12, minW: 6, minH: 6 },
+  cashflow_trailing: { w: 6, h: 10, minW: 4, minH: 6 },
+  ar_aging: { w: 6, h: 9, minW: 4, minH: 5 },
   margin_fade: { w: 6, h: 7, minW: 4, minH: 4 },
 };
 
@@ -47,13 +63,21 @@ type GridItem = { i: string; x: number; y: number; w: number; h: number; minW?: 
 
 const DEFAULT_GRID: GridItem[] = [
   { i: "ai_summary", x: 0, y: 0, w: 12, h: 3 },
-  { i: "kpis_primary", x: 0, y: 3, w: 12, h: 4 },
-  { i: "kpis_exec", x: 0, y: 7, w: 12, h: 4 },
-  { i: "projects_briefing", x: 0, y: 11, w: 12, h: 13 },
-  { i: "portfolio_budget", x: 0, y: 24, w: 6, h: 10 },
-  { i: "cash_forecast", x: 6, y: 24, w: 6, h: 10 },
-  { i: "cashflow_ar", x: 0, y: 34, w: 12, h: 12 },
-  { i: "margin_fade", x: 0, y: 46, w: 6, h: 7 },
+  { i: "kpi_active", x: 0, y: 3, w: 3, h: 4 },
+  { i: "kpi_contract", x: 3, y: 3, w: 3, h: 4 },
+  { i: "kpi_margin", x: 6, y: 3, w: 3, h: 4 },
+  { i: "kpi_overdue", x: 9, y: 3, w: 3, h: 4 },
+  { i: "kpi_backlog", x: 0, y: 7, w: 3, h: 4 },
+  { i: "kpi_proj_profit", x: 3, y: 7, w: 3, h: 4 },
+  { i: "kpi_receivables", x: 6, y: 7, w: 3, h: 4 },
+  { i: "kpi_netcash", x: 9, y: 7, w: 3, h: 4 },
+  { i: "projects_table", x: 0, y: 11, w: 8, h: 11 },
+  { i: "ai_briefing", x: 8, y: 11, w: 4, h: 11 },
+  { i: "portfolio_budget", x: 0, y: 22, w: 6, h: 10 },
+  { i: "cash_forecast", x: 6, y: 22, w: 6, h: 10 },
+  { i: "cashflow_trailing", x: 0, y: 32, w: 6, h: 10 },
+  { i: "ar_aging", x: 6, y: 32, w: 6, h: 9 },
+  { i: "margin_fade", x: 0, y: 41, w: 6, h: 7 },
 ].map((g) => ({ ...g, minW: WIDGET_DEFAULTS[g.i].minW, minH: WIDGET_DEFAULTS[g.i].minH }));
 
 // Reconstruct the grid from saved JSON (handles new {grid:[]} and legacy [{id,visible}]).
@@ -308,77 +332,68 @@ export default function DashboardPage() {
 
   const widgetNodes: Record<string, ReactNode> = {
     ai_summary: <AISummaryStrip k={k} briefing={briefing} navigate={navigate} />,
-    kpis_primary: (
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="Aktif Proje Sayısı" value={String(k?.active_project_count ?? 0)} icon={Building2} series={data?.kpi_trends?.active_project_count?.series} delta={data?.kpi_trends?.active_project_count?.delta_pct} onClick={() => navigate("/projects")} />
-        <KPICard loading={loading} label="Toplam Sözleşme Değeri" value={formatCurrencyAbbrev(k?.total_contract_value_try)} valueTitle={formatCurrency(k?.total_contract_value_try)} icon={Wallet} series={data?.kpi_trends?.total_contract_value_try?.series} delta={data?.kpi_trends?.total_contract_value_try?.delta_pct} />
-        <KPICard loading={loading} label="Ağırlıklı Ort. Kar Marjı" value={formatPct(k?.weighted_avg_margin_pct)} icon={TrendingUp} series={data?.kpi_trends?.weighted_avg_margin_pct?.series} delta={data?.kpi_trends?.weighted_avg_margin_pct?.delta_pct} alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null} onClick={() => setMarginOpen(true)} />
-        <KPICard loading={loading} label="Vadesi Geçmiş Ödemeler" value={String(k?.overdue_payment_count ?? 0)} icon={AlarmClock} series={data?.kpi_trends?.overdue_payment_count?.series} delta={data?.kpi_trends?.overdue_payment_count?.delta_pct} invertDelta alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null} onClick={() => setOverdueOpen(true)} />
+    kpi_active: <KPICard loading={loading} label="Aktif Proje Sayısı" value={String(k?.active_project_count ?? 0)} icon={Building2} series={data?.kpi_trends?.active_project_count?.series} delta={data?.kpi_trends?.active_project_count?.delta_pct} onClick={() => navigate("/projects")} />,
+    kpi_contract: <KPICard loading={loading} label="Toplam Sözleşme Değeri" value={formatCurrencyAbbrev(k?.total_contract_value_try)} valueTitle={formatCurrency(k?.total_contract_value_try)} icon={Wallet} series={data?.kpi_trends?.total_contract_value_try?.series} delta={data?.kpi_trends?.total_contract_value_try?.delta_pct} />,
+    kpi_margin: <KPICard loading={loading} label="Ağırlıklı Ort. Kar Marjı" value={formatPct(k?.weighted_avg_margin_pct)} icon={TrendingUp} series={data?.kpi_trends?.weighted_avg_margin_pct?.series} delta={data?.kpi_trends?.weighted_avg_margin_pct?.delta_pct} alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null} onClick={() => setMarginOpen(true)} />,
+    kpi_overdue: <KPICard loading={loading} label="Vadesi Geçmiş Ödemeler" value={String(k?.overdue_payment_count ?? 0)} icon={AlarmClock} series={data?.kpi_trends?.overdue_payment_count?.series} delta={data?.kpi_trends?.overdue_payment_count?.delta_pct} invertDelta alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null} onClick={() => setOverdueOpen(true)} />,
+    kpi_backlog: <KPICard loading={loading} label="İş Bakiyesi (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />,
+    kpi_proj_profit: <KPICard loading={loading} label="Tahmini Tamamlanma Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />,
+    kpi_receivables: <KPICard loading={loading} label="Ticari Alacaklar" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} series={data?.kpi_trends?.total_receivables_try?.series} delta={data?.kpi_trends?.total_receivables_try?.delta_pct} />,
+    kpi_netcash: <KPICard loading={loading} label="Net Nakit Pozisyonu" value={formatCurrencyAbbrev(ex?.net_cash_position_try)} valueTitle={formatCurrency(ex?.net_cash_position_try)} icon={Wallet} series={data?.kpi_trends?.net_cash_position_try?.series} delta={data?.kpi_trends?.net_cash_position_try?.delta_pct} alert={toNumber(ex?.net_cash_position_try) < 0 ? "red" : null} />,
+    projects_table: (
+      <div>
+        <h2 className="mb-3 text-lg font-semibold text-primary">Proje Durumu</h2>
+        <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} error={error} onRetry={refetch} minWidth={900} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
       </div>
     ),
-    kpis_exec: (
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="İş Bakiyesi (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />
-        <KPICard loading={loading} label="Tahmini Tamamlanma Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
-        <KPICard loading={loading} label="Ticari Alacaklar" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} series={data?.kpi_trends?.total_receivables_try?.series} delta={data?.kpi_trends?.total_receivables_try?.delta_pct} />
-        <KPICard loading={loading} label="Net Nakit Pozisyonu" value={formatCurrencyAbbrev(ex?.net_cash_position_try)} valueTitle={formatCurrency(ex?.net_cash_position_try)} icon={Wallet} series={data?.kpi_trends?.net_cash_position_try?.series} delta={data?.kpi_trends?.net_cash_position_try?.delta_pct} alert={toNumber(ex?.net_cash_position_try) < 0 ? "red" : null} />
-      </div>
-    ),
-    projects_briefing: (
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <h2 className="mb-3 text-lg font-semibold text-primary">Proje Durumu</h2>
-          <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} error={error} onRetry={refetch} minWidth={900} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
-        </div>
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-primary">
-              <Sparkles className="h-4 w-4 text-brand" /> Bugün Ne Yapmalısın
-            </h2>
-            <div className="flex items-center gap-2">
-              {generatedAt && <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(generatedAt)}</span>}
-              <button onClick={handleRefreshBriefing} disabled={briefingState === "loading"} title="Yenile" className="rounded p-1 text-text-secondary hover:text-primary disabled:opacity-50" aria-label="Yenile">
-                <RefreshCw className={`h-3.5 w-3.5 ${briefingState === "loading" ? "animate-spin" : ""}`} />
-              </button>
-            </div>
+    ai_briefing: (
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-primary">
+            <Sparkles className="h-4 w-4 text-brand" /> Bugün Ne Yapmalısın
+          </h2>
+          <div className="flex items-center gap-2">
+            {generatedAt && <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(generatedAt)}</span>}
+            <button onClick={handleRefreshBriefing} disabled={briefingState === "loading"} title="Yenile" className="rounded p-1 text-text-secondary hover:text-primary disabled:opacity-50" aria-label="Yenile">
+              <RefreshCw className={`h-3.5 w-3.5 ${briefingState === "loading" ? "animate-spin" : ""}`} />
+            </button>
           </div>
-          <Card>
-            <CardBody className="space-y-3">
-              {briefingState === "loading" && (
-                <div className="flex items-center gap-2 rounded-md bg-navy-50 px-3 py-2 text-sm text-brand">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-brand" />
-                  Yapay zeka projelerinizi analiz ediyor…
-                </div>
-              )}
-              {briefingState === "error" && (
-                <div className="flex items-center gap-2 rounded-md bg-bg px-3 py-2 text-sm text-text-secondary">
-                  <Info className="h-4 w-4" /> Yapay zeka şu an kullanılamıyor. Lütfen bekleyin.
-                </div>
-              )}
-              {briefingState === "ready" && briefing.length === 0 && (
-                <div className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-sm text-success">
-                  <CheckCircle2 className="h-4 w-4" /> Bugün için öncelikli işlem bulunmuyor.
-                </div>
-              )}
-              {briefing.slice(0, 8).map((item, i) => {
-                const sv = sevStyle(item.severity);
-                return (
-                  <div key={i} className="flex gap-3 border-b border-border pb-3 last:border-0 last:pb-0">
-                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${sv.bg} ${sv.fg}`}>
-                      <sv.Icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="block truncate text-xs font-semibold text-text-secondary">{item.project_name}</span>
-                      <p className="mt-0.5 text-sm font-medium text-text-primary">{item.issue}</p>
-                      <p className="mt-0.5 text-xs text-text-secondary">→ {item.recommended_action}</p>
-                    </div>
-                  </div>
-                );
-              })}
-              {briefingState === "ready" && <AIDisclaimer />}
-            </CardBody>
-          </Card>
         </div>
+        <Card>
+          <CardBody className="space-y-3">
+            {briefingState === "loading" && (
+              <div className="flex items-center gap-2 rounded-md bg-navy-50 px-3 py-2 text-sm text-brand">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-brand" /> Yapay zeka projelerinizi analiz ediyor…
+              </div>
+            )}
+            {briefingState === "error" && (
+              <div className="flex items-center gap-2 rounded-md bg-bg px-3 py-2 text-sm text-text-secondary">
+                <Info className="h-4 w-4" /> Yapay zeka şu an kullanılamıyor. Lütfen bekleyin.
+              </div>
+            )}
+            {briefingState === "ready" && briefing.length === 0 && (
+              <div className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-sm text-success">
+                <CheckCircle2 className="h-4 w-4" /> Bugün için öncelikli işlem bulunmuyor.
+              </div>
+            )}
+            {briefing.slice(0, 8).map((item, i) => {
+              const sv = sevStyle(item.severity);
+              return (
+                <div key={i} className="flex gap-3 border-b border-border pb-3 last:border-0 last:pb-0">
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${sv.bg} ${sv.fg}`}>
+                    <sv.Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="block truncate text-xs font-semibold text-text-secondary">{item.project_name}</span>
+                    <p className="mt-0.5 text-sm font-medium text-text-primary">{item.issue}</p>
+                    <p className="mt-0.5 text-xs text-text-secondary">→ {item.recommended_action}</p>
+                  </div>
+                </div>
+              );
+            })}
+            {briefingState === "ready" && <AIDisclaimer />}
+          </CardBody>
+        </Card>
       </div>
     ),
     portfolio_budget: (
@@ -402,45 +417,45 @@ export default function DashboardPage() {
         <Card><CardBody><CashFlowChart data={forecastChartData} /></CardBody></Card>
       </div>
     ) : null,
-    cashflow_ar: (
-      <div className="grid items-start gap-6 lg:grid-cols-2">
-        <div>
-          <h2 className="mb-3 text-lg font-semibold text-primary">Birleşik Nakit Akışı (Son 6 Ay)</h2>
-          <Card><CardBody><CashFlowChart data={chartData} /></CardBody></Card>
-        </div>
-        <div>
-          <h2 className="mb-1 text-lg font-semibold text-primary">Alacak Yaşlandırması</h2>
-          <p className="mb-3 text-xs text-text-secondary">Bekleyen alacakların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO).</p>
-          <Card>
-            <CardBody>
-              <div className="flex items-end justify-between">
-                <div>
-                  <div className="text-xs text-text-secondary">Ortalama Tahsilat Süresi (DSO)</div>
-                  <div className={`tabular mt-1 text-3xl font-bold ${dsoColor}`}>{dso == null ? "—" : `${dso} gün`}</div>
-                  <div className={`mt-0.5 text-xs ${dsoColor}`}>{dsoLabel}</div>
+    cashflow_trailing: (
+      <div>
+        <h2 className="mb-3 text-lg font-semibold text-primary">Birleşik Nakit Akışı (Son 6 Ay)</h2>
+        <Card><CardBody><CashFlowChart data={chartData} /></CardBody></Card>
+      </div>
+    ),
+    ar_aging: (
+      <div>
+        <h2 className="mb-1 text-lg font-semibold text-primary">Alacak Yaşlandırması</h2>
+        <p className="mb-3 text-xs text-text-secondary">Bekleyen alacakların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO).</p>
+        <Card>
+          <CardBody>
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-xs text-text-secondary">Ortalama Tahsilat Süresi (DSO)</div>
+                <div className={`tabular mt-1 text-3xl font-bold ${dsoColor}`}>{dso == null ? "—" : `${dso} gün`}</div>
+                <div className={`mt-0.5 text-xs ${dsoColor}`}>{dsoLabel}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-text-secondary">Toplam Ticari Alacak</div>
+                <div className="tabular text-lg font-semibold text-primary">{formatCurrency(ar?.total_outstanding_try)}</div>
+              </div>
+            </div>
+            <div className="mt-4 flex h-3 w-full overflow-hidden rounded-full bg-bg">
+              {arBuckets.map((bk, i) => (<div key={i} style={{ width: `${arSeg(bk.v)}%`, backgroundColor: bk.color }} title={bk.label} />))}
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
+              {arBuckets.map((bk, i) => (
+                <div key={i} className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-xs text-text-secondary">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bk.color }} />
+                    {bk.label}
+                  </span>
+                  <span className="tabular text-sm font-medium text-text-primary">{formatCurrency(bk.v)}</span>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs text-text-secondary">Toplam Ticari Alacak</div>
-                  <div className="tabular text-lg font-semibold text-primary">{formatCurrency(ar?.total_outstanding_try)}</div>
-                </div>
-              </div>
-              <div className="mt-4 flex h-3 w-full overflow-hidden rounded-full bg-bg">
-                {arBuckets.map((bk, i) => (<div key={i} style={{ width: `${arSeg(bk.v)}%`, backgroundColor: bk.color }} title={bk.label} />))}
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
-                {arBuckets.map((bk, i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <span className="flex items-center gap-2 text-xs text-text-secondary">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bk.color }} />
-                      {bk.label}
-                    </span>
-                    <span className="tabular text-sm font-medium text-text-primary">{formatCurrency(bk.v)}</span>
-                  </div>
-                ))}
-              </div>
-            </CardBody>
-          </Card>
-        </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
       </div>
     ),
     margin_fade: mf?.has_targets ? (
