@@ -29,6 +29,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-
 import { apiGet } from "@/lib/api";
 import { useProjectStore } from "@/store/project";
 import { NotificationBell } from "@/components/NotificationBell";
+import { CommandPalette } from "@/components/CommandPalette";
 
 const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
@@ -314,6 +315,17 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
+  const [cmdOpen, setCmdOpen] = React.useState(false);
+  React.useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen(true);
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
   return (
     <header className="flex h-16 items-center justify-between border-b border-border bg-surface px-4 lg:px-6">
       <div className="flex items-center gap-3">
@@ -322,7 +334,7 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
         </button>
         <ProjectSelector />
         <button
-          onClick={() => navigate("/ai-assistant")}
+          onClick={() => setCmdOpen(true)}
           className="hidden items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text-secondary transition-colors hover:border-brand md:flex"
         >
           <Sparkles className="h-4 w-4 text-brand" />
@@ -353,6 +365,7 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
           </div>
         )}
       </div>
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
     </header>
   );
 }

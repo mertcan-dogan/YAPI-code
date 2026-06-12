@@ -6,6 +6,7 @@ import type { Project } from "@/types";
 import { formatDateTime } from "@/utils/format";
 import { Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 // CR-004-I: render **bold** segments from the AI's markdown-style numbers.
 function renderRich(text: string) {
@@ -40,6 +41,7 @@ export default function AIAssistantPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
 
   // CR-004-I: auto-scroll to the newest message instead of growing the page.
   // Skip the initial render (no messages) and scroll only within the chat
@@ -66,6 +68,16 @@ export default function AIAssistantPage() {
       setLoading(false);
     }
   };
+
+  // Pre-filled question handed off from the global command palette.
+  useEffect(() => {
+    const handed = (location.state as { q?: string } | null)?.q;
+    if (handed) {
+      ask(handed);
+      window.history.replaceState({}, "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div>
