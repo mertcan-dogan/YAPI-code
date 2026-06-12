@@ -26,6 +26,7 @@ interface DashboardData {
   exec_kpis?: { backlog_try: string; projected_profit_try: string; total_receivables_try: string; net_cash_position_try: string };
   portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
   ar_aging?: { not_due_try: string; d1_30_try: string; d31_60_try: string; d60_plus_try: string; total_outstanding_try: string; dso_days: number | null };
+  cash_forecast?: { starting_cash_try: string; months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
 }
 
 export default function DashboardPage() {
@@ -175,6 +176,14 @@ export default function DashboardPage() {
     { label: "60+ gün gecikmiş", v: ar?.d60_plus_try, color: "#EF4444" },
   ];
 
+  const fc = data?.cash_forecast;
+  const forecastChartData = (fc?.months ?? []).map((mo) => ({
+    month: mo.month,
+    in: toNumber(mo.inflow_try),
+    out: toNumber(mo.outflow_try),
+    cumulative: toNumber(mo.cumulative_try),
+  }));
+
   return (
     <div>
       <PageHeader title="Ana Sayfa" subtitle="Tüm aktif projelerin finansal durumu" />
@@ -316,6 +325,27 @@ export default function DashboardPage() {
           </CardBody>
         </Card>
       </div>
+
+      {forecastChartData.length > 0 && (
+        <div className="mt-6">
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold text-primary">Nakit Akış Projeksiyonu (Önümüzdeki 6 Ay)</h2>
+            {fc?.shortfall && (
+              <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-danger">Nakit açığı riski</span>
+            )}
+          </div>
+          <p className="mb-3 text-xs text-text-secondary">
+            Bekleyen faturalardan beklenen tahsilatlar ile vadesi gelen ödemelerin projeksiyonu. En düşük öngörülen nakit:{" "}
+            <span className={fc?.shortfall ? "font-semibold text-danger" : "font-semibold text-text-primary"}>{formatCurrency(fc?.min_cash_try)}</span>
+            {fc?.min_cash_month ? ` (${fc.min_cash_month})` : ""}.
+          </p>
+          <Card>
+            <CardBody>
+              <CashFlowChart data={forecastChartData} />
+            </CardBody>
+          </Card>
+        </div>
+      )}
 
       <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
         <div>

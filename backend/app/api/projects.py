@@ -15,6 +15,7 @@ from app.models.budget_line_item import BudgetLineItem
 from app.models.project import Project
 from app.models.kpi_snapshot import KPISnapshot
 from app.models.client_invoice import ClientInvoice
+from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
@@ -413,6 +414,7 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     cashflow_chart = _combined_cashflow_chart(db, [p.id for p in projects])
 
     ar_aging = _ar_aging(db, [p.id for p in projects], date.today())
+    cash_forecast = _cash_forecast(db, [p.id for p in projects], date.today(), total_net_cash)
 
     kpi_trends = _record_and_build_kpi_trends(
         db,
@@ -445,6 +447,7 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "net_cash_position_try": str(money(total_net_cash)),
             },
             "ar_aging": ar_aging,
+            "cash_forecast": cash_forecast,
             "portfolio_budget": {
                 "contract_try": str(money(total_contract)),
                 "revised_budget_try": str(money(total_revised_budget)),
@@ -456,6 +459,83 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
             "cashflow_chart": cashflow_chart,
         }
     )
+
+
+def _cash_forecast(db, project_ids, today, starting_cash, months=6):
+    """6-month forward cash projection: expected inflows (unpaid invoices by due
+    date) vs outflows (unpaid costs by due date), with a running cash line.
+
+    Overdue items (due before this month) land in the first bucket. Items past
+    the horizon are ignored.
+    """
+    keys = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        keys.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    idx = {k: i for i, k in enumerate(keys)}
+    cur_first = today.replace(day=1)
+    inflow = [D(0)] * months
+    outflow = [D(0)] * months
+
+    def bucket(d):
+        if d is None:
+            return None
+        if d < cur_first:
+            return 0
+        return idx.get(f"{d.year:04d}-{d.month:02d}")
+
+    if project_ids:
+        for inv in db.execute(
+            select(ClientInvoice).where(ClientInvoice.project_id.in_(project_ids), ClientInvoice.is_deleted.is_(False))
+        ).scalars().all():
+            out = D(inv.outstanding_try)
+            if out <= 0:
+                continue
+            b = bucket(inv.due_date)
+            if b is not None:
+                inflow[b] += out
+        for c in db.execute(
+            select(CostEntry).where(
+                CostEntry.project_id.in_(project_ids),
+                CostEntry.is_deleted.is_(False),
+                CostEntry.pending_approval.is_(False),
+            )
+        ).scalars().all():
+            unpaid = D(c.amount_try) - D(c.amount_paid_try)
+            if unpaid <= 0:
+                continue
+            b = bucket(c.payment_due_date)
+            if b is not None:
+                outflow[b] += unpaid
+
+    out_months = []
+    cum = D(starting_cash)
+    min_cash = None
+    min_month = None
+    for i, k in enumerate(keys):
+        net = inflow[i] - outflow[i]
+        cum += net
+        if min_cash is None or cum < min_cash:
+            min_cash = cum
+            min_month = k
+        out_months.append({
+            "month": k,
+            "inflow_try": str(money(inflow[i])),
+            "outflow_try": str(money(outflow[i])),
+            "net_try": str(money(net)),
+            "cumulative_try": str(money(cum)),
+        })
+    return {
+        "starting_cash_try": str(money(D(starting_cash))),
+        "months": out_months,
+        "min_cash_try": str(money(min_cash)) if min_cash is not None else "0",
+        "min_cash_month": min_month,
+        "shortfall": bool(min_cash is not None and min_cash < 0),
+    }
 
 
 def _ar_aging(db, project_ids, today):
