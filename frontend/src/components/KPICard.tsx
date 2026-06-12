@@ -5,6 +5,7 @@ import { Skeleton } from "./ui";
 interface KPICardProps {
   label: string;
   value: string;
+  valueTitle?: string; // exact (un-abbreviated) value shown on hover
   unit?: string;
   subtitle?: string;
   trend?: number; // percentage change
@@ -14,7 +15,7 @@ interface KPICardProps {
 }
 
 // KPI Card — Section 6.5
-export function KPICard({ label, value, unit, subtitle, trend, alert, loading, onClick }: KPICardProps) {
+export function KPICard({ label, value, valueTitle, unit, subtitle, trend, alert, loading, onClick }: KPICardProps) {
   if (loading) {
     return (
       <div className="rounded-lg border border-border bg-surface p-4">
@@ -46,9 +47,14 @@ export function KPICard({ label, value, unit, subtitle, trend, alert, loading, o
           </span>
         )}
       </div>
-      <div className="mt-1 flex items-baseline gap-1">
-        <span className="tabular text-[32px] font-bold leading-none text-primary">{value}</span>
-        {unit && <span className="text-base text-text-secondary">{unit}</span>}
+      <div className="mt-1 flex min-w-0 items-baseline gap-1">
+        <span
+          title={valueTitle ?? value}
+          className="tabular block truncate text-2xl font-bold leading-tight text-primary sm:text-[28px]"
+        >
+          {value}
+        </span>
+        {unit && <span className="shrink-0 text-base text-text-secondary">{unit}</span>}
       </div>
       {subtitle && <p className="mt-2 text-xs text-text-secondary">{subtitle}</p>}
       {onClick && (

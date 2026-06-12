@@ -98,32 +98,46 @@ function CompanyLogoSection({ logoUrl, onChange }: { logoUrl: string | null; onC
 
   const shown = preview ?? logoUrl;
 
+  // Transparency checkerboard so transparent (no-background) PNG logos are
+  // actually visible instead of disappearing against a white box.
+  const checkerboard: React.CSSProperties = {
+    backgroundImage:
+      "linear-gradient(45deg,#e2e8f0 25%,transparent 25%),linear-gradient(-45deg,#e2e8f0 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e2e8f0 75%),linear-gradient(-45deg,transparent 75%,#e2e8f0 75%)",
+    backgroundSize: "14px 14px",
+    backgroundPosition: "0 0, 0 7px, 7px -7px, -7px 0",
+    backgroundColor: "#fff",
+  };
+
   return (
     <div className="rounded-md border border-border bg-bg p-3">
       <Label>Şirket Logosu</Label>
       <div className="mt-2 flex items-center gap-4">
-        {shown ? (
-          <img src={shown} alt="Şirket logosu" className="h-[60px] w-[120px] rounded border border-border bg-white object-contain p-1" />
-        ) : (
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            className="flex h-[60px] w-[120px] items-center justify-center rounded border border-dashed border-border text-center text-[11px] text-text-secondary hover:bg-surface"
-          >
-            Logo yüklemek için tıklayın
-          </button>
-        )}
+        {/* Single click target: the whole box opens the file picker. */}
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          title={shown ? "Logoyu değiştirmek için tıklayın" : "Logo yüklemek için tıklayın"}
+          className={cn(
+            "group relative flex h-[60px] w-[120px] items-center justify-center overflow-hidden rounded border transition-colors",
+            shown ? "border-border" : "border-dashed border-border hover:bg-surface"
+          )}
+          style={shown ? checkerboard : undefined}
+        >
+          {shown ? (
+            <img src={shown} alt="Şirket logosu" className="max-h-full max-w-full object-contain p-1" />
+          ) : (
+            <span className="px-1 text-center text-[11px] text-text-secondary">Logo yüklemek için tıklayın</span>
+          )}
+        </button>
         <div className="flex flex-col gap-2">
           <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={busy}>
-              {shown ? "Logo Değiştir" : "Logo Seç"}
-            </Button>
             {logoUrl && !preview && (
               <Button type="button" variant="danger" onClick={remove} loading={busy}>Logoyu Kaldır</Button>
             )}
             {file && <Button type="button" onClick={save} loading={busy}>Kaydet</Button>}
           </div>
-          <span className="text-[11px] text-text-secondary">PNG veya JPEG, max 2MB</span>
+          <span className="text-[11px] text-text-secondary">PNG veya JPEG, max 2MB — logoyu seçmek için kutuya tıklayın</span>
         </div>
       </div>
       <input ref={inputRef} type="file" accept="image/png,image/jpeg" className="hidden" onChange={pick} />
@@ -165,7 +179,7 @@ function CompanyTab() {
         <div className="grid grid-cols-3 gap-3">
           <div><Label>Varsayılan KDV %</Label><Select value={f.vat_rate_default ?? 20} onChange={(e) => set("vat_rate_default", Number(e.target.value))}>{VAT_RATES.map((v) => <option key={v} value={v}>%{v}</option>)}</Select></div>
           <div><Label>Varsayılan Kesinti %</Label><Input type="number" value={f.retention_default_pct ?? 10} onChange={(e) => set("retention_default_pct", Number(e.target.value))} /></div>
-          <div><Label>Para Birimi</Label><Select value={f.default_currency ?? "TRY"} onChange={(e) => set("default_currency", e.target.value)}><option>TRY</option><option>EUR</option><option>USD</option></Select></div>
+          <div><Label>Para Birimi</Label><Select value={f.default_currency ?? "TRY"} onChange={(e) => set("default_currency", e.target.value)}><option>TRY</option><option>EUR</option><option>USD</option><option>GBP</option></Select></div>
         </div>
         <div><Label>Mali Yıl Başlangıç Ayı</Label><Input type="number" min={1} max={12} value={f.fiscal_year_start_month ?? 1} onChange={(e) => set("fiscal_year_start_month", Number(e.target.value))} /></div>
 
@@ -272,20 +286,35 @@ function InviteDrawer({ open, onClose, onSaved }: { open: boolean; onClose: () =
   );
 }
 
-// CR-003-L: budget templates list (presets + company custom).
+// CR-003-L: budget templates list (presets + company custom) with a real
+// per-category percentage editor (must total 100%) and delete for custom ones.
+type Template = { id: string; name: string; is_preset: boolean; distribution: Record<string, number> };
+
 function TemplatesTab() {
-  const { data, refetch } = useFetch<{ id: string; name: string; is_preset: boolean; distribution: Record<string, number> }[]>("/budget-templates");
+  const { data, refetch } = useFetch<Template[]>("/budget-templates");
   const [name, setName] = useState("");
+  const [dist, setDist] = useState<Record<string, number>>({});
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const total = Object.values(dist).reduce((s, v) => s + (Number(v) || 0), 0);
+  const totalRounded = Math.round(total * 100) / 100;
+  const isHundred = totalRounded === 100;
+
+  const setPct = (cat: string, value: string) => {
+    const n = value === "" ? 0 : Number(value);
+    setDist((d) => ({ ...d, [cat]: Number.isFinite(n) ? n : 0 }));
+  };
+
   const create = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || !isHundred) return;
     setCreating(true);
     try {
-      // New custom template seeded from an even split of the standard categories
-      // (the user edits per-category budgets when creating a project).
-      await apiPost("/budget-templates", { name, distribution: { labour_direct: 100 } });
+      const distribution = Object.fromEntries(Object.entries(dist).filter(([, v]) => Number(v) > 0));
+      await apiPost("/budget-templates", { name: name.trim(), distribution });
       toast.success("Şablon oluşturuldu");
       setName("");
+      setDist({});
       refetch();
     } catch (e: any) {
       toast.error(e.message);
@@ -293,6 +322,21 @@ function TemplatesTab() {
       setCreating(false);
     }
   };
+
+  const remove = async (t: Template) => {
+    if (!confirm(`"${t.name}" şablonunu silmek istediğinize emin misiniz?`)) return;
+    setDeletingId(t.id);
+    try {
+      await apiDelete(`/budget-templates/${t.id}`);
+      toast.success("Şablon silindi");
+      refetch();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <Card className="max-w-3xl">
       <CardBody className="space-y-3">
@@ -301,7 +345,11 @@ function TemplatesTab() {
           <div key={t.id} className="rounded-md border border-border p-3">
             <div className="flex items-center justify-between">
               <span className="font-medium text-primary">{t.name}</span>
-              {t.is_preset && <span className="rounded bg-navy-50 px-2 py-0.5 text-[10px] text-primary-light">Hazır</span>}
+              {t.is_preset ? (
+                <span className="rounded bg-navy-50 px-2 py-0.5 text-[10px] text-primary-light">Hazır</span>
+              ) : (
+                <Button type="button" variant="danger" onClick={() => remove(t)} loading={deletingId === t.id}>Sil</Button>
+              )}
             </div>
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-secondary">
               {Object.entries(t.distribution).map(([cat, pct]) => (
@@ -310,9 +358,34 @@ function TemplatesTab() {
             </div>
           </div>
         ))}
-        <div className="flex items-end gap-2 border-t border-border pt-3">
-          <div className="flex-1"><Label>Yeni Şablon Adı</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Tünel Projesi" /></div>
-          <Button onClick={create} loading={creating} disabled={!name.trim()}>Oluştur</Button>
+
+        {/* New custom template — name + per-category percentages totalling 100%. */}
+        <div className="border-t border-border pt-3">
+          <h3 className="mb-2 text-sm font-semibold text-primary">Yeni Şablon</h3>
+          <div className="mb-3"><Label>Şablon Adı</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Örn. Tünel Projesi" /></div>
+          <Label>Maliyet Kategorisi Dağılımı (%)</Label>
+          <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {Object.entries(COST_CATEGORIES).map(([key, label]) => (
+              <div key={key} className="flex items-center gap-2">
+                <span className="flex-1 truncate text-xs text-text-secondary" title={label}>{label}</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="w-20"
+                  value={dist[key] ?? ""}
+                  onChange={(e) => setPct(key, e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
+            <span className={cn("text-sm font-semibold", isHundred ? "text-success" : "text-danger")}>
+              Toplam: %{totalRounded} {isHundred ? "✓" : "(100 olmalı)"}
+            </span>
+            <Button onClick={create} loading={creating} disabled={!name.trim() || !isHundred}>Oluştur</Button>
+          </div>
         </div>
       </CardBody>
     </Card>

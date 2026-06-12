@@ -42,8 +42,11 @@ export default function AIAssistantPage() {
   const endRef = useRef<HTMLDivElement>(null);
 
   // CR-004-I: auto-scroll to the newest message instead of growing the page.
+  // Skip the initial render (no messages) and scroll only within the chat
+  // container so opening the page no longer jumps past the header.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0) return;
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, loading]);
 
   const ask = async (question: string) => {

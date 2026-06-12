@@ -150,7 +150,12 @@ export default function DashboardPage() {
           value={String(k?.active_project_count ?? 0)}
           onClick={() => navigate("/projects")}
         />
-        <KPICard loading={loading} label="Toplam Sözleşme Değeri" value={formatCurrencyAbbrev(k?.total_contract_value_try)} />
+        <KPICard
+          loading={loading}
+          label="Toplam Sözleşme Değeri"
+          value={formatCurrencyAbbrev(k?.total_contract_value_try)}
+          valueTitle={formatCurrency(k?.total_contract_value_try)}
+        />
         <KPICard
           loading={loading}
           label="Ağırlıklı Ort. Kar Marjı"

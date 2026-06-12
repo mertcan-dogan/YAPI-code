@@ -1,4 +1,6 @@
 """Budget templates router (CR-003-L). Built-in presets + company custom."""
+import uuid
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
@@ -64,3 +66,26 @@ def create_template(payload: TemplateCreate, user: DirectorUser, db: Session = D
     db.commit()
     db.refresh(t)
     return success({"id": str(t.id), "name": t.name, "is_preset": False, "distribution": t.distribution})
+
+
+@router.delete("/{template_id}")
+def delete_template(template_id: str, user: DirectorUser, db: Session = Depends(get_db)):
+    # Presets are built-in and not deletable.
+    if template_id.startswith("preset:"):
+        raise APIError(422, "VALIDATION_ERROR", "Hazır şablonlar silinemez")
+    try:
+        tid = uuid.UUID(template_id)
+    except (ValueError, AttributeError):
+        raise APIError(404, "NOT_FOUND", "Şablon bulunamadı")
+    t = db.execute(
+        select(CustomBudgetTemplate).where(
+            CustomBudgetTemplate.id == tid,
+            CustomBudgetTemplate.company_id == user.company_id,
+            CustomBudgetTemplate.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if t is None:
+        raise APIError(404, "NOT_FOUND", "Şablon bulunamadı")
+    t.is_deleted = True
+    db.commit()
+    return success({"id": str(t.id), "deleted": True})
