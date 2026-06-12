@@ -6,6 +6,7 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
+  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -15,7 +16,23 @@ import {
   YAxis,
 } from "recharts";
 
-const axisProps = { tick: { fontSize: 11, fill: COLORS.primary }, stroke: COLORS.border };
+const axisProps = { tick: { fontSize: 11, fill: COLORS.muted }, stroke: COLORS.border };
+
+function ChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs shadow-md">
+      <div className="mb-1 font-semibold text-text-primary">{label}</div>
+      {payload.filter((p: any) => p.value != null).map((p: any, i: number) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: p.color ?? p.stroke ?? p.fill }} />
+          <span className="text-text-secondary">{p.name}:</span>
+          <span className="tabular font-medium text-text-primary">{formatCurrencyAbbrev(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function moneyTooltip(value: any) {
   return formatCurrencyAbbrev(value);
@@ -32,13 +49,21 @@ export function CashFlowChart({
   return (
     <ResponsiveContainer width="100%" height={height}>
       <ComposedChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} vertical={false} />
-        <XAxis dataKey="month" {...axisProps} />
-        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} {...axisProps} width={70} />
-        <Tooltip formatter={moneyTooltip} />
-        <Bar dataKey="out" name="Gider" fill={COLORS.danger} radius={[2, 2, 0, 0]} />
-        <Bar dataKey="in" name="Gelir" fill={COLORS.success} radius={[2, 2, 0, 0]} />
-        <Line type="monotone" dataKey="cumulative" name="Kümülatif Net" stroke={COLORS.primary} strokeWidth={2} dot={false} />
+        <defs>
+          <linearGradient id="cfNet" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={COLORS.brand} stopOpacity={0.18} />
+            <stop offset="100%" stopColor={COLORS.brand} stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
+        <XAxis dataKey="month" tickLine={false} axisLine={false} {...axisProps} />
+        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tickLine={false} axisLine={false} {...axisProps} width={70} />
+        <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(37,99,235,0.05)" }} />
+        <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 6 }} />
+        <Bar dataKey="in" name="Gelir" fill={COLORS.success} radius={[3, 3, 0, 0]} maxBarSize={22} />
+        <Bar dataKey="out" name="Gider" fill={COLORS.danger} fillOpacity={0.85} radius={[3, 3, 0, 0]} maxBarSize={22} />
+        <Area type="monotone" dataKey="cumulative" name="Kümülatif Net" stroke="none" fill="url(#cfNet)" isAnimationActive={false} legendType="none" />
+        <Line type="monotone" dataKey="cumulative" name="Kümülatif Net" stroke={COLORS.brand} strokeWidth={2.5} dot={false} />
       </ComposedChart>
     </ResponsiveContainer>
   );

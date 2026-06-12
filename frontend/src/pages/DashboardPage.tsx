@@ -9,7 +9,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, Building2, CheckCircle2, Info, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import { AlarmClock, AlertTriangle, Building2, CheckCircle2, Info, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -241,16 +241,21 @@ export default function DashboardPage() {
                   Bugün için öncelikli işlem bulunmuyor.
                 </div>
               )}
-              {briefing.slice(0, 8).map((item, i) => (
-                <div key={i} className="border-b border-border pb-2 last:border-0">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-primary">{item.project_name}</span>
-                    <SeverityBadge severity={item.severity} />
+              {briefing.slice(0, 8).map((item, i) => {
+                const sv = sevStyle(item.severity);
+                return (
+                  <div key={i} className="flex gap-3 border-b border-border pb-3 last:border-0 last:pb-0">
+                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${sv.bg} ${sv.fg}`}>
+                      <sv.Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block truncate text-xs font-semibold text-text-secondary">{item.project_name}</span>
+                      <p className="mt-0.5 text-sm font-medium text-text-primary">{item.issue}</p>
+                      <p className="mt-0.5 text-xs text-text-secondary">→ {item.recommended_action}</p>
+                    </div>
                   </div>
-                  <p className="mt-1 text-sm">{item.issue}</p>
-                  <p className="mt-0.5 text-xs text-text-secondary">→ {item.recommended_action}</p>
-                </div>
-              ))}
+                );
+              })}
               {briefingState === "ready" && <AIDisclaimer />}
             </CardBody>
           </Card>
@@ -305,8 +310,13 @@ function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: any[]; na
   );
 }
 
-function SeverityBadge({ severity }: { severity: string }) {
-  const map: Record<string, string> = { high: "bg-danger", medium: "bg-accent", low: "bg-text-secondary" };
-  const label: Record<string, string> = { high: "Yüksek", medium: "Orta", low: "Düşük" };
-  return <span className={`rounded-full px-2 py-0.5 text-[10px] text-white ${map[severity] ?? "bg-text-secondary"}`}>{label[severity] ?? severity}</span>;
+function sevStyle(severity: string): { bg: string; fg: string; Icon: typeof AlertTriangle } {
+  switch (severity) {
+    case "high":
+      return { bg: "bg-red-50", fg: "text-danger", Icon: AlertTriangle };
+    case "medium":
+      return { bg: "bg-amber-50", fg: "text-warning", Icon: AlarmClock };
+    default:
+      return { bg: "bg-navy-50", fg: "text-brand", Icon: Info };
+  }
 }
