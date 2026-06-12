@@ -131,7 +131,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </>
         )}
       </Link>
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+      <nav className="sidebar-scroll flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {GLOBAL_NAV.map((n) => (
           <NavItem key={n.to} {...n} active={pathname === n.to} onNavigate={onNavigate} />
         ))}

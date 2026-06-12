@@ -1,6 +1,7 @@
 """Settings router — company & user management, director only (Section 11)."""
 import uuid
 
+import logging
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import func, select
@@ -19,6 +20,7 @@ from app.services.email import send_user_invitation
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 # CR-006-D: company logo upload (Supabase Storage, public bucket).
+logger = logging.getLogger(__name__)
 LOGO_BUCKET = "company-logos"
 LOGO_MAX_BYTES = 2 * 1024 * 1024  # 2MB
 LOGO_ALLOWED = {"image/png": "png", "image/jpeg": "jpg"}
@@ -85,7 +87,10 @@ async def upload_company_logo(
     except httpx.HTTPError:
         raise APIError(502, "STORAGE_ERROR", "Logo yüklenemedi")
     if resp.status_code not in (200, 201):
-        raise APIError(502, "STORAGE_ERROR", "Logo yüklenemedi")
+        # Surface the upstream status so misconfiguration (e.g. wrong service
+        # key) is diagnosable instead of a generic failure.
+        logger.error("Logo upload failed: storage %s %s", resp.status_code, resp.text[:300])
+        raise APIError(502, "STORAGE_ERROR", f"Logo yüklenemedi (depolama hatası {resp.status_code})")
 
     public_url = (
         f"{app_settings.supabase_url}/storage/v1/object/public/{LOGO_BUCKET}/{object_path}"
