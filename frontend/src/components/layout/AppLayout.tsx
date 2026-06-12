@@ -183,6 +183,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           )}
         </div>
       </nav>
+      {/* Brand footer — small persistent Yapı mark, shows even when a company logo is set */}
+      <div className="flex items-center justify-center gap-1.5 border-t border-white/10 px-5 py-3">
+        <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-accent text-[10px] font-bold leading-none text-primary">Y</span>
+        <span className="text-[11px] font-medium tracking-wide text-white/40">Powered by Yapı</span>
+      </div>
     </>
   );
 }
