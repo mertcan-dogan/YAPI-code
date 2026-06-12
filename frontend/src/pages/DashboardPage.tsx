@@ -224,9 +224,9 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="Bekleyen İş (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />
-        <KPICard loading={loading} label="Tahmini Proje Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
-        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} series={data?.kpi_trends?.total_receivables_try?.series} delta={data?.kpi_trends?.total_receivables_try?.delta_pct} />
+        <KPICard loading={loading} label="İş Bakiyesi (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />
+        <KPICard loading={loading} label="Tahmini Tamamlanma Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
+        <KPICard loading={loading} label="Ticari Alacaklar" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} series={data?.kpi_trends?.total_receivables_try?.series} delta={data?.kpi_trends?.total_receivables_try?.delta_pct} />
         <KPICard loading={loading} label="Net Nakit Pozisyonu" value={formatCurrencyAbbrev(ex?.net_cash_position_try)} valueTitle={formatCurrency(ex?.net_cash_position_try)} icon={Wallet} series={data?.kpi_trends?.net_cash_position_try?.series} delta={data?.kpi_trends?.net_cash_position_try?.delta_pct} alert={toNumber(ex?.net_cash_position_try) < 0 ? "red" : null} />
       </div>
 
@@ -308,15 +308,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-6">
-        <h2 className="mb-3 text-lg font-semibold text-primary">Birleşik Nakit Akışı (Son 6 Ay)</h2>
-        <Card>
-          <CardBody>
-            <CashFlowChart data={chartData} />
-          </CardBody>
-        </Card>
-      </div>
-
-      <div className="mt-6">
         <h2 className="mb-1 text-lg font-semibold text-primary">Portföy Bütçe &amp; Tahmin</h2>
         <p className="mb-3 text-xs text-text-secondary">Tüm aktif projelerin toplamı — sözleşme geliri, bütçe, taahhüt, harcanan ve tahmini final maliyet.</p>
         <Card>
@@ -326,40 +317,50 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <div className="mt-6">
-        <h2 className="mb-1 text-lg font-semibold text-primary">Alacak Yaşlandırma &amp; Tahsilat</h2>
-        <p className="mb-3 text-xs text-text-secondary">Bekleyen tahsilatların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO).</p>
-        <Card>
-          <CardBody>
-            <div className="grid gap-6 lg:grid-cols-3">
-              <div className="border-border lg:border-r lg:pr-6">
-                <div className="text-xs text-text-secondary">Ort. Tahsilat Süresi (DSO)</div>
-                <div className={`tabular mt-1 text-3xl font-bold ${dsoColor}`}>{dso == null ? "—" : `${dso} gün`}</div>
-                <div className={`mt-0.5 text-xs ${dsoColor}`}>{dsoLabel}</div>
-                <div className="mt-3 text-xs text-text-secondary">Toplam bekleyen</div>
-                <div className="tabular text-lg font-semibold text-primary">{formatCurrency(ar?.total_outstanding_try)}</div>
-              </div>
-              <div className="lg:col-span-2">
-                <div className="flex h-3 w-full overflow-hidden rounded-full bg-bg">
-                  {arBuckets.map((bk, i) => (
-                    <div key={i} style={{ width: `${arSeg(bk.v)}%`, backgroundColor: bk.color }} title={bk.label} />
-                  ))}
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
+        <div>
+          <h2 className="mb-3 text-lg font-semibold text-primary">Birleşik Nakit Akışı (Son 6 Ay)</h2>
+          <Card>
+            <CardBody>
+              <CashFlowChart data={chartData} />
+            </CardBody>
+          </Card>
+        </div>
+        <div>
+          <h2 className="mb-1 text-lg font-semibold text-primary">Alacak Yaşlandırması</h2>
+          <p className="mb-3 text-xs text-text-secondary">Bekleyen alacakların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO).</p>
+          <Card>
+            <CardBody>
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="text-xs text-text-secondary">Ortalama Tahsilat Süresi (DSO)</div>
+                  <div className={`tabular mt-1 text-3xl font-bold ${dsoColor}`}>{dso == null ? "—" : `${dso} gün`}</div>
+                  <div className={`mt-0.5 text-xs ${dsoColor}`}>{dsoLabel}</div>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
-                  {arBuckets.map((bk, i) => (
-                    <div key={i} className="flex items-center justify-between">
-                      <span className="flex items-center gap-2 text-xs text-text-secondary">
-                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bk.color }} />
-                        {bk.label}
-                      </span>
-                      <span className="tabular text-sm font-medium text-text-primary">{formatCurrency(bk.v)}</span>
-                    </div>
-                  ))}
+                <div className="text-right">
+                  <div className="text-xs text-text-secondary">Toplam Ticari Alacak</div>
+                  <div className="tabular text-lg font-semibold text-primary">{formatCurrency(ar?.total_outstanding_try)}</div>
                 </div>
               </div>
-            </div>
-          </CardBody>
-        </Card>
+              <div className="mt-4 flex h-3 w-full overflow-hidden rounded-full bg-bg">
+                {arBuckets.map((bk, i) => (
+                  <div key={i} style={{ width: `${arSeg(bk.v)}%`, backgroundColor: bk.color }} title={bk.label} />
+                ))}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
+                {arBuckets.map((bk, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-xs text-text-secondary">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: bk.color }} />
+                      {bk.label}
+                    </span>
+                    <span className="tabular text-sm font-medium text-text-primary">{formatCurrency(bk.v)}</span>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+        </div>
       </div>
     </div>
   );
