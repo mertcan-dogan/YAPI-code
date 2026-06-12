@@ -418,6 +418,10 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
         total_contract_value=money(total_contract),
         weighted_avg_margin=weighted_margin,
         overdue_payment_count=overdue_total,
+        backlog=money(total_contract - total_invoiced),
+        projected_profit=money(total_contract - total_forecast_cost),
+        total_receivables=money(total_outstanding),
+        net_cash=money(total_net_cash),
     )
 
     return success(
@@ -450,7 +454,7 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     )
 
 
-def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count):
+def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count, backlog, projected_profit, total_receivables, net_cash):
     """Upsert today's KPI snapshot, then return real trend series + deltas.
 
     Series/deltas are based purely on recorded daily snapshots — they stay empty
@@ -468,6 +472,10 @@ def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_
         total_contract_value_try=total_contract_value,
         weighted_avg_margin_pct=weighted_avg_margin,
         overdue_payment_count=overdue_payment_count,
+        backlog_try=backlog,
+        projected_profit_try=projected_profit,
+        total_receivables_try=total_receivables,
+        net_cash_position_try=net_cash,
     )
     if snap is None:
         db.add(KPISnapshot(company_id=company_id, snapshot_date=today, **values))
@@ -480,7 +488,7 @@ def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_
         select(KPISnapshot)
         .where(
             KPISnapshot.company_id == company_id,
-            KPISnapshot.snapshot_date >= today - timedelta(days=30),
+            KPISnapshot.snapshot_date >= today - timedelta(days=140),
         )
         .order_by(KPISnapshot.snapshot_date)
     ).scalars().all()
@@ -497,6 +505,10 @@ def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_
         "total_contract_value_try": build("total_contract_value_try"),
         "weighted_avg_margin_pct": build("weighted_avg_margin_pct"),
         "overdue_payment_count": build("overdue_payment_count"),
+        "backlog_try": build("backlog_try"),
+        "projected_profit_try": build("projected_profit_try"),
+        "total_receivables_try": build("total_receivables_try"),
+        "net_cash_position_try": build("net_cash_position_try"),
     }
 
 

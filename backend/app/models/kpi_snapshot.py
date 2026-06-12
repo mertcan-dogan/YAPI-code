@@ -30,3 +30,7 @@ class KPISnapshot(TimestampSoftDeleteMixin, Base):
     total_contract_value_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
     weighted_avg_margin_pct: Mapped[Decimal] = mapped_column(Numeric(8, 2), nullable=False, default=0)
     overdue_payment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    backlog_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    projected_profit_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    total_receivables_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    net_cash_position_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
