@@ -9,11 +9,16 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet, apiPut } from "@/lib/api";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, AlertTriangle, Banknote, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, EyeOff, Info, Layers, PiggyBank, RefreshCw, SlidersHorizontal, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import { AlarmClock, AlertTriangle, Banknote, Building2, CheckCircle2, GripVertical, Info, Layers, PiggyBank, Plus, RefreshCw, SlidersHorizontal, Sparkles, TrendingUp, Wallet, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { toast } from "@/store/toast";
+import { Responsive, WidthProvider } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
+
+const ResponsiveGrid = WidthProvider(Responsive);
 
 const WIDGETS: { id: string; label: string }[] = [
   { id: "ai_summary", label: "AI Özeti" },
@@ -26,24 +31,54 @@ const WIDGETS: { id: string; label: string }[] = [
   { id: "margin_fade", label: "Kar Marjı Erozyonu" },
 ];
 
-type LayoutItem = { id: string; visible: boolean };
+// 12-col grid defaults per widget (rowHeight 30 + 16px margin).
+const WIDGET_DEFAULTS: Record<string, { w: number; h: number; minW: number; minH: number }> = {
+  ai_summary: { w: 12, h: 3, minW: 6, minH: 2 },
+  kpis_primary: { w: 12, h: 4, minW: 6, minH: 3 },
+  kpis_exec: { w: 12, h: 4, minW: 6, minH: 3 },
+  projects_briefing: { w: 12, h: 13, minW: 6, minH: 6 },
+  portfolio_budget: { w: 6, h: 10, minW: 4, minH: 6 },
+  cash_forecast: { w: 6, h: 10, minW: 4, minH: 6 },
+  cashflow_ar: { w: 12, h: 12, minW: 6, minH: 6 },
+  margin_fade: { w: 6, h: 7, minW: 4, minH: 4 },
+};
 
-// Merge a saved layout with the canonical widget list: keeps saved order/visibility,
-// drops unknown ids, and appends any new widgets (forward-compatible).
-function buildLayout(saved: LayoutItem[] | null | undefined): LayoutItem[] {
+type GridItem = { i: string; x: number; y: number; w: number; h: number; minW?: number; minH?: number };
+
+const DEFAULT_GRID: GridItem[] = [
+  { i: "ai_summary", x: 0, y: 0, w: 12, h: 3 },
+  { i: "kpis_primary", x: 0, y: 3, w: 12, h: 4 },
+  { i: "kpis_exec", x: 0, y: 7, w: 12, h: 4 },
+  { i: "projects_briefing", x: 0, y: 11, w: 12, h: 13 },
+  { i: "portfolio_budget", x: 0, y: 24, w: 6, h: 10 },
+  { i: "cash_forecast", x: 6, y: 24, w: 6, h: 10 },
+  { i: "cashflow_ar", x: 0, y: 34, w: 12, h: 12 },
+  { i: "margin_fade", x: 0, y: 46, w: 6, h: 7 },
+].map((g) => ({ ...g, minW: WIDGET_DEFAULTS[g.i].minW, minH: WIDGET_DEFAULTS[g.i].minH }));
+
+// Reconstruct the grid from saved JSON (handles new {grid:[]} and legacy [{id,visible}]).
+function buildGrid(saved: any): GridItem[] {
   const valid = new Set(WIDGETS.map((w) => w.id));
-  const seen = new Set<string>();
-  const out: LayoutItem[] = [];
-  (saved ?? []).forEach((it) => {
-    if (it && valid.has(it.id) && !seen.has(it.id)) {
-      out.push({ id: it.id, visible: it.visible !== false });
-      seen.add(it.id);
-    }
-  });
-  WIDGETS.forEach((w) => {
-    if (!seen.has(w.id)) out.push({ id: w.id, visible: true });
-  });
-  return out;
+  let items: GridItem[] | null = null;
+  if (saved && Array.isArray(saved.grid)) {
+    items = saved.grid
+      .filter((g: any) => g && valid.has(g.i))
+      .map((g: any) => ({
+        i: g.i,
+        x: g.x ?? 0,
+        y: g.y ?? 0,
+        w: g.w ?? WIDGET_DEFAULTS[g.i].w,
+        h: g.h ?? WIDGET_DEFAULTS[g.i].h,
+        minW: WIDGET_DEFAULTS[g.i].minW,
+        minH: WIDGET_DEFAULTS[g.i].minH,
+      }));
+  } else if (Array.isArray(saved)) {
+    const vis = saved.filter((it: any) => it && it.visible !== false && valid.has(it.id)).map((it: any) => it.id);
+    const set = new Set(vis);
+    items = DEFAULT_GRID.filter((g) => (set.size === 0 ? true : set.has(g.i))).map((g) => ({ ...g }));
+  }
+  if (!items || items.length === 0) items = DEFAULT_GRID.map((g) => ({ ...g }));
+  return items;
 }
 
 interface DashboardData {
@@ -74,41 +109,50 @@ export default function DashboardPage() {
   const { getSummary, setSummary, clearSummary } = useAISummaryStore();
   const CACHE_KEY = "dashboard-summary";
 
-  // CR: customizable Ana Sayfa — per-user widget order + visibility (saved to account).
-  const [layout, setLayout] = useState<LayoutItem[]>(() => buildLayout(null));
+  // Customizable Ana Sayfa — per-user resizable widget grid (saved to account).
+  const [grid, setGrid] = useState<GridItem[]>(() => DEFAULT_GRID.map((g) => ({ ...g })));
   const [editMode, setEditMode] = useState(false);
-  const [layoutSnapshot, setLayoutSnapshot] = useState<LayoutItem[]>([]);
+  const [gridSnapshot, setGridSnapshot] = useState<GridItem[]>([]);
   const [savingLayout, setSavingLayout] = useState(false);
+  const [bp, setBp] = useState("lg");
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
-    apiGet<{ layout: LayoutItem[] | null }>("/settings/dashboard-layout")
-      .then(({ data }) => setLayout(buildLayout(data?.layout)))
-      .catch(() => setLayout(buildLayout(null)));
+    apiGet<{ layout: any }>("/settings/dashboard-layout")
+      .then(({ data }) => setGrid(buildGrid(data?.layout)))
+      .catch(() => setGrid(buildGrid(null)));
   }, []);
 
+  const presentIds = new Set(grid.map((g) => g.i));
+  const removableWidgets = WIDGETS.filter((w) => !presentIds.has(w.id));
+
   const startEdit = () => {
-    setLayoutSnapshot(layout);
+    setGridSnapshot(grid.map((g) => ({ ...g })));
     setEditMode(true);
   };
   const cancelEdit = () => {
-    setLayout(layoutSnapshot);
+    setGrid(gridSnapshot);
     setEditMode(false);
+    setAddOpen(false);
   };
-  const resetDefault = () => setLayout(buildLayout(null));
-  const moveWidget = (i: number, dir: number) =>
-    setLayout((L) => {
-      const j = i + dir;
-      if (j < 0 || j >= L.length) return L;
-      const c = [...L];
-      [c[i], c[j]] = [c[j], c[i]];
-      return c;
-    });
-  const toggleWidget = (i: number) => setLayout((L) => L.map((it, idx) => (idx === i ? { ...it, visible: !it.visible } : it)));
+  const resetDefault = () => setGrid(DEFAULT_GRID.map((g) => ({ ...g })));
+  const removeWidget = (id: string) => setGrid((g) => g.filter((it) => it.i !== id));
+  const addWidget = (id: string) => {
+    const d = WIDGET_DEFAULTS[id];
+    setGrid((g) => [...g, { i: id, x: 0, y: Infinity, w: d.w, h: d.h, minW: d.minW, minH: d.minH }]);
+    setAddOpen(false);
+  };
+  const onGridChange = (current: any[]) => {
+    if (editMode && bp !== "sm") {
+      setGrid(current.map((c: any) => ({ i: c.i, x: c.x, y: c.y, w: c.w, h: c.h, minW: WIDGET_DEFAULTS[c.i]?.minW, minH: WIDGET_DEFAULTS[c.i]?.minH })));
+    }
+  };
   const saveLayout = async () => {
     setSavingLayout(true);
     try {
-      await apiPut("/settings/dashboard-layout", { layout });
+      await apiPut("/settings/dashboard-layout", { layout: { grid: grid.map(({ i, x, y, w, h }) => ({ i, x, y, w, h })) } });
       setEditMode(false);
+      setAddOpen(false);
       toast.success("Panel düzeni kaydedildi");
     } catch (e: any) {
       toast.error(e.message ?? "Kaydedilemedi");
@@ -436,14 +480,28 @@ export default function DashboardPage() {
         subtitle="Tüm aktif projelerin finansal durumu"
         action={
           editMode ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Button variant="outline" onClick={() => setAddOpen((o) => !o)} disabled={removableWidgets.length === 0}>
+                  <Plus className="h-4 w-4" /> Widget Ekle
+                </Button>
+                {addOpen && removableWidgets.length > 0 && (
+                  <div className="absolute right-0 z-30 mt-1 w-64 rounded-xl border border-border bg-surface py-1 shadow-lg">
+                    {removableWidgets.map((w) => (
+                      <button key={w.id} onClick={() => addWidget(w.id)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-bg">
+                        <Plus className="h-3.5 w-3.5 text-brand" /> {w.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <Button variant="outline" onClick={resetDefault}>Varsayılan</Button>
               <Button variant="outline" onClick={cancelEdit}>İptal</Button>
               <Button onClick={saveLayout} loading={savingLayout}>Kaydet</Button>
             </div>
           ) : (
             <Button variant="outline" onClick={startEdit}>
-              <SlidersHorizontal className="h-4 w-4" /> Özelleştir
+              <SlidersHorizontal className="h-4 w-4" /> Widget'ları Düzenle
             </Button>
           )
         }
@@ -454,32 +512,45 @@ export default function DashboardPage() {
 
       {editMode && (
         <div className="mb-4 rounded-lg border border-brand/30 bg-navy-50 px-4 py-2 text-xs text-text-secondary">
-          Düzenleme modu: bölümleri göst/gizle (göz) veya yukarı/aşağı taşı. Bitince <span className="font-medium text-text-primary">Kaydet</span>.
+          Düzenleme modu: widget'ları başlıktan tutup sürükleyin, sağ alt köşeden boyutlandırın, × ile kaldırın veya "Widget Ekle" ile geri ekleyin. Bitince <span className="font-medium text-text-primary">Kaydet</span>.
         </div>
       )}
 
-      <div className="space-y-6">
-        {layout.map((it, i) => {
-          const node = widgetNodes[it.id];
-          if (!node) return null;
-          if (editMode) {
-            const meta = WIDGETS.find((w) => w.id === it.id);
+      <div className="-mx-2">
+        <ResponsiveGrid
+          className={cn(editMode && "rounded-xl bg-bg/40")}
+          layouts={{ lg: grid, md: grid, sm: grid }}
+          breakpoints={{ lg: 1024, md: 768, sm: 0 }}
+          cols={{ lg: 12, md: 12, sm: 1 }}
+          rowHeight={30}
+          margin={[16, 16]}
+          isDraggable={editMode}
+          isResizable={editMode}
+          draggableHandle=".widget-drag"
+          compactType="vertical"
+          onBreakpointChange={(b) => setBp(b)}
+          onLayoutChange={(cur) => onGridChange(cur)}
+        >
+          {grid.map((g) => {
+            const node = widgetNodes[g.i];
+            const meta = WIDGETS.find((w) => w.id === g.i);
             return (
-              <div key={it.id} className={cn("rounded-xl border-2 border-dashed border-border p-2 transition-opacity", !it.visible && "opacity-45")}>
-                <div className="mb-2 flex items-center justify-between rounded-lg bg-bg px-3 py-1.5">
-                  <span className="text-xs font-medium text-text-secondary">{meta?.label ?? it.id}</span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => moveWidget(i, -1)} disabled={i === 0} className="rounded p-1 text-text-secondary hover:bg-surface disabled:opacity-30" aria-label="Yukarı taşı"><ChevronUp className="h-4 w-4" /></button>
-                    <button onClick={() => moveWidget(i, 1)} disabled={i === layout.length - 1} className="rounded p-1 text-text-secondary hover:bg-surface disabled:opacity-30" aria-label="Aşağı taşı"><ChevronDown className="h-4 w-4" /></button>
-                    <button onClick={() => toggleWidget(i)} className="rounded p-1 text-text-secondary hover:bg-surface" aria-label="Göster/Gizle">{it.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}</button>
+              <div key={g.i} className={cn("flex h-full flex-col overflow-hidden", editMode && "rounded-xl border-2 border-dashed border-border bg-surface")}>
+                {editMode && (
+                  <div className="widget-drag flex shrink-0 cursor-move items-center justify-between rounded-t-lg bg-bg px-3 py-1.5">
+                    <span className="flex items-center gap-2 text-xs font-medium text-text-secondary">
+                      <GripVertical className="h-4 w-4" /> {meta?.label ?? g.i}
+                    </span>
+                    <button onClick={() => removeWidget(g.i)} className="rounded p-0.5 text-text-secondary hover:bg-surface hover:text-danger" aria-label="Widget'ı kaldır">
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
-                </div>
-                <div className="pointer-events-none">{node}</div>
+                )}
+                <div className={cn("min-h-0 flex-1 overflow-auto", editMode && "p-2")}>{node}</div>
               </div>
             );
-          }
-          return it.visible ? <div key={it.id}>{node}</div> : null;
-        })}
+          })}
+        </ResponsiveGrid>
       </div>
     </div>
   );

@@ -191,11 +191,13 @@ def update_user(
     return success(UserOut.model_validate(target).model_dump(mode="json"))
 
 
+from typing import Any  # noqa: E402
+
 from pydantic import BaseModel  # noqa: E402
 
 
 class DashboardLayoutIn(BaseModel):
-    layout: list
+    layout: Any
 
 
 @router.get("/dashboard-layout")
