@@ -2,7 +2,7 @@
 import uuid
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from slugify import slugify
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.models.project import Project
 from app.models.kpi_snapshot import KPISnapshot
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.models.variation import Variation
 from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
@@ -407,9 +408,57 @@ def _budget_breakdown(db, project_ids):
     return {"total_try": str(money(total)), "items": items}
 
 
+def _variations_net(db, project_ids):
+    """Net change-order (Ek İş) value in play across the given projects.
+
+    Approved variations count at their approved value; pending ones at their
+    requested value. Rejected/withdrawn are excluded. Scoped by the caller to
+    the role/visibility-filtered active projects.
+    """
+    if not project_ids:
+        return D(0)
+    rows = db.execute(
+        select(Variation.status, Variation.value_try, Variation.approved_value_try).where(
+            Variation.project_id.in_(project_ids),
+            Variation.is_deleted.is_(False),
+            Variation.status.in_(("pending", "approved")),
+        )
+    ).all()
+    total = D(0)
+    for status, value, approved in rows:
+        if status == "approved":
+            total += D(approved if approved is not None else 0)
+        else:
+            total += D(value or 0)
+    return money(total)
+
+
 @router.get("/dashboard")
-def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
-    projects = _list_visible_projects(db, user, only_active=True)
+def company_dashboard(
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+    project_ids: str | None = Query(None, description="Comma-separated project ids to restrict to."),
+    rag: str | None = Query(None, description="Comma-separated RAG statuses (green/amber/red) to restrict to."),
+    date_from: str | None = Query(None, description="YYYY-MM-DD; lower bound for the historical cash-flow chart."),
+    date_to: str | None = Query(None, description="YYYY-MM-DD; upper bound for the historical cash-flow chart."),
+):
+    # Role/visibility-scoped active projects, then the optional toolbar filters.
+    visible = _list_visible_projects(db, user, only_active=True)
+    if project_ids:
+        wanted = {x.strip() for x in project_ids.split(",") if x.strip()}
+        visible = [p for p in visible if str(p.id) in wanted]
+    rag_set = {x.strip().lower() for x in rag.split(",") if x.strip()} if rag else None
+
+    # Compute financials once per project and apply the RAG filter here so every
+    # downstream panel (KPIs, charts, tables) reflects the same filtered set.
+    pairs = []
+    for p in visible:
+        f = fin_service.project_financials(db, p)
+        if rag_set and f["rag_status"] not in rag_set:
+            continue
+        pairs.append((p, f))
+    projects = [p for p, _ in pairs]
+
     rows = []
     total_contract = D(0)
     weighted_margin_num = D(0)
@@ -426,9 +475,9 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     mf_target_num = D(0)
     mf_current_num = D(0)
     mf_contract = D(0)
+    portfolio_performance = []
 
-    for p in projects:
-        f = fin_service.project_financials(db, p)
+    for p, f in pairs:
         total_contract += f["contract_value_try"]
         weighted_margin_num += f["current_profit_try"]
         overdue_total += f["overdue_count"]
@@ -457,6 +506,7 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "spent_pct": str(pct(safe_div(f["total_actual_try"], f["revised_budget_try"]) * 100)),
                 "completion_pct": str(f["completion_pct"]),
                 "margin_pct": str(f["margin_pct"]),
+                "margin_try": str(f["current_profit_try"]),
                 "net_cash_position_try": str(f["net_cash_position_try"]),
                 "rag_status": f["rag_status"],
                 "rag_label_tr": f["rag_label_tr"],
@@ -464,10 +514,23 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "overdue": p.planned_end_date < date.today(),
             }
         )
+        # Per-project actual vs forecast vs contract (Portföy Performansı chart).
+        portfolio_performance.append(
+            {
+                "project": p.name,
+                "contract_try": str(f["contract_value_try"]),
+                "actual_try": str(f["total_actual_try"]),
+                "forecast_final_try": str(f["forecast_final_cost_try"]),
+            }
+        )
 
     weighted_margin = pct(safe_div(weighted_margin_num, total_contract) * 100)
 
     cashflow_chart = _combined_cashflow_chart(db, [p.id for p in projects])
+    if date_from or date_to:
+        lo = date_from[:7] if date_from else ""
+        hi = date_to[:7] if date_to else "9999-99"
+        cashflow_chart = [c for c in cashflow_chart if lo <= c["month"] <= hi]
 
     ar_aging = _ar_aging(db, [p.id for p in projects], date.today())
     cash_forecast = _cash_forecast(db, [p.id for p in projects], date.today(), total_net_cash)
@@ -479,6 +542,11 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
         "projects": mf_rows,
     }
 
+    variations_net = _variations_net(db, [p.id for p in projects])
+    cost_to_complete = money(total_forecast_cost - total_actual)
+    # Don't overwrite today's company-wide snapshot with a filtered view; still
+    # read history to build trend series.
+    filters_active = bool(project_ids or rag or date_from or date_to)
     kpi_trends = _record_and_build_kpi_trends(
         db,
         company_id=user.company_id,
@@ -490,6 +558,9 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
         projected_profit=money(total_contract - total_forecast_cost),
         total_receivables=money(total_outstanding),
         net_cash=money(total_net_cash),
+        cost_to_complete=cost_to_complete,
+        variations_net=variations_net,
+        record=not filters_active,
     )
 
     return success(
@@ -499,6 +570,10 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "total_contract_value_try": str(money(total_contract)),
                 "weighted_avg_margin_pct": str(weighted_margin),
                 "overdue_payment_count": overdue_total,
+                # Cost to complete = forecast final cost - actual cost-to-date.
+                "cost_to_complete_try": str(cost_to_complete),
+                # Ek İşler (Net) — approved + pending change-order value in play.
+                "variations_net_try": str(variations_net),
             },
             "kpi_trends": kpi_trends,
             "exec_kpis": {
@@ -521,10 +596,93 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
             },
             # Scoped to the same visible active projects (per-role visibility).
             "budget_breakdown": _budget_breakdown(db, [p.id for p in projects]),
+            # Per-project actual vs forecast vs contract (Portföy Performansı chart).
+            "portfolio_performance": portfolio_performance,
             "projects": rows,
             "cashflow_chart": cashflow_chart,
         }
     )
+
+
+@router.get("/dashboard/document-feed")
+def dashboard_document_feed(
+    user: CurrentUser, db: Session = Depends(get_db), limit: int = Query(12, le=50)
+):
+    """Gelen Belgeler feed — recent supplier invoices (Faturalar), client
+    applications for payment (Hakedişler), and variations/claims (Ek İşler),
+    scoped to the user's visible projects.
+
+    NOTE: there is no document-ingestion table that stores an AI-classification /
+    Extracted-vs-Under-Review status, so this feed surfaces the real domain
+    records and their real statuses only (no fabricated AI status).
+    """
+    projects = _list_visible_projects(db, user)
+    ids = [p.id for p in projects]
+    name_by_id = {p.id: p.name for p in projects}
+    if not ids:
+        return success({"faturalar": [], "hakedisler": [], "ek_isler": []})
+
+    cost_rows = db.execute(
+        select(CostEntry)
+        .where(CostEntry.project_id.in_(ids), CostEntry.is_deleted.is_(False))
+        .order_by(CostEntry.entry_date.desc())
+        .limit(limit)
+    ).scalars().all()
+    faturalar = [
+        {
+            "id": str(c.id),
+            "label": c.invoice_number or c.supplier_name or "Fatura",
+            "source": c.supplier_name,
+            "project": name_by_id.get(c.project_id),
+            "category": c.cost_category,
+            "amount_try": str(money(D(c.total_with_vat_try))),
+            "status": "incelemede" if c.pending_approval else c.payment_status,
+            "date": c.entry_date.isoformat(),
+        }
+        for c in cost_rows
+    ]
+
+    inv_rows = db.execute(
+        select(ClientInvoice)
+        .where(ClientInvoice.project_id.in_(ids), ClientInvoice.is_deleted.is_(False))
+        .order_by(ClientInvoice.invoice_date.desc())
+        .limit(limit)
+    ).scalars().all()
+    hakedisler = [
+        {
+            "id": str(i.id),
+            "label": i.invoice_number,
+            "source": i.hakkedis_period,
+            "project": name_by_id.get(i.project_id),
+            "amount_try": str(money(D(i.total_with_vat_try))),
+            "status": i.payment_status,
+            "date": i.invoice_date.isoformat(),
+        }
+        for i in inv_rows
+    ]
+
+    var_rows = db.execute(
+        select(Variation)
+        .where(Variation.project_id.in_(ids), Variation.is_deleted.is_(False))
+        .order_by(Variation.submitted_date.desc())
+        .limit(limit)
+    ).scalars().all()
+    ek_isler = [
+        {
+            "id": str(v.id),
+            "label": v.variation_number,
+            "title": v.title,
+            "project": name_by_id.get(v.project_id),
+            "amount_try": str(
+                money(D(v.approved_value_try if v.status == "approved" and v.approved_value_try is not None else v.value_try))
+            ),
+            "status": v.status,
+            "date": v.submitted_date.isoformat(),
+        }
+        for v in var_rows
+    ]
+
+    return success({"faturalar": faturalar, "hakedisler": hakedisler, "ek_isler": ek_isler})
 
 
 def _cash_forecast(db, project_ids, today, starting_cash, months=6):
@@ -647,35 +805,41 @@ def _ar_aging(db, project_ids, today):
     }
 
 
-def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count, backlog, projected_profit, total_receivables, net_cash):
+def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count, backlog, projected_profit, total_receivables, net_cash, cost_to_complete, variations_net, record=True):
     """Upsert today's KPI snapshot, then return real trend series + deltas.
 
     Series/deltas are based purely on recorded daily snapshots — they stay empty
-    until at least two distinct days exist, so nothing is ever fabricated.
+    until at least two distinct days exist, so nothing is ever fabricated. When
+    ``record`` is False (a filtered dashboard view) the snapshot is not written —
+    the company-wide history must not be overwritten with a filtered total — but
+    the trend series are still built from existing history.
     """
     today = date.today()
-    snap = db.execute(
-        select(KPISnapshot).where(
-            KPISnapshot.company_id == company_id,
-            KPISnapshot.snapshot_date == today,
+    if record:
+        snap = db.execute(
+            select(KPISnapshot).where(
+                KPISnapshot.company_id == company_id,
+                KPISnapshot.snapshot_date == today,
+            )
+        ).scalar_one_or_none()
+        values = dict(
+            active_project_count=active_project_count,
+            total_contract_value_try=total_contract_value,
+            weighted_avg_margin_pct=weighted_avg_margin,
+            overdue_payment_count=overdue_payment_count,
+            backlog_try=backlog,
+            projected_profit_try=projected_profit,
+            total_receivables_try=total_receivables,
+            net_cash_position_try=net_cash,
+            cost_to_complete_try=cost_to_complete,
+            variations_net_try=variations_net,
         )
-    ).scalar_one_or_none()
-    values = dict(
-        active_project_count=active_project_count,
-        total_contract_value_try=total_contract_value,
-        weighted_avg_margin_pct=weighted_avg_margin,
-        overdue_payment_count=overdue_payment_count,
-        backlog_try=backlog,
-        projected_profit_try=projected_profit,
-        total_receivables_try=total_receivables,
-        net_cash_position_try=net_cash,
-    )
-    if snap is None:
-        db.add(KPISnapshot(company_id=company_id, snapshot_date=today, **values))
-    else:
-        for k_, v_ in values.items():
-            setattr(snap, k_, v_)
-    db.commit()
+        if snap is None:
+            db.add(KPISnapshot(company_id=company_id, snapshot_date=today, **values))
+        else:
+            for k_, v_ in values.items():
+                setattr(snap, k_, v_)
+        db.commit()
 
     history = db.execute(
         select(KPISnapshot)
@@ -702,6 +866,8 @@ def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_
         "projected_profit_try": build("projected_profit_try"),
         "total_receivables_try": build("total_receivables_try"),
         "net_cash_position_try": build("net_cash_position_try"),
+        "cost_to_complete_try": build("cost_to_complete_try"),
+        "variations_net_try": build("variations_net_try"),
     }
 
 

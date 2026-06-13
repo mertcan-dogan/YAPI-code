@@ -117,7 +117,11 @@ def daily_briefing(projects_summary: list[dict]) -> list[dict]:
         "özetini incele ve yöneticinin bugün dikkat etmesi gereken en fazla 8 maddeyi "
         "öncelik sırasına göre Türkçe olarak listele. Yanıt JSON dizisi olsun: "
         '[{"priority": 1, "project_name": "...", "issue": "...", '
-        '"recommended_action": "...", "severity": "high|medium|low"}]. Veriler: ' + payload
+        '"recommended_action": "...", "severity": "high|medium|low", '
+        '"impact_try": <bu eylemin tahmini finansal etkisi/tasarrufu, yalnızca '
+        'verilerden makul biçimde tahmin edilebiliyorsa sayı (TRY); aksi halde bu '
+        'alanı hiç ekleme>, "impact_label": "<etkinin kısa açıklaması, opsiyonel>"}]. '
+        "Veriler: " + payload
     )
     try:
         result = _call_json(prompt, max_tokens=1500)

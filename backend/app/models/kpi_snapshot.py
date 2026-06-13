@@ -34,3 +34,6 @@ class KPISnapshot(TimestampSoftDeleteMixin, Base):
     projected_profit_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
     total_receivables_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
     net_cash_position_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    # v2 dashboard KPIs — trend history accrues from the date this ships.
+    cost_to_complete_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0, server_default="0")
+    variations_net_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0, server_default="0")
