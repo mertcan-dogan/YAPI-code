@@ -1,4 +1,4 @@
-import { CashFlowChart, PortfolioBudgetChart } from "@/components/charts";
+import { CashFlowChart, PortfolioBudgetChart, PortfolioPerformanceChart } from "@/components/charts";
 import { AIDisclaimer, Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
 import { BudgetBreakdownCard, type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
@@ -32,6 +32,7 @@ interface DashboardData {
   kpi_trends?: Record<string, { series: number[]; delta_pct: number | null }>;
   exec_kpis?: { backlog_try: string; projected_profit_try: string; total_receivables_try: string; net_cash_position_try: string };
   portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
+  portfolio_performance?: { project: string; contract_try: string; actual_try: string; forecast_final_try: string }[];
   budget_breakdown?: { total_try: string; items: BudgetBreakdownItem[] };
   ar_aging?: { not_due_try: string; d1_30_try: string; d31_60_try: string; d60_plus_try: string; total_outstanding_try: string; dso_days: number | null };
   cash_forecast?: { starting_cash_try: string; months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
@@ -178,6 +179,13 @@ export default function DashboardPage() {
       ]
     : [];
 
+  const performanceData = (data?.portfolio_performance ?? []).map((p) => ({
+    project: p.project,
+    contract: toNumber(p.contract_try),
+    actual: toNumber(p.actual_try),
+    forecast: toNumber(p.forecast_final_try),
+  }));
+
   const ar = data?.ar_aging;
   const arTotal = toNumber(ar?.total_outstanding_try);
   const arSeg = (v?: string) => (arTotal > 0 ? (toNumber(v) / arTotal) * 100 : 0);
@@ -281,18 +289,28 @@ export default function DashboardPage() {
       />
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
-      {/* --- Hero: portfolio budget & forecast --- */}
-      <DashboardSection
-        className="mt-8"
-        title="Portföy Bütçe & Tahmin"
-        subtitle="Tüm aktif projelerin toplamı — sözleşme geliri, bütçe, taahhüt, harcanan ve tahmini final maliyet."
-      >
-        <Card>
-          <CardBody>
-            <PortfolioBudgetChart data={budgetChartData} height={320} />
-          </CardBody>
-        </Card>
-      </DashboardSection>
+      {/* --- Hero: portfolio performance + budget breakdown by category --- */}
+      <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3 xl:items-start">
+        <DashboardSection
+          className="xl:col-span-2"
+          title="Portföy Performansı (Gerçekleşen vs Tahmin)"
+          subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
+        >
+          <Card>
+            <CardBody>
+              <PortfolioPerformanceChart data={performanceData} height={340} />
+            </CardBody>
+          </Card>
+        </DashboardSection>
+
+        <DashboardSection
+          title="Bütçe Dağılımı — Maliyet Kategorisi"
+          info="Aktif projelerde girilmiş bütçe kalemlerinin (orijinal + onaylı ek işler) maliyet kategorisine göre toplamıdır. Kategori bazında bütçe girilmemiş projeler dahil olmadığından, “Revize Bütçe” toplamından düşük olabilir."
+          subtitle="Girilmiş bütçe kalemlerinin kategori bazında toplamı."
+        >
+          <BudgetBreakdownCard items={bb?.items ?? []} total={bb?.total_try ?? "0"} loading={loading} />
+        </DashboardSection>
+      </div>
 
       {/* --- Project ranking + AI insights rail --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
@@ -344,14 +362,17 @@ export default function DashboardPage() {
         </DashboardSection>
       </div>
 
-      {/* --- Budget breakdown by cost category + AR aging --- */}
+      {/* --- Portfolio budget totals + AR aging --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
         <DashboardSection
-          title="Bütçe Dağılımı — Maliyet Kategorisi"
-          info="Aktif projelerde girilmiş bütçe kalemlerinin (orijinal + onaylı ek işler) maliyet kategorisine göre toplamıdır. Kategori bazında bütçe girilmemiş projeler dahil olmadığından, yukarıdaki “Revize Bütçe” toplamından düşük olabilir."
-          subtitle="Girilmiş bütçe kalemlerinin kategori bazında toplamı — kategori bütçesi girilmemiş projeler hariç."
+          title="Portföy Bütçe & Tahmin"
+          subtitle="Tüm aktif projelerin toplamı — sözleşme, revize bütçe, taahhüt, harcanan ve tahmini final maliyet."
         >
-          <BudgetBreakdownCard items={bb?.items ?? []} total={bb?.total_try ?? "0"} loading={loading} />
+          <Card>
+            <CardBody>
+              <PortfolioBudgetChart data={budgetChartData} height={300} />
+            </CardBody>
+          </Card>
         </DashboardSection>
 
         <DashboardSection

@@ -195,3 +195,83 @@ export function PortfolioBudgetChart({ data, height = 260 }: { data: { name: str
     </ResponsiveContainer>
   );
 }
+
+// Portföy Performansı — per-project actual vs forecast vs contract (multi-line).
+export function PortfolioPerformanceChart({
+  data,
+  height = 320,
+}: {
+  data: { project: string; contract: number; actual: number; forecast: number }[];
+  height?: number;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 10, right: 14, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
+        <XAxis
+          dataKey="project"
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          tickFormatter={(v: string) => (v && v.length > 12 ? v.slice(0, 12) + "…" : v)}
+          {...axisProps}
+        />
+        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tickLine={false} axisLine={false} {...axisProps} width={70} />
+        <Tooltip content={<ChartTooltip />} />
+        <Legend iconType="plainline" wrapperStyle={{ fontSize: 11, paddingTop: 6 }} />
+        <Line type="monotone" dataKey="actual" name="Gerçekleşen Maliyet" stroke={COLORS.brand} strokeWidth={2.5} dot={{ r: 3 }} />
+        <Line type="monotone" dataKey="forecast" name="Tahmini Final Maliyet" stroke={COLORS.accent} strokeWidth={2} strokeDasharray="5 4" dot={false} />
+        <Line type="monotone" dataKey="contract" name="Sözleşme Bedeli" stroke={COLORS.success} strokeWidth={2} strokeDasharray="5 4" dot={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Bütçe Dağılımı — horizontal bar chart of cost categories (calm cycling palette).
+const BUDGET_BAR_COLORS = [COLORS.brand, COLORS.brand2, COLORS.accent, COLORS.success, COLORS.primary];
+
+function BudgetBreakdownTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs shadow-md">
+      <div className="mb-1 font-semibold text-text-primary">{d.label}</div>
+      <div className="tabular text-text-secondary">
+        {formatCurrencyAbbrev(d.value)} · %{d.pct}
+      </div>
+    </div>
+  );
+}
+
+export function BudgetBreakdownChart({
+  data,
+  mode,
+  height,
+}: {
+  data: { label: string; value: number; pct: number }[];
+  mode: "value" | "pct";
+  height?: number;
+}) {
+  const h = height ?? Math.max(140, data.length * 40 + 16);
+  return (
+    <ResponsiveContainer width="100%" height={h}>
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" horizontal={false} />
+        <XAxis
+          type="number"
+          tickFormatter={(v) => (mode === "pct" ? `%${v}` : formatCurrencyAbbrev(v))}
+          tickLine={false}
+          axisLine={false}
+          {...axisProps}
+        />
+        <YAxis type="category" dataKey="label" width={140} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: COLORS.muted }} />
+        <Tooltip cursor={{ fill: "rgba(37,99,235,0.05)" }} content={<BudgetBreakdownTooltip />} />
+        <Bar dataKey={mode === "pct" ? "pct" : "value"} radius={[0, 4, 4, 0]} maxBarSize={26}>
+          {data.map((_, i) => (
+            <Cell key={i} fill={BUDGET_BAR_COLORS[i % BUDGET_BAR_COLORS.length]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}

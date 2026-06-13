@@ -1,6 +1,7 @@
+import { BudgetBreakdownChart } from "@/components/charts";
 import { Card, CardBody, Skeleton } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
+import { formatCurrency, formatCurrencyAbbrev, toNumber } from "@/utils/format";
 import { Layers } from "lucide-react";
 import { useState } from "react";
 
@@ -11,16 +12,14 @@ export interface BudgetBreakdownItem {
   pct_of_total: string;
 }
 
-/** Calm, cycling bar palette (token colors) — not a rainbow. */
-const BAR_COLORS = ["bg-brand", "bg-brand-2", "bg-accent", "bg-success", "bg-primary"];
-
 type View = "value" | "pct";
 
 /**
- * Bütçe Dağılımı — horizontal-bar breakdown of revised budget by cost category.
- * Bars are always proportional to `pct_of_total`; the "Değer | Bütçe %" toggle
- * only switches the right-hand number. Pure presentational; all aggregation is
- * done server-side (/dashboard → budget_breakdown).
+ * Bütçe Dağılımı — horizontal-bar chart of revised budget by cost category.
+ * The "Değer | Bütçe %" toggle switches the bar axis between TRY and percentage;
+ * bars stay proportional either way. All aggregation is server-side
+ * (/dashboard → budget_breakdown). This is the entered-line-items total and may
+ * differ from the project-level "Revize Bütçe" (see footer label).
  */
 export function BudgetBreakdownCard({
   items,
@@ -33,12 +32,17 @@ export function BudgetBreakdownCard({
 }) {
   const [view, setView] = useState<View>("value");
   const hasData = !loading && items.length > 0;
+  const chartData = items.map((it) => ({
+    label: it.label_tr,
+    value: toNumber(it.value_try),
+    pct: toNumber(it.pct_of_total),
+  }));
 
   return (
     <Card>
       <CardBody>
         {hasData && (
-          <div className="mb-3 flex items-center justify-end">
+          <div className="mb-2 flex items-center justify-end">
             <div className="inline-flex rounded-lg border border-border bg-bg p-0.5 text-xs">
               <button
                 type="button"
@@ -65,15 +69,9 @@ export function BudgetBreakdownCard({
         )}
 
         {loading ? (
-          <div>
+          <div className="space-y-3 py-2">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 py-2.5">
-                <Skeleton className="h-3 w-6" />
-                <div className="flex-1">
-                  <Skeleton className="h-3 w-1/3" />
-                  <Skeleton className="mt-2 h-2 w-full" />
-                </div>
-              </div>
+              <Skeleton key={i} className="h-5 w-full" />
             ))}
           </div>
         ) : items.length === 0 ? (
@@ -87,32 +85,9 @@ export function BudgetBreakdownCard({
             </p>
           </div>
         ) : (
-          <div>
-            {items.map((it, i) => (
-              <div key={it.category} className="flex items-center gap-3 border-b border-border py-2.5 last:border-0">
-                <span className="tabular w-6 shrink-0 text-xs font-medium text-text-disabled">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-text-primary" title={it.label_tr}>
-                      {it.label_tr}
-                    </span>
-                    <span className="tabular shrink-0 text-sm font-semibold text-text-primary" title={formatCurrency(it.value_try)}>
-                      {view === "value" ? formatCurrencyAbbrev(it.value_try) : formatPct(it.pct_of_total)}
-                    </span>
-                  </div>
-                  <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-bg">
-                    <div
-                      className={cn("h-full rounded-full", BAR_COLORS[i % BAR_COLORS.length])}
-                      style={{ width: `${Math.min(toNumber(it.pct_of_total), 100)}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            <div className="mt-1 flex items-center justify-between border-t-2 border-border pt-3">
+          <>
+            <BudgetBreakdownChart data={chartData} mode={view} />
+            <div className="mt-2 flex items-center justify-between border-t-2 border-border pt-3">
               <span className="text-sm font-bold text-primary">Toplam (Bütçe Kalemleri)</span>
               <span className="flex items-baseline gap-2">
                 <span className="tabular text-sm font-bold text-primary" title={formatCurrency(total)}>
@@ -121,7 +96,7 @@ export function BudgetBreakdownCard({
                 <span className="tabular text-xs font-semibold text-text-secondary">100%</span>
               </span>
             </div>
-          </div>
+          </>
         )}
       </CardBody>
     </Card>
