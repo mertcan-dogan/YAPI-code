@@ -246,27 +246,36 @@ function BudgetBreakdownTooltip({ active, payload }: any) {
 export function BudgetBreakdownChart({
   data,
   mode,
-  height,
+  height = 300,
 }: {
   data: { label: string; value: number; pct: number }[];
   mode: "value" | "pct";
   height?: number;
 }) {
-  const h = height ?? Math.max(140, data.length * 40 + 16);
   return (
-    <ResponsiveContainer width="100%" height={h}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" horizontal={false} />
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 64 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
         <XAxis
-          type="number"
+          dataKey="label"
+          interval={0}
+          angle={-40}
+          textAnchor="end"
+          height={70}
+          tickFormatter={(v: string) => (v && v.length > 14 ? v.slice(0, 14) + "…" : v)}
+          tickLine={false}
+          axisLine={false}
+          tick={{ fontSize: 10, fill: COLORS.muted }}
+        />
+        <YAxis
           tickFormatter={(v) => (mode === "pct" ? `%${v}` : formatCurrencyAbbrev(v))}
           tickLine={false}
           axisLine={false}
           {...axisProps}
+          width={56}
         />
-        <YAxis type="category" dataKey="label" width={140} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: COLORS.muted }} />
         <Tooltip cursor={{ fill: "rgba(37,99,235,0.05)" }} content={<BudgetBreakdownTooltip />} />
-        <Bar dataKey={mode === "pct" ? "pct" : "value"} radius={[0, 4, 4, 0]} maxBarSize={26}>
+        <Bar dataKey={mode === "pct" ? "pct" : "value"} radius={[4, 4, 0, 0]} maxBarSize={40}>
           {data.map((_, i) => (
             <Cell key={i} fill={BUDGET_BAR_COLORS[i % BUDGET_BAR_COLORS.length]} />
           ))}

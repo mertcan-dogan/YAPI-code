@@ -484,7 +484,6 @@ export default function DashboardPage() {
         <YapiAIRail
           briefing={briefing}
           briefingState={briefingState}
-          generatedAt={generatedAt}
           onRefresh={handleRefreshBriefing}
           onGoToTasks={() => navigate("/reminders")}
         />
