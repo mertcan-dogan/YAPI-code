@@ -9,6 +9,7 @@ import {
   FileBarChart,
   FileText,
   FolderKanban,
+  HelpCircle,
   History,
   LayoutDashboard,
   LogOut,
@@ -16,6 +17,7 @@ import {
   MessageSquare,
   PlusSquare,
   Plus,
+  Send,
   Settings,
   ScanLine,
   Sparkles,
@@ -30,6 +32,8 @@ import { apiGet } from "@/lib/api";
 import { useProjectStore } from "@/store/project";
 import { NotificationBell } from "@/components/NotificationBell";
 import { CommandPalette } from "@/components/CommandPalette";
+import { Modal } from "@/components/ui";
+import { ROLE_LABELS } from "@/constants";
 
 const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
@@ -85,6 +89,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { activeProjectId, activeProjectName, setActiveProject, clearActiveProject } = useProjectStore();
   const [approvalCount, setApprovalCount] = React.useState(0);
   const [projects, setProjects] = React.useState<{ id: string; name: string; status: string }[]>([]);
+  const [aiQuery, setAiQuery] = React.useState("");
+
+  const askYapiAI = () => {
+    const q = aiQuery.trim();
+    if (!q) return;
+    setAiQuery("");
+    onNavigate?.();
+    navigate("/ai-assistant", { state: { q } });
+  };
 
   // CR-004-H: the active project comes from the URL when on a project page,
   // otherwise from the persisted store — so the submenu survives global pages.
@@ -186,6 +199,30 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           )}
         </div>
       </nav>
+      {/* Yapı AI agent box — inline question that hands off to the AI assistant. */}
+      <div className="border-t border-white/10 px-3 py-3">
+        <div className="rounded-xl bg-white/5 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-brand to-brand-2 text-white">
+              <Sparkles className="h-3.5 w-3.5" />
+            </span>
+            <span className="text-[13px] font-semibold text-white">Yapı AI</span>
+            <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-2">Beta</span>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-lg bg-primary px-2 ring-1 ring-white/10 focus-within:ring-brand-2">
+            <input
+              value={aiQuery}
+              onChange={(e) => setAiQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && askYapiAI()}
+              placeholder="Bir şey sor…"
+              className="min-w-0 flex-1 bg-transparent py-2 text-[13px] text-white placeholder:text-white/40 outline-none"
+            />
+            <button onClick={askYapiAI} disabled={!aiQuery.trim()} className="text-brand-2 disabled:text-white/30" aria-label="Yapı AI'ya sor">
+              <Send className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
       {/* Brand footer — small persistent Yapı mark, shows even when a company logo is set */}
       <div className="flex items-center justify-center gap-1.5 border-t border-white/10 px-5 py-3">
         <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-gradient-to-br from-brand to-brand-2 text-[10px] font-bold leading-none text-white">Y</span>
@@ -316,6 +353,8 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
   const [cmdOpen, setCmdOpen] = React.useState(false);
+  const [helpOpen, setHelpOpen] = React.useState(false);
+  const roleLabel = user?.role ? ROLE_LABELS[user.role] ?? user.role : null;
   React.useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -343,16 +382,30 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
         </button>
       </div>
       <div className="relative flex items-center gap-3">
+        <button
+          onClick={() => setHelpOpen(true)}
+          className="text-text-secondary transition-colors hover:text-primary"
+          aria-label="Yardım"
+          title="Yardım"
+        >
+          <HelpCircle className="h-5 w-5" />
+        </button>
         <NotificationBell />
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-2 text-sm font-medium text-white">
             {user?.full_name?.charAt(0) ?? "K"}
           </div>
-          <span className="hidden text-sm text-text-primary sm:block">{user?.full_name}</span>
+          <span className="hidden flex-col items-start leading-tight sm:flex">
+            <span className="text-sm text-text-primary">{user?.full_name}</span>
+            {roleLabel && <span className="text-[11px] text-text-secondary">{roleLabel}</span>}
+          </span>
         </button>
         {open && (
           <div className="absolute right-0 top-12 w-48 rounded-md border border-border bg-surface py-1 shadow-lg">
             <div className="border-b border-border px-3 py-2 text-xs text-text-secondary">{user?.email}</div>
+            <Link to="/settings" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-bg">
+              <Settings className="h-4 w-4" /> Ayarlar
+            </Link>
             <button
               onClick={async () => {
                 await logout();
@@ -366,6 +419,15 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
         )}
       </div>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      <Modal open={helpOpen} title="Yapı — Hızlı Yardım" onClose={() => setHelpOpen(false)} size="md">
+        <div className="space-y-3 text-sm text-text-primary">
+          <p><span className="font-semibold">Ana Sayfa:</span> tüm aktif projelerinizin finansal portföy görünümü — KPI'lar, performans grafiği, bütçe dağılımı ve gelen belgeler.</p>
+          <p><span className="font-semibold">Filtreler &amp; Tarih:</span> üstteki tarih aralığı ve Filtreler ile panoyu daraltabilirsiniz.</p>
+          <p><span className="font-semibold">Yapı AI:</span> sağ paneldeki veya kenar çubuğundaki kutudan projeleriniz hakkında soru sorabilirsiniz.</p>
+          <p><span className="font-semibold">⌘K / Ctrl+K:</span> hızlı arama ve komut menüsünü açar.</p>
+          <p className="text-text-secondary">Daha fazla yardım için yöneticinizle veya destek ekibiyle iletişime geçin.</p>
+        </div>
+      </Modal>
     </header>
   );
 }

@@ -3,13 +3,15 @@ import { AIDisclaimer, Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
 import { BudgetBreakdownCard, type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
+import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/components/dashboard/DashboardToolbar";
+import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
 import { InsightItem, type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
-import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
 import { DataTable, type Column } from "@/components/DataTable";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
+import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
 import { AlarmClock, Banknote, Building2, CheckCircle2, Info, Layers, PiggyBank, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
@@ -36,6 +38,9 @@ interface DashboardData {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const firstName = useAuth((s) => s.user?.full_name?.split(" ")[0]);
+  // Phase 1: toolbar filter state (threaded into the data fetch in Phase 6).
+  const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
   const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard");
   const [briefing, setBriefing] = useState<BriefingItem[]>([]);
   const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
@@ -209,8 +214,10 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <PageHeader title="Ana Sayfa" subtitle="Tüm aktif projelerin finansal durumu" />
+      <DashboardToolbar firstName={firstName} filters={filters} onChange={setFilters} />
 
+      <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+        <div className="min-w-0 flex-1">
       <AISummaryStrip k={k} briefing={briefing} navigate={navigate} />
 
       {/* --- KPI strip: primary row --- */}
@@ -447,6 +454,10 @@ export default function DashboardPage() {
           </Card>
         </DashboardSection>
       )}
+        </div>
+
+        <YapiAIRail />
+      </div>
     </div>
   );
 }
