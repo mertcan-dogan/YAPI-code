@@ -191,7 +191,7 @@ export function YapiAIRail(props: RailProps) {
           <Sparkles className="h-4 w-4" />
         </button>
       ) : (
-        <aside className="sticky top-6 hidden h-[calc(100vh-7rem)] w-[400px] shrink-0 flex-col self-start overflow-hidden rounded-xl border border-border bg-surface shadow-sm xl:flex">
+        <aside className="sticky top-6 hidden h-[calc(100vh-7rem)] w-[268px] shrink-0 flex-col self-start overflow-hidden rounded-xl border border-border bg-surface shadow-sm xl:flex">
           <RailContent {...props} onClose={() => setCollapsed(true)} />
         </aside>
       )}

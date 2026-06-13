@@ -6,6 +6,7 @@ import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/components/dashboard/DashboardToolbar";
 import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
 import { ApprovalsPanel } from "@/components/dashboard/ApprovalsPanel";
+import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
 import { useFetch } from "@/hooks/useFetch";
@@ -266,6 +267,20 @@ export default function DashboardPage() {
           </DashboardSection>
         )}
       </div>
+
+      {/* --- Incoming documents (full width) --- */}
+      <DashboardSection
+        className="mt-8"
+        title="Gelen Belgeler"
+        subtitle="Son eklenen faturalar, hakedişler ve ek işler."
+        right={
+          <button onClick={() => navigate("/document-capture")} className="text-sm font-medium text-brand hover:underline">
+            Belge Yükle →
+          </button>
+        }
+      >
+        <IncomingWorkflowCard />
+      </DashboardSection>
 
       {/* --- Portfolio budget totals + AR aging --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
