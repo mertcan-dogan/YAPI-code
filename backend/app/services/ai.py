@@ -53,8 +53,11 @@ def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
         return _extract_json(text)
     except AIUnavailable:
         raise
-    except Exception as exc:  # network, rate limit, etc.
-        logger.warning("Claude API call failed: %s", exc)
+    except Exception as exc:  # network, TLS, rate limit, etc.
+        # Log the exception type + message so SSL/cert, auth, and rate-limit
+        # failures are distinguishable in the logs (the user only ever sees the
+        # generic AI_UNAVAILABLE message).
+        logger.warning("Claude API call failed: %s: %s", type(exc).__name__, exc)
         raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
 
 

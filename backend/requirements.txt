@@ -36,6 +36,9 @@ jinja2==3.1.5
 
 # HTTP / utils
 httpx==0.28.1
+# Verify TLS against the OS trust store so outbound HTTPS works behind corporate
+# proxies / AV HTTPS-scanning (e.g. Norton) that re-sign certs with a local root CA.
+truststore==0.10.4
 python-slugify==8.0.4
 python-dateutil==2.9.0.post0
 

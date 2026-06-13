@@ -2,6 +2,20 @@
 import logging
 from contextlib import asynccontextmanager
 
+# Verify TLS against the OS trust store (Windows/macOS/Linux system CAs) rather
+# than only the bundled certifi roots. This is required when a corporate proxy
+# or local antivirus (e.g. Norton "Web/Mail Shield") performs HTTPS scanning and
+# re-signs outbound connections with a local root CA — that root is in the OS
+# store but not in certifi, so otherwise every outbound API call (Anthropic,
+# Resend, …) fails with CERTIFICATE_VERIFY_FAILED. Must run before any HTTPS
+# client is created. No-op on platforms whose system store already matches certifi.
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception:  # pragma: no cover - optional dependency / platform quirks
+    logging.getLogger("yapi").warning("truststore unavailable; falling back to certifi CA bundle")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
