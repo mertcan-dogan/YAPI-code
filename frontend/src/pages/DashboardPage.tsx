@@ -14,7 +14,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, Banknote, CheckCircle2, Hammer, Info, Layers, PiggyBank, PlusSquare, RefreshCw, Sparkles, Target, TrendingUp, Wallet } from "lucide-react";
+import { AlarmClock, CheckCircle2, Hammer, Info, PlusSquare, RefreshCw, Sparkles, Target, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -93,6 +93,9 @@ export default function DashboardPage() {
 
   const k = data?.kpis;
   const marginNum = toNumber(k?.weighted_avg_margin_pct);
+  // True percentage-points change for margin (points, not relative %).
+  const marginSeries = data?.kpi_trends?.weighted_avg_margin_pct?.series;
+  const marginPP = marginSeries && marginSeries.length >= 2 ? marginSeries[marginSeries.length - 1] - marginSeries[0] : null;
 
   const columns: Column<any>[] = [
     {
@@ -163,7 +166,6 @@ export default function DashboardPage() {
     cumulative: toNumber(c.net_cumulative),
   }));
 
-  const ex = data?.exec_kpis;
   const pb = data?.portfolio_budget;
   const bb = data?.budget_breakdown;
   const budgetChartData = pb
@@ -220,7 +222,7 @@ export default function DashboardPage() {
 
       <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
-      <AISummaryStrip k={k} briefing={briefing} navigate={navigate} />
+      <AISummaryStrip k={k} briefing={briefing} navigate={navigate} onOverdueClick={() => setOverdueOpen(true)} />
 
       {/* --- KPI strip: hero row (5) --- */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
@@ -254,8 +256,9 @@ export default function DashboardPage() {
           label="Brüt Kar Marjı"
           value={formatPct(k?.weighted_avg_margin_pct)}
           icon={TrendingUp}
-          series={data?.kpi_trends?.weighted_avg_margin_pct?.series}
-          delta={data?.kpi_trends?.weighted_avg_margin_pct?.delta_pct}
+          series={marginSeries}
+          delta={marginPP}
+          deltaUnit="pp"
           alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null}
           onClick={() => setMarginOpen(true)}
         />
@@ -268,25 +271,6 @@ export default function DashboardPage() {
           series={data?.kpi_trends?.variations_net_try?.series}
           delta={data?.kpi_trends?.variations_net_try?.delta_pct}
         />
-      </div>
-
-      {/* --- KPI strip: executive / operational row (5) --- */}
-      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
-        <KPICard
-          loading={loading}
-          label="Vadesi Geçmiş Ödemeler"
-          value={String(k?.overdue_payment_count ?? 0)}
-          icon={AlarmClock}
-          series={data?.kpi_trends?.overdue_payment_count?.series}
-          delta={data?.kpi_trends?.overdue_payment_count?.delta_pct}
-          invertDelta
-          alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null}
-          onClick={() => setOverdueOpen(true)}
-        />
-        <KPICard loading={loading} label="İş Bakiyesi (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />
-        <KPICard loading={loading} label="Tahmini Tamamlanma Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
-        <KPICard loading={loading} label="Ticari Alacaklar" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} series={data?.kpi_trends?.total_receivables_try?.series} delta={data?.kpi_trends?.total_receivables_try?.delta_pct} />
-        <KPICard loading={loading} label="Net Nakit Pozisyonu" value={formatCurrencyAbbrev(ex?.net_cash_position_try)} valueTitle={formatCurrency(ex?.net_cash_position_try)} icon={Wallet} series={data?.kpi_trends?.net_cash_position_try?.series} delta={data?.kpi_trends?.net_cash_position_try?.delta_pct} alert={toNumber(ex?.net_cash_position_try) < 0 ? "red" : null} />
       </div>
 
       <OverduePaymentsModal
@@ -480,14 +464,14 @@ export default function DashboardPage() {
   );
 }
 
-function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: BriefingItem[]; navigate: (p: string) => void }) {
+function AISummaryStrip({ k, briefing, navigate, onOverdueClick }: { k: any; briefing: BriefingItem[]; navigate: (p: string) => void; onOverdueClick: () => void }) {
   const parts: string[] = [];
   if (k) {
     parts.push(`${k.active_project_count ?? 0} aktif proje`);
     parts.push(`${formatCurrencyAbbrev(k.total_contract_value_try)} portföy`);
     parts.push(`ort. marj ${formatPct(k.weighted_avg_margin_pct)}`);
-    if ((k.overdue_payment_count ?? 0) > 0) parts.push(`${k.overdue_payment_count} vadesi geçmiş ödeme`);
   }
+  const overdue = k?.overdue_payment_count ?? 0;
   const top = briefing.slice(0, 2);
   return (
     <div className="mb-5 flex items-center gap-4 rounded-xl bg-gradient-to-r from-[#1e3a8a] via-[#2563eb] to-[#0891b2] px-4 py-3 text-white shadow-sm">
@@ -498,6 +482,15 @@ function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: BriefingI
         <div className="text-sm font-semibold">AI Özeti · Bugün</div>
         <div className="mt-0.5 text-[13px] leading-snug text-white/90">
           {parts.length ? parts.join(" · ") : "Projeleriniz analiz ediliyor…"}
+          {overdue > 0 && (
+            <button
+              onClick={onOverdueClick}
+              className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-white/20 px-2 py-0.5 align-middle text-[11px] font-medium hover:bg-white/30"
+              title="Vadesi geçmiş ödemeleri görüntüle"
+            >
+              <AlarmClock className="h-3 w-3" /> {overdue} vadesi geçmiş ödeme
+            </button>
+          )}
           {top.length > 0 && (
             <span className="ml-1.5 inline-flex flex-wrap gap-1.5 align-middle">
               {top.map((t, i) => (

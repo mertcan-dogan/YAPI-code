@@ -12,7 +12,8 @@ interface KPICardProps {
   loading?: boolean;
   icon?: LucideIcon; // top-right accent icon (shown when no delta yet)
   series?: number[]; // real recorded history for the sparkline
-  delta?: number | null; // real % change vs window start
+  delta?: number | null; // real change vs window start
+  deltaUnit?: "%" | "pp"; // "%" = relative change (default); "pp" = percentage points (e.g. margin)
   invertDelta?: boolean; // for metrics where "up" is bad (e.g. overdue)
   onClick?: () => void; // CR-004-D / CR-004-K: clickable drill-down
 }
@@ -32,7 +33,7 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
 }
 
 // KPI Card — Section 6.5
-export function KPICard({ label, value, valueTitle, unit, subtitle, alert, loading, icon: Icon, series, delta, invertDelta, onClick }: KPICardProps) {
+export function KPICard({ label, value, valueTitle, unit, subtitle, alert, loading, icon: Icon, series, delta, deltaUnit = "%", invertDelta, onClick }: KPICardProps) {
   if (loading) {
     return (
       <div className="rounded-xl border border-border bg-surface p-4 shadow-sm">
@@ -64,7 +65,7 @@ export function KPICard({ label, value, valueTitle, unit, subtitle, alert, loadi
         {hasDelta ? (
           <span className={cn("flex items-center gap-0.5 text-xs font-medium", deltaColor)}>
             {delta! >= 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
-            {Math.abs(delta!).toFixed(1)}%
+            {Math.abs(delta!).toFixed(1)}{deltaUnit === "pp" ? " pp" : "%"}
           </span>
         ) : (
           Icon && <Icon className="h-4 w-4 text-text-disabled" />
