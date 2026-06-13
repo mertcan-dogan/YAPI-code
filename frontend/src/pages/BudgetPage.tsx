@@ -220,7 +220,7 @@ export default function BudgetPage() {
             <input
               ref={aiFileRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
               hidden
               onChange={(e) => {
                 if (e.target.files?.[0]) setAiImportFile(e.target.files[0]);
@@ -230,7 +230,7 @@ export default function BudgetPage() {
             <input
               ref={fileRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
               hidden
               onChange={(e) => {
                 if (e.target.files?.[0]) setImportFile(e.target.files[0]);
