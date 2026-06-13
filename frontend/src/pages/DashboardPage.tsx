@@ -17,8 +17,24 @@ import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
 import { AlarmClock, Hammer, PlusSquare, Target, TrendingUp, Wallet } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
+/** Map the toolbar filters to /dashboard query params (Phase 0 backend). */
+function filtersToParams(f: DashboardFilters): Record<string, string> {
+  const params: Record<string, string> = {};
+  if (f.rag.length) params.rag = f.rag.join(",");
+  if (f.range !== "all") {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const from = f.range === "this_month" ? new Date(y, m, 1) : f.range === "last_3_months" ? new Date(y, m - 2, 1) : new Date(y, 0, 1);
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    params.date_from = iso(from);
+    params.date_to = iso(now);
+  }
+  return params;
+}
 
 interface DashboardData {
   kpis: {
@@ -45,9 +61,11 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const firstName = useAuth((s) => s.user?.full_name?.split(" ")[0]);
   const isDirector = useAuth((s) => s.user?.role === "director");
-  // Phase 1: toolbar filter state (threaded into the data fetch in Phase 6).
+  // Toolbar filters are threaded into the /dashboard query so the KPIs, charts
+  // and tables re-query when they change.
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
-  const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard");
+  const dashboardParams = useMemo(() => filtersToParams(filters), [filters]);
+  const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard", dashboardParams);
   const [briefing, setBriefing] = useState<BriefingItem[]>([]);
   const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
