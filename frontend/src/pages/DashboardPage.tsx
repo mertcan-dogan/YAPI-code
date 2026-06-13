@@ -14,7 +14,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, Banknote, Building2, CheckCircle2, Info, Layers, PiggyBank, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import { AlarmClock, Banknote, CheckCircle2, Hammer, Info, Layers, PiggyBank, PlusSquare, RefreshCw, Sparkles, Target, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -24,6 +24,8 @@ interface DashboardData {
     total_contract_value_try: string;
     weighted_avg_margin_pct: string;
     overdue_payment_count: number;
+    cost_to_complete_try: string;
+    variations_net_try: string;
   };
   projects: any[];
   cashflow_chart: { month: string; out: string; in: string; net_cumulative: string }[];
@@ -220,20 +222,11 @@ export default function DashboardPage() {
         <div className="min-w-0 flex-1">
       <AISummaryStrip k={k} briefing={briefing} navigate={navigate} />
 
-      {/* --- KPI strip: primary row --- */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      {/* --- KPI strip: hero row (5) --- */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         <KPICard
           loading={loading}
-          label="Aktif Proje Sayısı"
-          value={String(k?.active_project_count ?? 0)}
-          icon={Building2}
-          series={data?.kpi_trends?.active_project_count?.series}
-          delta={data?.kpi_trends?.active_project_count?.delta_pct}
-          onClick={() => navigate("/projects")}
-        />
-        <KPICard
-          loading={loading}
-          label="Toplam Sözleşme Değeri"
+          label="Gelir (Sözleşme Toplamı)"
           value={formatCurrencyAbbrev(k?.total_contract_value_try)}
           valueTitle={formatCurrency(k?.total_contract_value_try)}
           icon={Wallet}
@@ -242,7 +235,23 @@ export default function DashboardPage() {
         />
         <KPICard
           loading={loading}
-          label="Ağırlıklı Ort. Kar Marjı"
+          label="Tamamlanma Maliyeti"
+          value={formatCurrencyAbbrev(k?.cost_to_complete_try)}
+          valueTitle={formatCurrency(k?.cost_to_complete_try)}
+          icon={Hammer}
+          series={data?.kpi_trends?.cost_to_complete_try?.series}
+          delta={data?.kpi_trends?.cost_to_complete_try?.delta_pct}
+        />
+        <KPICard
+          loading={loading}
+          label="Tahmini Final Maliyet"
+          value={formatCurrencyAbbrev(pb?.forecast_final_cost_try)}
+          valueTitle={formatCurrency(pb?.forecast_final_cost_try)}
+          icon={Target}
+        />
+        <KPICard
+          loading={loading}
+          label="Brüt Kar Marjı"
           value={formatPct(k?.weighted_avg_margin_pct)}
           icon={TrendingUp}
           series={data?.kpi_trends?.weighted_avg_margin_pct?.series}
@@ -250,6 +259,19 @@ export default function DashboardPage() {
           alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null}
           onClick={() => setMarginOpen(true)}
         />
+        <KPICard
+          loading={loading}
+          label="Ek İşler (Net)"
+          value={formatCurrencyAbbrev(k?.variations_net_try)}
+          valueTitle={formatCurrency(k?.variations_net_try)}
+          icon={PlusSquare}
+          series={data?.kpi_trends?.variations_net_try?.series}
+          delta={data?.kpi_trends?.variations_net_try?.delta_pct}
+        />
+      </div>
+
+      {/* --- KPI strip: executive / operational row (5) --- */}
+      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         <KPICard
           loading={loading}
           label="Vadesi Geçmiş Ödemeler"
@@ -261,10 +283,6 @@ export default function DashboardPage() {
           alert={(k?.overdue_payment_count ?? 0) > 0 ? "red" : null}
           onClick={() => setOverdueOpen(true)}
         />
-      </div>
-
-      {/* --- KPI strip: secondary (executive) row --- */}
-      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard loading={loading} label="İş Bakiyesi (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />
         <KPICard loading={loading} label="Tahmini Tamamlanma Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
         <KPICard loading={loading} label="Ticari Alacaklar" value={formatCurrencyAbbrev(ex?.total_receivables_try)} valueTitle={formatCurrency(ex?.total_receivables_try)} icon={Banknote} series={data?.kpi_trends?.total_receivables_try?.series} delta={data?.kpi_trends?.total_receivables_try?.delta_pct} />
