@@ -12,6 +12,17 @@ import { useNavigate } from "react-router-dom";
 
 const STEPS = ["Proje Bilgileri", "Finansal Bilgiler", "Zaman Planı", "Bütçe Dağılımı"];
 
+// Revenue/billing models — Turkish construction. Sales-based models (kat karşılığı,
+// yap-sat, hasılat) have no hakediş/retention; revenue comes from unit sales.
+const REVENUE_MODELS: { value: string; label: string; employerLabel: string; contractLabel: string; showRetention: boolean; showShare: boolean; showUnits: boolean }[] = [
+  { value: "hakedis", label: "Hakediş (İşverene İlerleme Ödemeli)", employerLabel: "İşveren Adı", contractLabel: "Sözleşme Değeri (TRY)", showRetention: true, showShare: false, showUnits: false },
+  { value: "maliyet_kar", label: "Maliyet + Kâr (Cost-Plus)", employerLabel: "İşveren Adı", contractLabel: "Tahmini Sözleşme Bedeli (TRY)", showRetention: true, showShare: false, showUnits: false },
+  { value: "kat_karsiligi", label: "Kat Karşılığı / Kentsel Dönüşüm", employerLabel: "Arsa / Mülk Sahibi", contractLabel: "Tahmini Toplam Satış Geliri (TRY)", showRetention: false, showShare: true, showUnits: true },
+  { value: "yap_sat", label: "Yap-Sat (Kendi Hesabına)", employerLabel: "Geliştirici / Mülk Sahibi", contractLabel: "Tahmini Toplam Satış Geliri (TRY)", showRetention: false, showShare: false, showUnits: true },
+  { value: "hasilat_paylasimi", label: "Hasılat Paylaşımı", employerLabel: "Arsa / Mülk Sahibi", contractLabel: "Tahmini Toplam Hasılat (TRY)", showRetention: false, showShare: true, showUnits: false },
+];
+const suggestModel = (t: string) => (t === "urban_transformation" ? "kat_karsiligi" : "hakedis");
+
 export default function NewProjectPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
@@ -24,6 +35,7 @@ export default function NewProjectPage() {
     name: "",
     project_code: "",
     project_type: "road",
+    revenue_model: "hakedis",
     custom_project_type: "",
     client_name: "",
     client_contact: "",
@@ -35,6 +47,8 @@ export default function NewProjectPage() {
     retention_pct: "10",
     contingency_pct: "5",
     target_margin_pct: "",
+    contractor_share_pct: "",
+    unit_count: "",
     original_budget_try: "",
     start_date: "",
     planned_end_date: "",
@@ -42,6 +56,7 @@ export default function NewProjectPage() {
   const [budgets, setBudgets] = useState<Record<string, string>>({});
   // CR-001-D: ad-hoc custom categories added in the wizard.
   const [customCats, setCustomCats] = useState<{ name: string; amount: string }[]>([]);
+  const model = REVENUE_MODELS.find((m) => m.value === form.revenue_model) ?? REVENUE_MODELS[0];
 
   const set = (k: string, v: string) => {
     setForm((f: any) => ({ ...f, [k]: v }));
@@ -109,6 +124,10 @@ export default function NewProjectPage() {
         contract_value_eur: form.contract_value_eur || null,
         eur_try_rate: form.eur_try_rate || "1.0",
         target_margin_pct: form.target_margin_pct || null,
+        revenue_model: form.revenue_model,
+        retention_pct: model.showRetention ? form.retention_pct : "0",
+        contractor_share_pct: model.showShare && form.contractor_share_pct ? form.contractor_share_pct : null,
+        unit_count: model.showUnits && form.unit_count ? parseInt(form.unit_count, 10) : null,
       };
       const project = await apiPost<{ id: string }>("/projects", payload);
       // Save any per-category budgets entered in step 4.
@@ -169,7 +188,7 @@ export default function NewProjectPage() {
                 <Input value={form.project_code} onChange={(e) => set("project_code", e.target.value)} />
               </Field>
               <Field label="Proje Türü" required>
-                <Select value={form.project_type} onChange={(e) => set("project_type", e.target.value)}>
+                <Select value={form.project_type} onChange={(e) => { set("project_type", e.target.value); set("revenue_model", suggestModel(e.target.value)); }}>
                   {PROJECT_TYPE_GROUPS.map((g) => (
                     <optgroup key={g.category} label={g.category}>
                       {g.options.map((o) => (
@@ -197,7 +216,15 @@ export default function NewProjectPage() {
                   />
                 </Field>
               )}
-              <Field label="İşveren Adı" required>
+              <Field label="Gelir Modeli" required>
+                <Select value={form.revenue_model} onChange={(e) => set("revenue_model", e.target.value)}>
+                  {REVENUE_MODELS.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </Select>
+                <p className="mt-1 text-xs text-text-secondary">Proje türüne göre otomatik seçildi — gerekirse değiştirin. Satış bazlı modellerde hakediş yerine satış geliri esas alınır.</p>
+              </Field>
+              <Field label={model.employerLabel} required>
                 <Input value={form.client_name} onChange={(e) => set("client_name", e.target.value)} />
               </Field>
               <Field label="İşveren İrtibat Kişisi">
@@ -214,7 +241,7 @@ export default function NewProjectPage() {
 
           {step === 1 && (
             <>
-              <Field label="Sözleşme Değeri (TRY)" required>
+              <Field label={model.contractLabel} required>
                 <Input type="number" value={form.contract_value_try} onChange={(e) => set("contract_value_try", e.target.value)} />
               </Field>
               <Field label="Onaylı Bütçe (TRY)">
@@ -228,10 +255,22 @@ export default function NewProjectPage() {
                   <Input type="number" value={form.eur_try_rate} onChange={(e) => set("eur_try_rate", e.target.value)} />
                 </Field>
               )}
-              <div className="grid grid-cols-3 gap-3">
-                <Field label="Hakediş Kesintisi %">
-                  <Input type="number" value={form.retention_pct} onChange={(e) => set("retention_pct", e.target.value)} />
-                </Field>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {model.showRetention && (
+                  <Field label="Hakediş Kesintisi %">
+                    <Input type="number" value={form.retention_pct} onChange={(e) => set("retention_pct", e.target.value)} />
+                  </Field>
+                )}
+                {model.showShare && (
+                  <Field label="Müteahhit Payı %">
+                    <Input type="number" value={form.contractor_share_pct} onChange={(e) => set("contractor_share_pct", e.target.value)} placeholder="örn. 50" />
+                  </Field>
+                )}
+                {model.showUnits && (
+                  <Field label="Bağımsız Bölüm / Daire Sayısı">
+                    <Input type="number" value={form.unit_count} onChange={(e) => set("unit_count", e.target.value)} placeholder="örn. 24" />
+                  </Field>
+                )}
                 <div>
                   <Label className="flex items-center gap-1">
                     Öngörülemeyen Giderler %

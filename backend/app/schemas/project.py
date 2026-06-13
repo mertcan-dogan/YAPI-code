@@ -13,7 +13,10 @@ class ProjectCreate(BaseModel):
     name: str
     project_code: str
     project_type: str
+    revenue_model: str = "hakedis"
     custom_project_type: str | None = None
+    contractor_share_pct: Decimal | None = None
+    unit_count: int | None = None
     client_name: str
     client_contact: str | None = None
     contract_number: str | None = None
@@ -40,6 +43,14 @@ class ProjectCreate(BaseModel):
     def _type(cls, v: str) -> str:
         if v not in PROJECT_TYPES:
             raise ValueError("Geçersiz proje türü")
+        return v
+
+    @field_validator("revenue_model")
+    @classmethod
+    def _revenue_model(cls, v: str) -> str:
+        allowed = {"hakedis", "kat_karsiligi", "yap_sat", "hasilat_paylasimi", "maliyet_kar"}
+        if v not in allowed:
+            raise ValueError("Geçersiz gelir modeli")
         return v
 
     @field_validator("contract_value_try")
