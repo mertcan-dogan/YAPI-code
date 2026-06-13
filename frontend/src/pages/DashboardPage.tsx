@@ -5,12 +5,9 @@ import { type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdown
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/components/dashboard/DashboardToolbar";
 import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
-import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
 import { ApprovalsPanel } from "@/components/dashboard/ApprovalsPanel";
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
-import { RAGIndicator } from "@/components/RAGIndicator";
-import { DataTable, type Column } from "@/components/DataTable";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
@@ -65,7 +62,7 @@ export default function DashboardPage() {
   // and tables re-query when they change.
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
   const dashboardParams = useMemo(() => filtersToParams(filters), [filters]);
-  const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard", dashboardParams);
+  const { data, loading, refetch } = useFetch<DashboardData>("/dashboard", dashboardParams);
   const [briefing, setBriefing] = useState<BriefingItem[]>([]);
   const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -118,59 +115,6 @@ export default function DashboardPage() {
   // True percentage-points change for margin (points, not relative %).
   const marginSeries = data?.kpi_trends?.weighted_avg_margin_pct?.series;
   const marginPP = marginSeries && marginSeries.length >= 2 ? marginSeries[marginSeries.length - 1] - marginSeries[0] : null;
-
-  // Proje Performans Sıralaması — compact margin-ranked list (rank baked in).
-  const rankedProjects = [...(data?.projects ?? [])]
-    .sort((a, b) => toNumber(b.margin_pct) - toNumber(a.margin_pct))
-    .map((r, i) => ({ ...r, _rank: i + 1 }));
-
-  const RISK_MAP: Record<string, { l: string; c: string }> = {
-    green: { l: "Düşük", c: "bg-green-50 text-success" },
-    amber: { l: "Orta", c: "bg-amber-50 text-warning" },
-    red: { l: "Yüksek", c: "bg-red-50 text-danger" },
-  };
-
-  const columns: Column<any>[] = [
-    { key: "_rank", header: "#", maxWidth: 44, render: (r) => <span className="tabular text-text-secondary">{r._rank}</span> },
-    {
-      key: "name",
-      header: "Proje",
-      sortable: true,
-      maxWidth: 220,
-      render: (r) => (
-        <span className="flex items-center gap-2 truncate font-medium text-primary" title={r.name}>
-          <RAGIndicator status={r.rag_status} reason={r.rag_label_tr} /> <span className="truncate">{r.name}</span>
-        </span>
-      ),
-    },
-    {
-      key: "margin_pct",
-      header: "Marj % (Tahmini)",
-      align: "right",
-      sortable: true,
-      sortValue: (r) => toNumber(r.margin_pct),
-      render: (r) => {
-        const m = toNumber(r.margin_pct);
-        const color = m < 5 ? "text-danger" : m < 10 ? "text-accent" : "text-success";
-        return <span className={`font-semibold ${color}`}>{formatPct(r.margin_pct)}</span>;
-      },
-    },
-    {
-      key: "margin_try",
-      header: "Marj ₺ (Tahmini)",
-      align: "right",
-      sortValue: (r) => toNumber(r.margin_try),
-      render: (r) => <span className={toNumber(r.margin_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.margin_try)}</span>,
-    },
-    {
-      key: "rag_status",
-      header: "Risk",
-      render: (r) => {
-        const x = RISK_MAP[r.rag_status] ?? { l: r.rag_label_tr, c: "bg-bg text-text-secondary" };
-        return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${x.c}`}>{x.l}</span>;
-      },
-    },
-  ];
 
   const chartData = (data?.cashflow_chart ?? []).map((c) => ({
     month: c.month,
@@ -303,7 +247,7 @@ export default function DashboardPage() {
         >
           <Card>
             <CardBody>
-              <PortfolioPerformanceChart data={performanceData} height={340} />
+              <PortfolioPerformanceChart data={performanceData} height={240} />
             </CardBody>
           </Card>
         </DashboardSection>
@@ -322,44 +266,6 @@ export default function DashboardPage() {
           </DashboardSection>
         )}
       </div>
-
-      {/* --- Project performance ranking (full width; AI moved to the rail) --- */}
-      <DashboardSection
-        className="mt-8"
-        title="Proje Performans Sıralaması"
-        subtitle="Tahmini kar marjına göre sıralı aktif projeler."
-        right={
-          <button onClick={() => navigate("/projects")} className="text-sm font-medium text-brand hover:underline">
-            Tüm projeler →
-          </button>
-        }
-      >
-        <DataTable
-          columns={columns}
-          rows={rankedProjects}
-          loading={loading}
-          error={error}
-          onRetry={refetch}
-          minWidth={560}
-          emptyMessage="Henüz proje yok. İlk projenizi oluşturun."
-          emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }}
-          onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
-        />
-      </DashboardSection>
-
-      {/* --- Incoming documents (full width) --- */}
-      <DashboardSection
-        className="mt-8"
-        title="Gelen Belgeler"
-        subtitle="Son eklenen faturalar, hakedişler ve ek işler."
-        right={
-          <button onClick={() => navigate("/document-capture")} className="text-sm font-medium text-brand hover:underline">
-            Belge Yükle →
-          </button>
-        }
-      >
-        <IncomingWorkflowCard />
-      </DashboardSection>
 
       {/* --- Portfolio budget totals + AR aging --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">

@@ -10,10 +10,63 @@ import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format"
 import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+const RISK_MAP: Record<string, { l: string; c: string }> = {
+  green: { l: "Düşük", c: "bg-green-50 text-success" },
+  amber: { l: "Orta", c: "bg-amber-50 text-warning" },
+  red: { l: "Yüksek", c: "bg-red-50 text-danger" },
+};
+
 export default function ProjectsListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { data, loading, error, refetch } = useFetch<Project[]>("/projects");
+
+  // Proje Performans Sıralaması — projects ranked by estimated margin (desc).
+  const ranked = [...(data ?? [])]
+    .sort((a, b) => toNumber(b.financials?.margin_pct) - toNumber(a.financials?.margin_pct))
+    .map((r, i) => ({ ...r, _rank: i + 1 }));
+
+  const rankingColumns: Column<any>[] = [
+    { key: "_rank", header: "#", maxWidth: 44, render: (r) => <span className="tabular text-text-secondary">{r._rank}</span> },
+    {
+      key: "name",
+      header: "Proje",
+      sortable: true,
+      render: (r) => (
+        <span className="flex items-center gap-2 truncate font-medium text-primary" title={r.name}>
+          {r.financials && <RAGIndicator status={r.financials.rag_status} reason={r.financials.rag_reason_tr} />}
+          <span className="truncate">{r.name}</span>
+        </span>
+      ),
+    },
+    {
+      key: "margin_pct",
+      header: "Marj % (Tahmini)",
+      align: "right",
+      sortable: true,
+      sortValue: (r) => toNumber(r.financials?.margin_pct),
+      render: (r) => {
+        const m = toNumber(r.financials?.margin_pct);
+        const c = m < 5 ? "text-danger" : m < 10 ? "text-accent" : "text-success";
+        return <span className={`font-semibold ${c}`}>{formatPct(r.financials?.margin_pct)}</span>;
+      },
+    },
+    {
+      key: "margin_try",
+      header: "Marj ₺ (Tahmini)",
+      align: "right",
+      sortValue: (r) => toNumber(r.financials?.current_profit_try),
+      render: (r) => <span className={toNumber(r.financials?.current_profit_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.financials?.current_profit_try)}</span>,
+    },
+    {
+      key: "risk",
+      header: "Risk",
+      render: (r) => {
+        const x = RISK_MAP[r.financials?.rag_status] ?? { l: "—", c: "bg-bg text-text-secondary" };
+        return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${x.c}`}>{x.l}</span>;
+      },
+    },
+  ];
 
   const columns: Column<Project>[] = [
     {
@@ -57,6 +110,22 @@ export default function ProjectsListPage() {
           )
         }
       />
+
+      {/* Proje Performans Sıralaması — moved here from Ana Sayfa. */}
+      <h2 className="mb-3 text-lg font-semibold text-primary">Proje Performans Sıralaması</h2>
+      <p className="mb-3 -mt-2 text-xs text-text-secondary">Tahmini kar marjına göre sıralı projeler.</p>
+      <DataTable
+        columns={rankingColumns}
+        rows={ranked}
+        loading={loading}
+        error={error}
+        onRetry={refetch}
+        minWidth={560}
+        emptyMessage="Henüz proje yok."
+        onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
+      />
+
+      <h2 className="mb-3 mt-8 text-lg font-semibold text-primary">Tüm Projeler</h2>
       <DataTable
         columns={columns}
         rows={data ?? []}
