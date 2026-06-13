@@ -1,7 +1,7 @@
 import { CashFlowChart, PortfolioBudgetChart, PortfolioPerformanceChart } from "@/components/charts";
 import { Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
-import { BudgetBreakdownCard, type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
+import { type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/components/dashboard/DashboardToolbar";
 import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
@@ -180,7 +180,6 @@ export default function DashboardPage() {
   }));
 
   const pb = data?.portfolio_budget;
-  const bb = data?.budget_breakdown;
   const budgetChartData = pb
     ? [
         { name: "Sözleşme", value: toNumber(pb.contract_try), fill: "#059669" },
@@ -295,10 +294,10 @@ export default function DashboardPage() {
       />
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
-      {/* --- Hero: portfolio performance + budget breakdown by category --- */}
+      {/* --- Hero: portfolio performance + pending approvals (director) --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3 xl:items-start">
         <DashboardSection
-          className="xl:col-span-2"
+          className={isDirector ? "xl:col-span-2" : "xl:col-span-3"}
           title="Portföy Performansı (Gerçekleşen vs Tahmin)"
           subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
         >
@@ -309,13 +308,19 @@ export default function DashboardPage() {
           </Card>
         </DashboardSection>
 
-        <DashboardSection
-          title="Bütçe Dağılımı — Maliyet Kategorisi"
-          info="Aktif projelerde girilmiş bütçe kalemlerinin (orijinal + onaylı ek işler) maliyet kategorisine göre toplamıdır. Kategori bazında bütçe girilmemiş projeler dahil olmadığından, “Revize Bütçe” toplamından düşük olabilir."
-          subtitle="Girilmiş bütçe kalemlerinin kategori bazında toplamı."
-        >
-          <BudgetBreakdownCard items={bb?.items ?? []} total={bb?.total_try ?? "0"} loading={loading} />
-        </DashboardSection>
+        {isDirector && (
+          <DashboardSection
+            title="Onay Bekleyenler"
+            subtitle="Onayınızı bekleyen işlemler."
+            right={
+              <button onClick={() => navigate("/approvals")} className="text-sm font-medium text-brand hover:underline">
+                Tüm onaylar →
+              </button>
+            }
+          >
+            <ApprovalsPanel onGoToApprovals={() => navigate("/approvals")} />
+          </DashboardSection>
+        )}
       </div>
 
       {/* --- Project performance ranking (full width; AI moved to the rail) --- */}
@@ -342,27 +347,19 @@ export default function DashboardPage() {
         />
       </DashboardSection>
 
-      {/* --- Incoming documents + pending approvals (director) --- */}
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
-        <DashboardSection
-          className={isDirector ? "lg:col-span-2" : "lg:col-span-3"}
-          title="Gelen Belgeler"
-          subtitle="Son eklenen faturalar, hakedişler ve ek işler."
-          right={
-            <button onClick={() => navigate("/document-capture")} className="text-sm font-medium text-brand hover:underline">
-              Belge Yükle →
-            </button>
-          }
-        >
-          <IncomingWorkflowCard />
-        </DashboardSection>
-
-        {isDirector && (
-          <DashboardSection title="Onay Bekleyenler" subtitle="Onayınızı bekleyen işlemler.">
-            <ApprovalsPanel onGoToApprovals={() => navigate("/approvals")} />
-          </DashboardSection>
-        )}
-      </div>
+      {/* --- Incoming documents (full width) --- */}
+      <DashboardSection
+        className="mt-8"
+        title="Gelen Belgeler"
+        subtitle="Son eklenen faturalar, hakedişler ve ek işler."
+        right={
+          <button onClick={() => navigate("/document-capture")} className="text-sm font-medium text-brand hover:underline">
+            Belge Yükle →
+          </button>
+        }
+      >
+        <IncomingWorkflowCard />
+      </DashboardSection>
 
       {/* --- Portfolio budget totals + AR aging --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
