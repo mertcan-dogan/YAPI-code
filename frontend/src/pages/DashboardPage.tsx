@@ -1,5 +1,5 @@
 import { CashFlowChart, PortfolioBudgetChart, PortfolioPerformanceChart } from "@/components/charts";
-import { AIDisclaimer, Card, CardBody } from "@/components/ui";
+import { Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
 import { BudgetBreakdownCard, type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
@@ -7,7 +7,7 @@ import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/comp
 import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
 import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
 import { ApprovalsPanel } from "@/components/dashboard/ApprovalsPanel";
-import { InsightItem, type BriefingItem } from "@/components/dashboard/InsightItem";
+import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
 import { RAGIndicator } from "@/components/RAGIndicator";
 import { DataTable, type Column } from "@/components/DataTable";
@@ -15,8 +15,8 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
-import { formatCurrency, formatCurrencyAbbrev, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, CheckCircle2, Hammer, Info, PlusSquare, RefreshCw, Sparkles, Target, TrendingUp, Wallet } from "lucide-react";
+import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
+import { AlarmClock, Hammer, PlusSquare, Target, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -202,21 +202,7 @@ export default function DashboardPage() {
     cumulative: toNumber(mo.cumulative_try),
   }));
 
-  // Header slot for the AI insights rail: last-updated timestamp + manual refresh.
-  const briefingRight = (
-    <div className="flex items-center gap-2">
-      {generatedAt && <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(generatedAt)}</span>}
-      <button
-        onClick={handleRefreshBriefing}
-        disabled={briefingState === "loading"}
-        title="Yenile"
-        className="rounded p-1 text-text-secondary hover:text-primary disabled:opacity-50"
-        aria-label="Yenile"
-      >
-        <RefreshCw className={`h-3.5 w-3.5 ${briefingState === "loading" ? "animate-spin" : ""}`} />
-      </button>
-    </div>
-  );
+  const overdueCount = k?.overdue_payment_count ?? 0;
 
   return (
     <div>
@@ -224,7 +210,15 @@ export default function DashboardPage() {
 
       <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
-      <AISummaryStrip k={k} briefing={briefing} navigate={navigate} onOverdueClick={() => setOverdueOpen(true)} />
+      {overdueCount > 0 && (
+        <button
+          onClick={() => setOverdueOpen(true)}
+          className="mb-5 flex w-full items-center gap-2 rounded-xl border-l-4 border-danger bg-red-50 px-4 py-2.5 text-left text-sm font-medium text-danger transition-colors hover:brightness-95"
+        >
+          <AlarmClock className="h-4 w-4 shrink-0" />
+          {overdueCount} vadesi geçmiş ödeme — görüntüle →
+        </button>
+      )}
 
       {/* --- KPI strip: hero row (5) --- */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
@@ -306,60 +300,29 @@ export default function DashboardPage() {
         </DashboardSection>
       </div>
 
-      {/* --- Project ranking + AI insights rail --- */}
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
-        <DashboardSection
-          className="lg:col-span-2"
-          title="Proje Performans Sıralaması"
-          subtitle="Tahmini kar marjına göre sıralı aktif projeler."
-          right={
-            <button onClick={() => navigate("/projects")} className="text-sm font-medium text-brand hover:underline">
-              Tüm projeler →
-            </button>
-          }
-        >
-          <DataTable
-            columns={columns}
-            rows={rankedProjects}
-            loading={loading}
-            error={error}
-            onRetry={refetch}
-            minWidth={560}
-            emptyMessage="Henüz proje yok. İlk projenizi oluşturun."
-            emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }}
-            onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
-          />
-        </DashboardSection>
-
-        <DashboardSection className="lg:sticky lg:top-6" icon={Sparkles} title="Bugün Ne Yapmalısın" right={briefingRight}>
-          <Card>
-            <CardBody className="space-y-3">
-              {briefingState === "loading" && (
-                <div className="flex items-center gap-2 rounded-md bg-navy-50 px-3 py-2 text-sm text-brand">
-                  <span className="h-2 w-2 animate-pulse rounded-full bg-brand" />
-                  Yapay zeka projelerinizi analiz ediyor…
-                </div>
-              )}
-              {briefingState === "error" && (
-                <div className="flex items-center gap-2 rounded-md bg-bg px-3 py-2 text-sm text-text-secondary">
-                  <Info className="h-4 w-4" />
-                  Yapay zeka şu an kullanılamıyor. Lütfen bekleyin.
-                </div>
-              )}
-              {briefingState === "ready" && briefing.length === 0 && (
-                <div className="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-sm text-success">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Bugün için öncelikli işlem bulunmuyor.
-                </div>
-              )}
-              {briefing.slice(0, 8).map((item, i) => (
-                <InsightItem key={i} item={item} />
-              ))}
-              {briefingState === "ready" && <AIDisclaimer />}
-            </CardBody>
-          </Card>
-        </DashboardSection>
-      </div>
+      {/* --- Project performance ranking (full width; AI moved to the rail) --- */}
+      <DashboardSection
+        className="mt-8"
+        title="Proje Performans Sıralaması"
+        subtitle="Tahmini kar marjına göre sıralı aktif projeler."
+        right={
+          <button onClick={() => navigate("/projects")} className="text-sm font-medium text-brand hover:underline">
+            Tüm projeler →
+          </button>
+        }
+      >
+        <DataTable
+          columns={columns}
+          rows={rankedProjects}
+          loading={loading}
+          error={error}
+          onRetry={refetch}
+          minWidth={560}
+          emptyMessage="Henüz proje yok. İlk projenizi oluşturun."
+          emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }}
+          onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
+        />
+      </DashboardSection>
 
       {/* --- Incoming documents + pending approvals (director) --- */}
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
@@ -500,53 +463,14 @@ export default function DashboardPage() {
       )}
         </div>
 
-        <YapiAIRail />
+        <YapiAIRail
+          briefing={briefing}
+          briefingState={briefingState}
+          generatedAt={generatedAt}
+          onRefresh={handleRefreshBriefing}
+          onGoToTasks={() => navigate("/reminders")}
+        />
       </div>
-    </div>
-  );
-}
-
-function AISummaryStrip({ k, briefing, navigate, onOverdueClick }: { k: any; briefing: BriefingItem[]; navigate: (p: string) => void; onOverdueClick: () => void }) {
-  const parts: string[] = [];
-  if (k) {
-    parts.push(`${k.active_project_count ?? 0} aktif proje`);
-    parts.push(`${formatCurrencyAbbrev(k.total_contract_value_try)} portföy`);
-    parts.push(`ort. marj ${formatPct(k.weighted_avg_margin_pct)}`);
-  }
-  const overdue = k?.overdue_payment_count ?? 0;
-  const top = briefing.slice(0, 2);
-  return (
-    <div className="mb-5 flex items-center gap-4 rounded-xl bg-gradient-to-r from-[#1e3a8a] via-[#2563eb] to-[#0891b2] px-4 py-3 text-white shadow-sm">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15">
-        <Sparkles className="h-5 w-5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold">AI Özeti · Bugün</div>
-        <div className="mt-0.5 text-[13px] leading-snug text-white/90">
-          {parts.length ? parts.join(" · ") : "Projeleriniz analiz ediliyor…"}
-          {overdue > 0 && (
-            <button
-              onClick={onOverdueClick}
-              className="ml-1.5 inline-flex items-center gap-1 rounded-md bg-white/20 px-2 py-0.5 align-middle text-[11px] font-medium hover:bg-white/30"
-              title="Vadesi geçmiş ödemeleri görüntüle"
-            >
-              <AlarmClock className="h-3 w-3" /> {overdue} vadesi geçmiş ödeme
-            </button>
-          )}
-          {top.length > 0 && (
-            <span className="ml-1.5 inline-flex flex-wrap gap-1.5 align-middle">
-              {top.map((t, i) => (
-                <button key={i} onClick={() => navigate("/ai-alerts")} className="rounded-md bg-white/15 px-2 py-0.5 text-[11px] hover:bg-white/25">
-                  {t.project_name}
-                </button>
-              ))}
-            </span>
-          )}
-        </div>
-      </div>
-      <button onClick={() => navigate("/ai-assistant")} className="hidden shrink-0 items-center gap-1 rounded-lg bg-white/15 px-3 py-1.5 text-xs hover:bg-white/25 sm:flex">
-        Detaylı analiz →
-      </button>
     </div>
   );
 }
