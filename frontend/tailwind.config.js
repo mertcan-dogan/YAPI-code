@@ -6,6 +6,7 @@ export default {
     extend: {
       colors: {
         primary: { DEFAULT: "var(--color-primary)", light: "var(--color-primary-light)" },
+        brand: { DEFAULT: "var(--color-brand)", light: "var(--color-brand-light)", "2": "var(--color-brand-2)" },
         accent: "var(--color-accent)",
         success: "var(--color-success)",
         danger: "var(--color-danger)",

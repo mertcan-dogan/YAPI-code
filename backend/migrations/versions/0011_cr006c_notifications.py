@@ -8,6 +8,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from migrations.idempotent import create_index, create_table
+
 revision = "0011_cr006c_notifications"
 down_revision = "0010_cr004n_approval_requests"
 branch_labels = None
@@ -15,7 +17,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table(
         "notifications",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("company_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("companies.id"), nullable=False),
@@ -34,7 +36,7 @@ def upgrade() -> None:
         sa.Column("is_deleted", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.create_index(
+    create_index(
         "ix_notifications_company_read",
         "notifications",
         ["company_id", "is_read", "created_at"],

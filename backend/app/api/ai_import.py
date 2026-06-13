@@ -25,7 +25,7 @@ from app.services import ai as ai_service
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
-from app.services.excel_import import LABEL_TO_KEY, excel_to_text
+from app.services.excel_import import LABEL_TO_KEY, LEGACY_XLS_MESSAGE, excel_to_text, is_legacy_xls
 
 router = APIRouter(tags=["ai-import"])
 
@@ -67,6 +67,8 @@ async def ai_import(project_id: uuid.UUID, user: CurrentUser, db: Session = Depe
     try:
         text, truncated, rows = excel_to_text(data)
     except Exception as exc:
+        if is_legacy_xls(file.filename, exc):
+            raise APIError(422, "VALIDATION_ERROR", LEGACY_XLS_MESSAGE, field="file")
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
     try:
         extracted = ai_service.analyze_excel_import(text)

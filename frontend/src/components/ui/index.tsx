@@ -36,7 +36,7 @@ export function Button({
 
 // --- Card ---
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-lg border border-border bg-surface", className)} {...props} />;
+  return <div className={cn("rounded-xl border border-border bg-surface shadow-sm", className)} {...props} />;
 }
 export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("p-4", className)} {...props} />;
@@ -48,7 +48,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
     <input
       ref={ref}
       className={cn(
-        "w-full rounded-md border bg-surface px-3 py-2 text-sm outline-none transition focus:border-primary",
+        "w-full rounded-md border bg-surface px-3 py-2 text-sm outline-none transition focus:border-brand",
         error ? "border-danger" : "border-border",
         className
       )}
@@ -62,7 +62,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
   ({ className, ...props }, ref) => (
     <textarea
       ref={ref}
-      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary", className)}
+      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand", className)}
       {...props}
     />
   )
@@ -73,7 +73,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
   ({ className, children, ...props }, ref) => (
     <select
       ref={ref}
-      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary", className)}
+      className={cn("w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand", className)}
       {...props}
     >
       {children}
@@ -153,7 +153,7 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className={cn("relative z-10 my-4 w-full rounded-lg bg-surface shadow-xl animate-slide-in", widths[size])}>
+      <div className={cn("relative z-10 my-4 w-full rounded-xl bg-surface shadow-xl animate-slide-in", widths[size])}>
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h3 className="text-base font-semibold text-primary">{title}</h3>
           <button onClick={onClose} className="text-text-secondary hover:text-text-primary" aria-label="Kapat">

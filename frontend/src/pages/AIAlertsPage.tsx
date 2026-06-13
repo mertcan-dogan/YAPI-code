@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { AIDisclaimer, Button, Card, CardBody } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -14,7 +14,7 @@ const SEV_BORDER: Record<string, string> = { high: "border-l-danger", medium: "b
 
 function SummaryChip({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface px-4 py-2">
+    <div className="rounded-xl border border-border bg-surface px-4 py-2">
       <div className="text-xs text-text-secondary">{label}</div>
       <div className="text-lg font-bold" style={{ color }}>{value}</div>
     </div>
@@ -22,7 +22,7 @@ function SummaryChip({ label, value, color }: { label: string; value: number; co
 }
 
 export default function AIAlertsPage() {
-  const { data, meta, loading, refetch } = useFetch<AIAlert[]>("/ai/alerts");
+  const { data, meta, loading, refetch, error } = useFetch<AIAlert[]>("/ai/alerts");
   const [refreshing, setRefreshing] = useState(false);
   const alerts = data ?? [];
   const count = (sev: string) => alerts.filter((a) => a.severity === sev).length;
@@ -77,15 +77,17 @@ export default function AIAlertsPage() {
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>
+      ) : error ? (
+        <Card><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
       ) : alerts.length === 0 ? (
         <Card><CardBody><EmptyState message="Aktif yapay zeka uyarısı bulunmuyor." /></CardBody></Card>
       ) : (
         <div className="space-y-3">
           {alerts.map((a) => (
-            <div key={a.id} className={cn("rounded-lg border border-l-4 border-border bg-surface p-4", SEV_BORDER[a.severity])}>
+            <div key={a.id} className={cn("rounded-xl border border-l-4 border-border bg-surface p-4 shadow-sm", SEV_BORDER[a.severity])}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-accent" />
+                  <Sparkles className="h-4 w-4 text-brand" />
                   <h3 className="font-semibold text-primary">{a.title_tr}</h3>
                   <span className="rounded bg-navy-50 px-1.5 py-0.5 text-[10px] text-primary-light">AI Önerisi</span>
                 </div>

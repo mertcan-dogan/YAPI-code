@@ -62,9 +62,16 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        origins = {self.frontend_url}
+        # Always allow the known dev ports, the deployed Vercel frontend, and the
+        # FRONTEND_URL env var (so prod requests from Vercel are never CORS-blocked).
+        origins = {
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "https://yapi-code.vercel.app",
+            self.frontend_url,
+        }
         if not self.is_production:
-            origins.update({"http://localhost:5173", "http://127.0.0.1:5173"})
+            origins.add("http://127.0.0.1:5173")
         return [o for o in origins if o]
 
 

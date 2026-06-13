@@ -6,6 +6,7 @@ import type { Project } from "@/types";
 import { formatDateTime } from "@/utils/format";
 import { Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 // CR-004-I: render **bold** segments from the AI's markdown-style numbers.
 function renderRich(text: string) {
@@ -40,10 +41,14 @@ export default function AIAssistantPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
 
   // CR-004-I: auto-scroll to the newest message instead of growing the page.
+  // Skip the initial render (no messages) and scroll only within the chat
+  // container so opening the page no longer jumps past the header.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0) return;
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [messages, loading]);
 
   const ask = async (question: string) => {
@@ -64,6 +69,16 @@ export default function AIAssistantPage() {
     }
   };
 
+  // Pre-filled question handed off from the global command palette.
+  useEffect(() => {
+    const handed = (location.state as { q?: string } | null)?.q;
+    if (handed) {
+      ask(handed);
+      window.history.replaceState({}, "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div>
       <PageHeader title="AI Asistan" subtitle="Finansal sorularınızı Türkçe sorun" />
@@ -79,19 +94,19 @@ export default function AIAssistantPage() {
           </div>
 
           {/* Chat — fixed height, scrollable (CR-004-I) */}
-          <div className="mb-3 space-y-3 overflow-y-auto rounded-lg border border-border bg-surface p-4" style={{ height: "calc(100vh - 320px)" }}>
+          <div className="mb-3 space-y-3 overflow-y-auto rounded-xl border border-border bg-surface p-4" style={{ height: "calc(100vh - 320px)" }}>
             {messages.length === 0 && <p className="text-sm text-text-secondary">Bir soru seçin veya yazın.</p>}
             {messages.map((m, i) => (
               <div key={i} className={m.role === "user" ? "text-right" : ""}>
-                <div className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-bg text-text-primary"}`}>
-                  {m.role === "ai" && <Sparkles className="mr-1 inline h-3.5 w-3.5 text-accent" />}
+                <div className={`inline-block max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${m.role === "user" ? "bg-primary text-white" : "bg-navy-50 text-text-primary"}`}>
+                  {m.role === "ai" && <Sparkles className="mr-1 inline h-3.5 w-3.5 text-brand" />}
                   <span className="whitespace-pre-wrap">{m.role === "ai" ? renderRich(m.text) : m.text}</span>
                   {m.at && <div className="mt-1 text-[10px] text-text-secondary">Bu yanıt {formatDateTime(m.at)} itibarıyla hesaplanmıştır</div>}
                   {m.role === "ai" && <AIDisclaimer short className="mt-1" />}
                 </div>
               </div>
             ))}
-            {loading && <div className="flex items-center gap-2 text-sm text-text-secondary"><Sparkles className="h-4 w-4 animate-pulse text-accent" /> Yanıt hazırlanıyor…</div>}
+            {loading && <div className="flex items-center gap-2 text-sm text-text-secondary"><Sparkles className="h-4 w-4 animate-pulse text-brand" /> Yanıt hazırlanıyor…</div>}
             <div ref={endRef} />
           </div>
 

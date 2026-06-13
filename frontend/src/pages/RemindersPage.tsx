@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/EmptyState";
+import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody } from "@/components/ui";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -23,7 +23,7 @@ function reminderColors(days: number, paid: boolean): { border: string; bg: stri
 
 function KpiChip({ label, value, bg, border }: { label: string; value: string; bg: string; border: string }) {
   return (
-    <div className="rounded-lg border p-3" style={{ backgroundColor: bg, borderColor: border }}>
+    <div className="rounded-xl border p-3" style={{ backgroundColor: bg, borderColor: border }}>
       <div className="text-xs text-text-secondary">{label}</div>
       <div className="tabular mt-0.5 text-base font-bold text-text-primary">{value}</div>
     </div>
@@ -71,7 +71,7 @@ function filterSummaryLabel(tab: string, time: string): string {
 }
 
 export default function RemindersPage() {
-  const { data, loading, refetch } = useFetch<Reminder[]>("/reminders");
+  const { data, loading, refetch, error } = useFetch<Reminder[]>("/reminders");
   const [tab, setTab] = useState<"all" | "payable" | "receivable">("all");
   const [time, setTime] = useState("all");
 
@@ -148,6 +148,8 @@ export default function RemindersPage() {
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>
+      ) : error ? (
+        <Card><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
       ) : items.length === 0 ? (
         <Card><CardBody><EmptyState message="Vadesi gelen ödeme bulunmuyor." /></CardBody></Card>
       ) : (
@@ -155,7 +157,7 @@ export default function RemindersPage() {
           {items.map((r) => (
             <div
               key={r.record_id}
-              className="flex items-center gap-4 rounded-lg border border-border p-4"
+              className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4 shadow-sm"
               style={{
                 borderLeft: `4px solid ${reminderColors(r.days_remaining, r.status === "paid").border}`,
                 backgroundColor: reminderColors(r.days_remaining, r.status === "paid").bg,

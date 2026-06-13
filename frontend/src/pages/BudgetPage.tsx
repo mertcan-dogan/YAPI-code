@@ -16,7 +16,7 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
-import { ArrowUpRight, Download, Pencil, Plus, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -41,6 +41,7 @@ export default function BudgetPage() {
   const aiFileRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const canDelete = user?.role === "director" || user?.role === "project_manager";
+  const budgetFailed = !!budget.error && !budget.loading;
 
   const refetchAll = () => {
     costs.refetch();
@@ -213,13 +214,13 @@ export default function BudgetPage() {
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               <Upload className="h-4 w-4" /> Excel'den İçe Aktar
             </Button>
-            <Button variant="outline" className="border-accent text-accent" onClick={() => aiFileRef.current?.click()}>
+            <Button variant="outline" className="border-brand text-brand" onClick={() => aiFileRef.current?.click()}>
               <Sparkles className="h-4 w-4" /> AI ile İçe Aktar
             </Button>
             <input
               ref={aiFileRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
               hidden
               onChange={(e) => {
                 if (e.target.files?.[0]) setAiImportFile(e.target.files[0]);
@@ -229,7 +230,7 @@ export default function BudgetPage() {
             <input
               ref={fileRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
               hidden
               onChange={(e) => {
                 if (e.target.files?.[0]) setImportFile(e.target.files[0]);
@@ -243,6 +244,14 @@ export default function BudgetPage() {
         }
       />
 
+      {budgetFailed ? (
+        <div className="mb-6 flex flex-col items-center justify-center gap-3 rounded-xl border border-danger/40 bg-red-50 py-10 text-center">
+          <AlertTriangle className="h-8 w-8 text-danger" />
+          <p className="text-sm text-text-secondary">Bütçe verileri yüklenemedi. Lütfen tekrar deneyin.</p>
+          <Button variant="outline" onClick={() => budget.refetch()}><RefreshCw className="h-4 w-4" /> Tekrar Dene</Button>
+        </div>
+      ) : (
+      <>
       {/* CR-005-H: sayfa üstü özet — 4 KPI kartı + bütçe kullanım bar chart. */}
       <BudgetSummaryCharts
         categories={budget.data?.categories ?? []}
@@ -263,6 +272,8 @@ export default function BudgetPage() {
           <span className="tabular">Genel Kalan: <b>{formatCurrency(budget.data.totals.remaining_try)}</b></span>
         </div>
       )}
+      </>
+      )}
 
       <div className="mt-6 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-primary">Maliyet Girişleri</h2>
@@ -280,7 +291,7 @@ export default function BudgetPage() {
         </div>
       </div>
       <div className="mt-2">
-        <DataTable columns={costColumns} rows={costs.data ?? []} loading={costs.loading} emptyMessage="Bu proje için henüz maliyet girişi yapılmamış." emptyAction={{ label: "Maliyet Ekle", onClick: () => setDrawerOpen(true) }} rowClassName={(r) => (r.payment_status === "overdue" ? "!bg-red-50" : "")} />
+        <DataTable columns={costColumns} rows={costs.data ?? []} loading={costs.loading} error={costs.error} onRetry={costs.refetch} emptyMessage="Bu proje için henüz maliyet girişi yapılmamış." emptyAction={{ label: "Maliyet Ekle", onClick: () => setDrawerOpen(true) }} rowClassName={(r) => (r.payment_status === "overdue" ? "!bg-red-50" : "")} />
       </div>
 
       <CostDrawer

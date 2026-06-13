@@ -7,6 +7,8 @@ Create Date: 2025-06-07
 import sqlalchemy as sa
 from alembic import op
 
+from migrations.idempotent import add_column
+
 revision = "0003_cr001a_custom_project_type"
 down_revision = "0002_enable_rls"
 branch_labels = None
@@ -14,7 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("projects", sa.Column("custom_project_type", sa.String(length=100), nullable=True))
+    add_column("projects", sa.Column("custom_project_type", sa.String(length=100), nullable=True))
 
 
 def downgrade() -> None:

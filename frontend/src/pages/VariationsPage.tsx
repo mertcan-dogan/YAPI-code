@@ -17,7 +17,7 @@ const STATUS_LABELS: Record<string, string> = { pending: "Beklemede", approved: 
 
 function Chip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-surface px-4 py-2">
+    <div className="rounded-xl border border-border bg-surface px-4 py-2">
       <div className="text-xs text-text-secondary">{label}</div>
       <div className="tabular text-base font-semibold text-primary">{value}</div>
     </div>
@@ -26,7 +26,7 @@ function Chip({ label, value }: { label: string; value: string }) {
 
 export default function VariationsPage() {
   const { id } = useParams();
-  const { data, meta, loading, refetch } = useFetch<Variation[]>(`/projects/${id}/variations`);
+  const { data, meta, loading, refetch, error } = useFetch<Variation[]>(`/projects/${id}/variations`);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Variation | null>(null);
   const rows = data ?? [];
@@ -58,7 +58,7 @@ export default function VariationsPage() {
           <Chip label="Net Marj Etkisi" value={formatCurrency(meta.net_margin_impact)} />
         </div>
       )}
-      <DataTable columns={columns} rows={rows} loading={loading} emptyMessage="Bu proje için henüz ek iş yok." emptyAction={{ label: "Ek İş Ekle", onClick: () => setOpen(true) }} />
+      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} emptyMessage="Bu proje için henüz ek iş yok." emptyAction={{ label: "Ek İş Ekle", onClick: () => setOpen(true) }} />
       <VariationDrawer open={open} projectId={id!} editing={editing} defaultNumber={nextNumber} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
     </div>
   );

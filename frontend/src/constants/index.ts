@@ -1,14 +1,17 @@
 // Shared constants — Turkish labels, categories, colours (Appendix A/B, Section 6.2)
 
 export const COLORS = {
-  primary: "#1B2B4B",
-  primaryLight: "#2E4272",
+  primary: "#0E1525",
+  primaryLight: "#1E293F",
+  brand: "#2563EB",
+  brand2: "#06B6D4",
   accent: "#F59E0B",
-  success: "#10B981",
+  success: "#059669",
   danger: "#EF4444",
-  warning: "#EAB308",
-  border: "#E2E8F0",
+  warning: "#D97706",
+  border: "#E3E8EF",
   lightBlue: "#93C5FD",
+  muted: "#94A3B8",
 } as const;
 
 // CR-001-A: 26 project types grouped by category.

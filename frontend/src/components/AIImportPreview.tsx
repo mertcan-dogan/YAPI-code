@@ -150,13 +150,13 @@ export function AIImportPreview({ projectId, file, onClose, onDone }: { projectI
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg">
       <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
-        <h2 className="flex items-center gap-2 text-lg font-bold text-primary"><Sparkles className="h-5 w-5 text-accent" /> AI ile İçe Aktarma</h2>
+        <h2 className="flex items-center gap-2 text-lg font-bold text-primary"><Sparkles className="h-5 w-5 text-brand" /> AI ile İçe Aktarma</h2>
         <button onClick={onClose} className="text-text-secondary hover:text-text-primary"><X className="h-5 w-5" /></button>
       </div>
 
       {loading ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-text-secondary">
-          <Sparkles className="h-8 w-8 animate-pulse text-accent" /> AI dosyanızı analiz ediyor... (genellikle 10-30 saniye)
+          <Sparkles className="h-8 w-8 animate-pulse text-brand" /> AI dosyanızı analiz ediyor... (genellikle 10-30 saniye)
         </div>
       ) : (
         <>

@@ -7,6 +7,8 @@ Create Date: 2025-06-07
 import sqlalchemy as sa
 from alembic import op
 
+from migrations.idempotent import create_policy, create_table, enable_rls
+
 revision = "0004_cr001d_custom_categories"
 down_revision = "0003_cr001a_custom_project_type"
 branch_labels = None
@@ -16,7 +18,7 @@ CURRENT_COMPANY = "(SELECT company_id FROM users WHERE id = auth.uid())"
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table(
         "custom_cost_categories",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True,
                   server_default=sa.text("gen_random_uuid()")),
@@ -30,20 +32,12 @@ def upgrade() -> None:
         sa.UniqueConstraint("company_id", "name_normalized", name="uq_custom_cat_company_name"),
     )
     # RLS: company isolation (Section 2.4 pattern).
-    op.execute("ALTER TABLE custom_cost_categories ENABLE ROW LEVEL SECURITY;")
+    enable_rls("custom_cost_categories")
     op.execute("ALTER TABLE custom_cost_categories FORCE ROW LEVEL SECURITY;")
-    op.execute(
-        f"""
-        CREATE POLICY custom_cost_categories_company_isolation ON custom_cost_categories
-        FOR ALL USING (company_id = {CURRENT_COMPANY});
-        """
-    )
-    op.execute(
-        """
-        CREATE POLICY custom_cost_categories_hide_deleted ON custom_cost_categories
-        FOR SELECT USING (is_deleted = false);
-        """
-    )
+    create_policy("custom_cost_categories_company_isolation", "custom_cost_categories",
+                  f"FOR ALL USING (company_id = {CURRENT_COMPANY})")
+    create_policy("custom_cost_categories_hide_deleted", "custom_cost_categories",
+                  "FOR SELECT USING (is_deleted = false)")
 
 
 def downgrade() -> None:

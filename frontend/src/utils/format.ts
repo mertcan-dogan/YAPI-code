@@ -22,12 +22,15 @@ export function formatNumber(value: string | number | null | undefined): string 
   return trNumber.format(toNumber(value));
 }
 
-// Abbreviated currency for KPI cards (M = milyon, B = milyar) — Section 4.1
+// Abbreviated currency for KPI cards (Mn = milyon, Mr = milyar) — Section 4.1.
+// One decimal keeps the figure short enough to stay inside the card; the exact
+// value is shown on hover via the card's title attribute.
 export function formatCurrencyAbbrev(value: string | number | null | undefined, symbol = "₺"): string {
   const n = toNumber(value);
   const abs = Math.abs(n);
-  if (abs >= 1_000_000_000) return `${trNumber.format(n / 1_000_000_000)} B ${symbol}`;
-  if (abs >= 1_000_000) return `${trNumber.format(n / 1_000_000)} M ${symbol}`;
+  const f1 = (x: number) => x.toLocaleString("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (abs >= 1_000_000_000) return `${f1(n / 1_000_000_000)} Mr ${symbol}`;
+  if (abs >= 1_000_000) return `${f1(n / 1_000_000)} Mn ${symbol}`;
   return `${trInt.format(n)} ${symbol}`;
 }
 

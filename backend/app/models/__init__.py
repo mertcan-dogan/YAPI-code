@@ -15,6 +15,7 @@ from app.models.variation import Variation
 from app.models.budget_template import CustomBudgetTemplate
 from app.models.approval_request import ApprovalRequest
 from app.models.notification import Notification
+from app.models.kpi_snapshot import KPISnapshot
 
 __all__ = [
     "Base",
@@ -33,4 +34,5 @@ __all__ = [
     "CustomBudgetTemplate",
     "ApprovalRequest",
     "Notification",
+    "KPISnapshot",
 ]

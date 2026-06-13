@@ -3,7 +3,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, Date, ForeignKey, Integer, Numeric, String, Text
 from app.models.types import GUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,11 @@ class Project(TimestampSoftDeleteMixin, Base):
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     project_code: Mapped[str] = mapped_column(String(50), nullable=False)
     project_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    # CR: revenue/billing model — hakedis | kat_karsiligi | yap_sat | hasilat_paylasimi | maliyet_kar
+    revenue_model: Mapped[str] = mapped_column(String(30), default="hakedis", server_default="hakedis")
+    # Sales-based models (kat karşılığı / yap-sat / hasılat): contractor share + unit count
+    contractor_share_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # CR-001-A: free-text type entered when project_type == "other"
     custom_project_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)

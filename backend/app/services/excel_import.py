@@ -4,9 +4,29 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 from app.constants import COST_CATEGORIES
 from app.schemas.common import MIN_DATE, max_future_date
+
+# Eski binary .xls formatı openpyxl tarafından okunamaz — kullanıcıya net mesaj göster.
+LEGACY_XLS_MESSAGE = (
+    "Eski .xls formatı desteklenmiyor. "
+    "Lütfen dosyayı .xlsx veya .xlsm olarak kaydedip tekrar yükleyin."
+)
+
+
+def is_legacy_xls(filename: str | None, exc: Exception | None = None) -> bool:
+    """True if the upload looks like a legacy binary .xls (openpyxl cannot read it).
+
+    Detected by filename extension (.xls but not .xlsx/.xlsm) or an
+    InvalidFileException raised by openpyxl while opening the bytes.
+    """
+    if filename and filename.lower().endswith(".xls"):
+        return True
+    if isinstance(exc, InvalidFileException):
+        return True
+    return False
 
 # Template columns in order (Section 9.1).
 COLUMNS = [

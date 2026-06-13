@@ -17,6 +17,7 @@ import {
   PlusSquare,
   Plus,
   Settings,
+  ScanLine,
   Sparkles,
   TrendingUp,
   Users,
@@ -28,6 +29,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-
 import { apiGet } from "@/lib/api";
 import { useProjectStore } from "@/store/project";
 import { NotificationBell } from "@/components/NotificationBell";
+import { CommandPalette } from "@/components/CommandPalette";
 
 const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
@@ -49,25 +51,31 @@ const BOTTOM_NAV = [
   { icon: FileBarChart, label: "Raporlar", to: "/reports" },
   { icon: Sparkles, label: "Yapay Zeka Uyarıları", to: "/ai-alerts" },
   { icon: MessageSquare, label: "AI Asistan", to: "/ai-assistant" },
+  { icon: ScanLine, label: "Belge Tara", to: "/document-capture" },
   { icon: Settings, label: "Ayarlar", to: "/settings" },
 ];
 
-function NavItem({ icon: Icon, label, to, active }: any) {
+function NavItem({ icon: Icon, label, to, active, onNavigate }: any) {
   return (
     <Link
       to={to}
+      onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-        active ? "bg-primary-light text-white" : "text-white/70 hover:bg-primary-light/60 hover:text-white"
+        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+        active
+          ? "bg-white/10 text-white shadow-[inset_2px_0_0_var(--color-brand-2)]"
+          : "text-white/60 hover:bg-white/5 hover:text-white"
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className={cn("h-4 w-4 shrink-0", active && "text-brand-2")} />
       <span className="truncate">{label}</span>
     </Link>
   );
 }
 
-function Sidebar() {
+// Shared sidebar body — used by both the desktop sidebar and the mobile drawer.
+// `onNavigate` is called whenever a link is tapped so the mobile drawer can close.
+function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const params = useParams();
@@ -113,23 +121,24 @@ function Sidebar() {
   const closeContext = () => {
     clearActiveProject();
     navigate("/projects");
+    onNavigate?.();
   };
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col bg-primary lg:flex">
-      <div className="flex items-center gap-2 px-5 py-4 text-white">
+    <>
+      <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-2 px-5 py-4 text-white">
         {logoUrl ? (
           <img src={logoUrl} alt={companyName ?? "Şirket"} className="max-h-10 max-w-[180px] object-contain" />
         ) : (
           <>
-            <div className="flex h-8 w-8 items-center justify-center rounded bg-accent font-bold text-primary">Y</div>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-brand-2 font-bold text-white">Y</div>
             <span className="text-lg font-bold">{companyName ?? "Yapı"}</span>
           </>
         )}
-      </div>
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+      </Link>
+      <nav className="sidebar-scroll flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {GLOBAL_NAV.map((n) => (
-          <NavItem key={n.to} {...n} active={pathname === n.to} />
+          <NavItem key={n.to} {...n} active={pathname === n.to} onNavigate={onNavigate} />
         ))}
         {effectiveId && (
           <div className="mt-3 border-t border-white/10 pt-3">
@@ -141,7 +150,7 @@ function Sidebar() {
             </div>
             <p className="truncate px-3 pb-2 text-[13px] font-bold text-white" title={effectiveName}>{effectiveName}</p>
             {PROJECT_NAV(effectiveId).map((n) => (
-              <NavItem key={n.to} {...n} active={pathname === n.to} />
+              <NavItem key={n.to} {...n} active={pathname === n.to} onNavigate={onNavigate} />
             ))}
             {/* CR-001-H: Denetim İzi — director only, under Ekipman */}
             {isDirector && (
@@ -150,17 +159,19 @@ function Sidebar() {
                 label="Denetim İzi"
                 to={`/projects/${effectiveId}/audit-log`}
                 active={pathname === `/projects/${effectiveId}/audit-log`}
+                onNavigate={onNavigate}
               />
             )}
           </div>
         )}
         <div className="mt-3 border-t border-white/10 pt-3">
           {BOTTOM_NAV.map((n) => (
-            <NavItem key={n.to} {...n} active={pathname.startsWith(n.to)} />
+            <NavItem key={n.to} {...n} active={pathname.startsWith(n.to)} onNavigate={onNavigate} />
           ))}
           {isDirector && (
             <Link
               to="/approvals"
+              onClick={onNavigate}
               className={cn(
                 "flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                 pathname === "/approvals" ? "bg-primary-light text-white" : "text-white/70 hover:bg-primary-light/60 hover:text-white"
@@ -171,11 +182,71 @@ function Sidebar() {
             </Link>
           )}
           {isDirector && (
-            <NavItem icon={History} label="Denetim İzi" to="/audit-log" active={pathname === "/audit-log"} />
+            <NavItem icon={History} label="Denetim İzi" to="/audit-log" active={pathname === "/audit-log"} onNavigate={onNavigate} />
           )}
         </div>
       </nav>
+      {/* Brand footer — small persistent Yapı mark, shows even when a company logo is set */}
+      <div className="flex items-center justify-center gap-1.5 border-t border-white/10 px-5 py-3">
+        <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-gradient-to-br from-brand to-brand-2 text-[10px] font-bold leading-none text-white">Y</span>
+        <span className="text-[11px] font-medium tracking-wide text-white/40">Powered by Yapı</span>
+      </div>
+    </>
+  );
+}
+
+// Desktop sidebar (lg and up).
+function Sidebar() {
+  return (
+    <aside className="hidden w-64 shrink-0 flex-col bg-primary lg:flex">
+      <SidebarContent />
     </aside>
+  );
+}
+
+// Mobile slide-in drawer — opened by the hamburger in the top bar.
+function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // Close on Escape and lock body scroll while open.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [open, onClose]);
+
+  return (
+    <div className={cn("lg:hidden", open ? "" : "pointer-events-none")} aria-hidden={!open}>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={cn(
+          "fixed inset-0 z-50 bg-black/50 transition-opacity duration-200",
+          open ? "opacity-100" : "opacity-0"
+        )}
+      />
+      {/* Panel */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85%] flex-col bg-primary shadow-xl transition-transform duration-200 ease-out",
+          open ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        <button
+          onClick={onClose}
+          aria-label="Menüyü kapat"
+          className="absolute right-3 top-4 z-10 text-white/60 hover:text-white"
+        >
+          <X className="h-5 w-5" />
+        </button>
+        <SidebarContent onNavigate={onClose} />
+      </div>
+    </div>
   );
 }
 
@@ -202,13 +273,13 @@ function ProjectSelector() {
   };
 
   return (
-    <div className="relative hidden lg:block">
+    <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-text-primary hover:bg-bg"
+        className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm text-text-primary hover:bg-bg sm:px-3"
       >
-        <FolderKanban className="h-4 w-4 text-primary" />
-        <span className="max-w-[200px] truncate">{current?.name ?? "Proje Seç"}</span>
+        <FolderKanban className="h-4 w-4 text-brand" />
+        <span className="max-w-[120px] truncate sm:max-w-[200px]">{current?.name ?? "Proje Seç"}</span>
         <ChevronDown className="h-4 w-4 text-text-secondary" />
       </button>
       {open && (
@@ -240,21 +311,41 @@ function ProjectSelector() {
   );
 }
 
-function TopNav() {
+function TopNav({ onMenu }: { onMenu: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
+  const [cmdOpen, setCmdOpen] = React.useState(false);
+  React.useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCmdOpen(true);
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
   return (
     <header className="flex h-16 items-center justify-between border-b border-border bg-surface px-4 lg:px-6">
       <div className="flex items-center gap-3">
-        <Menu className="h-5 w-5 text-text-secondary lg:hidden" />
-        <span className="font-semibold text-primary lg:hidden">Yapı</span>
+        <button onClick={onMenu} className="text-text-secondary hover:text-primary lg:hidden" aria-label="Menüyü aç">
+          <Menu className="h-5 w-5" />
+        </button>
         <ProjectSelector />
+        <button
+          onClick={() => setCmdOpen(true)}
+          className="hidden items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text-secondary transition-colors hover:border-brand md:flex"
+        >
+          <Sparkles className="h-4 w-4 text-brand" />
+          <span>Ara, sor veya komut ver…</span>
+          <span className="ml-2 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-disabled">⌘K</span>
+        </button>
       </div>
       <div className="relative flex items-center gap-3">
         <NotificationBell />
         <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-white">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-2 text-sm font-medium text-white">
             {user?.full_name?.charAt(0) ?? "K"}
           </div>
           <span className="hidden text-sm text-text-primary sm:block">{user?.full_name}</span>
@@ -274,6 +365,7 @@ function TopNav() {
           </div>
         )}
       </div>
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
     </header>
   );
 }
@@ -283,7 +375,7 @@ function MobileNav() {
   const items = [
     { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
     { icon: FolderKanban, label: "Projeler", to: "/projects" },
-    { icon: Plus, label: "Maliyet", to: "/projects" },
+    { icon: ScanLine, label: "Belge Tara", to: "/document-capture" },
     { icon: Bell, label: "Hatırlatıcı", to: "/reminders" },
     { icon: Settings, label: "Profil", to: "/settings" },
   ];
@@ -307,11 +399,20 @@ function MobileNav() {
 }
 
 export function AppLayout() {
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const { pathname } = useLocation();
+
+  // Close the mobile drawer on route change (covers links that don't pass onNavigate).
+  React.useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
+
   return (
     <div className="flex h-full">
       <Sidebar />
+      <MobileDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopNav />
+        <TopNav onMenu={() => setDrawerOpen(true)} />
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
           <div className="mx-auto max-w-[1400px] p-4 lg:p-6">
             <Outlet />

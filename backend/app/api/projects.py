@@ -1,10 +1,10 @@
 """Projects router: CRUD, project dashboard, budget, company dashboard (Section 2.5, 4.1-4.3)."""
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from slugify import slugify
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.calculations.money import D, money, pct, safe_div
@@ -13,6 +13,9 @@ from app.db import get_db
 from app.deps import CurrentUser, DirectorUser
 from app.models.budget_line_item import BudgetLineItem
 from app.models.project import Project
+from app.models.kpi_snapshot import KPISnapshot
+from app.models.client_invoice import ClientInvoice
+from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
@@ -361,6 +364,49 @@ def _combined_cashflow_chart(db: Session, project_ids: list, anchor: date | None
     return chart
 
 
+def _budget_breakdown(db, project_ids):
+    """Revised budget (original + approved variations) per cost category, summed
+    across the given projects.
+
+    `project_ids` MUST be the already role/visibility-scoped active project list
+    the dashboard computes (_list_visible_projects), so the breakdown inherits the
+    same per-role project visibility — a project manager never sees budget from
+    projects they cannot access.
+
+    Returns {"total_try": str, "items": [{category, label_tr, value_try,
+    pct_of_total}]} sorted descending by value (TRY as strings via money(), like
+    every other dashboard figure). Empty items when there are no budget rows.
+    """
+    if not project_ids:
+        return {"total_try": str(money(D(0))), "items": []}
+    rows = db.execute(
+        select(
+            BudgetLineItem.cost_category,
+            func.sum(BudgetLineItem.original_budget_try + BudgetLineItem.approved_variations_try),
+        )
+        .where(
+            BudgetLineItem.project_id.in_(project_ids),
+            BudgetLineItem.is_deleted.is_(False),
+        )
+        .group_by(BudgetLineItem.cost_category)
+    ).all()
+    # Only positive categories are shown; total = sum of shown bars so the
+    # percentages add up to 100% and the footer matches the bars.
+    positive = [(cat, val) for cat, val in rows if val and val > 0]
+    total = sum((val for _, val in positive), D(0))
+    items = [
+        {
+            "category": cat,
+            "label_tr": COST_CATEGORIES.get(cat, cat),
+            "value_try": str(money(val)),
+            "pct_of_total": str(pct(safe_div(val, total) * 100)),
+        }
+        for cat, val in positive
+    ]
+    items.sort(key=lambda x: float(x["value_try"]), reverse=True)
+    return {"total_try": str(money(total)), "items": items}
+
+
 @router.get("/dashboard")
 def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     projects = _list_visible_projects(db, user, only_active=True)
@@ -368,12 +414,40 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     total_contract = D(0)
     weighted_margin_num = D(0)
     overdue_total = 0
+    # Company-wide financial roll-ups (Ana Sayfa executive band + portfolio budget chart).
+    total_invoiced = D(0)
+    total_outstanding = D(0)
+    total_forecast_cost = D(0)
+    total_net_cash = D(0)
+    total_revised_budget = D(0)
+    total_committed = D(0)
+    total_actual = D(0)
+    mf_rows = []
+    mf_target_num = D(0)
+    mf_current_num = D(0)
+    mf_contract = D(0)
 
     for p in projects:
         f = fin_service.project_financials(db, p)
         total_contract += f["contract_value_try"]
         weighted_margin_num += f["current_profit_try"]
         overdue_total += f["overdue_count"]
+        total_invoiced += f["total_invoiced_try"]
+        total_outstanding += f["total_outstanding_try"]
+        total_forecast_cost += f["forecast_final_cost_try"]
+        total_net_cash += f["net_cash_position_try"]
+        total_revised_budget += f["revised_budget_try"]
+        total_committed += f["total_committed_try"]
+        total_actual += f["total_actual_try"]
+        if f["target_margin_pct"] is not None:
+            mf_rows.append({
+                "name": p.name,
+                "target_pct": str(f["target_margin_pct"]),
+                "current_pct": str(f["margin_pct"]),
+            })
+            mf_target_num += f["contract_value_try"] * f["target_margin_pct"]
+            mf_current_num += f["current_profit_try"]
+            mf_contract += f["contract_value_try"]
         rows.append(
             {
                 "id": str(p.id),
@@ -395,6 +469,29 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
 
     cashflow_chart = _combined_cashflow_chart(db, [p.id for p in projects])
 
+    ar_aging = _ar_aging(db, [p.id for p in projects], date.today())
+    cash_forecast = _cash_forecast(db, [p.id for p in projects], date.today(), total_net_cash)
+    mf_rows.sort(key=lambda r: float(r["current_pct"]) - float(r["target_pct"]))
+    margin_fade = {
+        "has_targets": len(mf_rows) > 0,
+        "weighted_target_pct": str(pct(safe_div(mf_target_num, mf_contract))) if mf_contract > 0 else "0",
+        "weighted_current_pct": str(pct(safe_div(mf_current_num, mf_contract) * 100)) if mf_contract > 0 else "0",
+        "projects": mf_rows,
+    }
+
+    kpi_trends = _record_and_build_kpi_trends(
+        db,
+        company_id=user.company_id,
+        active_project_count=len(projects),
+        total_contract_value=money(total_contract),
+        weighted_avg_margin=weighted_margin,
+        overdue_payment_count=overdue_total,
+        backlog=money(total_contract - total_invoiced),
+        projected_profit=money(total_contract - total_forecast_cost),
+        total_receivables=money(total_outstanding),
+        net_cash=money(total_net_cash),
+    )
+
     return success(
         {
             "kpis": {
@@ -403,10 +500,209 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "weighted_avg_margin_pct": str(weighted_margin),
                 "overdue_payment_count": overdue_total,
             },
+            "kpi_trends": kpi_trends,
+            "exec_kpis": {
+                # Backlog = remaining (unbilled) contract revenue across active projects.
+                "backlog_try": str(money(total_contract - total_invoiced)),
+                # Projected profit at completion = contract - forecast final cost.
+                "projected_profit_try": str(money(total_contract - total_forecast_cost)),
+                "total_receivables_try": str(money(total_outstanding)),
+                "net_cash_position_try": str(money(total_net_cash)),
+            },
+            "ar_aging": ar_aging,
+            "margin_fade": margin_fade,
+            "cash_forecast": cash_forecast,
+            "portfolio_budget": {
+                "contract_try": str(money(total_contract)),
+                "revised_budget_try": str(money(total_revised_budget)),
+                "committed_try": str(money(total_committed)),
+                "actual_try": str(money(total_actual)),
+                "forecast_final_cost_try": str(money(total_forecast_cost)),
+            },
+            # Scoped to the same visible active projects (per-role visibility).
+            "budget_breakdown": _budget_breakdown(db, [p.id for p in projects]),
             "projects": rows,
             "cashflow_chart": cashflow_chart,
         }
     )
+
+
+def _cash_forecast(db, project_ids, today, starting_cash, months=6):
+    """6-month forward cash projection: expected inflows (unpaid invoices by due
+    date) vs outflows (unpaid costs by due date), with a running cash line.
+
+    Overdue items (due before this month) land in the first bucket. Items past
+    the horizon are ignored.
+    """
+    keys = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        keys.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    idx = {k: i for i, k in enumerate(keys)}
+    cur_first = today.replace(day=1)
+    inflow = [D(0)] * months
+    outflow = [D(0)] * months
+
+    def bucket(d):
+        if d is None:
+            return None
+        if d < cur_first:
+            return 0
+        return idx.get(f"{d.year:04d}-{d.month:02d}")
+
+    if project_ids:
+        for inv in db.execute(
+            select(ClientInvoice).where(ClientInvoice.project_id.in_(project_ids), ClientInvoice.is_deleted.is_(False))
+        ).scalars().all():
+            out = D(inv.outstanding_try)
+            if out <= 0:
+                continue
+            b = bucket(inv.due_date)
+            if b is not None:
+                inflow[b] += out
+        for c in db.execute(
+            select(CostEntry).where(
+                CostEntry.project_id.in_(project_ids),
+                CostEntry.is_deleted.is_(False),
+                CostEntry.pending_approval.is_(False),
+            )
+        ).scalars().all():
+            unpaid = D(c.amount_try) - D(c.amount_paid_try)
+            if unpaid <= 0:
+                continue
+            b = bucket(c.payment_due_date)
+            if b is not None:
+                outflow[b] += unpaid
+
+    out_months = []
+    cum = D(starting_cash)
+    min_cash = None
+    min_month = None
+    for i, k in enumerate(keys):
+        net = inflow[i] - outflow[i]
+        cum += net
+        if min_cash is None or cum < min_cash:
+            min_cash = cum
+            min_month = k
+        out_months.append({
+            "month": k,
+            "inflow_try": str(money(inflow[i])),
+            "outflow_try": str(money(outflow[i])),
+            "net_try": str(money(net)),
+            "cumulative_try": str(money(cum)),
+        })
+    return {
+        "starting_cash_try": str(money(D(starting_cash))),
+        "months": out_months,
+        "min_cash_try": str(money(min_cash)) if min_cash is not None else "0",
+        "min_cash_month": min_month,
+        "shortfall": bool(min_cash is not None and min_cash < 0),
+    }
+
+
+def _ar_aging(db, project_ids, today):
+    """Receivables aging buckets + DSO (avg collection period), over active projects.
+
+    Buckets by days past due_date; DSO = outstanding-weighted average age since
+    invoice_date (real, computed from the ledger). Returns None DSO if no AR.
+    """
+    if not project_ids:
+        return {"not_due_try": "0", "d1_30_try": "0", "d31_60_try": "0", "d60_plus_try": "0", "total_outstanding_try": "0", "dso_days": None}
+    invs = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id.in_(project_ids),
+            ClientInvoice.is_deleted.is_(False),
+        )
+    ).scalars().all()
+    b = {"not_due": D(0), "d1_30": D(0), "d31_60": D(0), "d60_plus": D(0)}
+    total = D(0)
+    weighted_age = D(0)
+    for i in invs:
+        out = D(i.outstanding_try)
+        if out <= 0:
+            continue
+        total += out
+        overdue = (today - i.due_date).days
+        if overdue <= 0:
+            b["not_due"] += out
+        elif overdue <= 30:
+            b["d1_30"] += out
+        elif overdue <= 60:
+            b["d31_60"] += out
+        else:
+            b["d60_plus"] += out
+        weighted_age += out * D((today - i.invoice_date).days)
+    dso = int(round(float(weighted_age / total))) if total > 0 else None
+    return {
+        "not_due_try": str(money(b["not_due"])),
+        "d1_30_try": str(money(b["d1_30"])),
+        "d31_60_try": str(money(b["d31_60"])),
+        "d60_plus_try": str(money(b["d60_plus"])),
+        "total_outstanding_try": str(money(total)),
+        "dso_days": dso,
+    }
+
+
+def _record_and_build_kpi_trends(db, *, company_id, active_project_count, total_contract_value, weighted_avg_margin, overdue_payment_count, backlog, projected_profit, total_receivables, net_cash):
+    """Upsert today's KPI snapshot, then return real trend series + deltas.
+
+    Series/deltas are based purely on recorded daily snapshots — they stay empty
+    until at least two distinct days exist, so nothing is ever fabricated.
+    """
+    today = date.today()
+    snap = db.execute(
+        select(KPISnapshot).where(
+            KPISnapshot.company_id == company_id,
+            KPISnapshot.snapshot_date == today,
+        )
+    ).scalar_one_or_none()
+    values = dict(
+        active_project_count=active_project_count,
+        total_contract_value_try=total_contract_value,
+        weighted_avg_margin_pct=weighted_avg_margin,
+        overdue_payment_count=overdue_payment_count,
+        backlog_try=backlog,
+        projected_profit_try=projected_profit,
+        total_receivables_try=total_receivables,
+        net_cash_position_try=net_cash,
+    )
+    if snap is None:
+        db.add(KPISnapshot(company_id=company_id, snapshot_date=today, **values))
+    else:
+        for k_, v_ in values.items():
+            setattr(snap, k_, v_)
+    db.commit()
+
+    history = db.execute(
+        select(KPISnapshot)
+        .where(
+            KPISnapshot.company_id == company_id,
+            KPISnapshot.snapshot_date >= today - timedelta(days=140),
+        )
+        .order_by(KPISnapshot.snapshot_date)
+    ).scalars().all()
+
+    def build(attr):
+        series = [float(getattr(h, attr)) for h in history]
+        delta = None
+        if len(series) >= 2 and series[0] != 0:
+            delta = round((series[-1] - series[0]) / abs(series[0]) * 100, 1)
+        return {"series": series, "delta_pct": delta}
+
+    return {
+        "active_project_count": build("active_project_count"),
+        "total_contract_value_try": build("total_contract_value_try"),
+        "weighted_avg_margin_pct": build("weighted_avg_margin_pct"),
+        "overdue_payment_count": build("overdue_payment_count"),
+        "backlog_try": build("backlog_try"),
+        "projected_profit_try": build("projected_profit_try"),
+        "total_receivables_try": build("total_receivables_try"),
+        "net_cash_position_try": build("net_cash_position_try"),
+    }
 
 
 # --- jsonify helpers (Decimal/date -> str) ---

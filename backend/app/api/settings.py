@@ -1,6 +1,7 @@
 """Settings router — company & user management, director only (Section 11)."""
 import uuid
 
+import logging
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import func, select
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings as app_settings
 from app.constants import ROLE_DIRECTOR
 from app.db import get_db
-from app.deps import DirectorUser
+from app.deps import CurrentUser, DirectorUser
 from app.models.company import Company
 from app.models.user import User
 from app.responses import APIError, success
@@ -19,6 +20,7 @@ from app.services.email import send_user_invitation
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 # CR-006-D: company logo upload (Supabase Storage, public bucket).
+logger = logging.getLogger(__name__)
 LOGO_BUCKET = "company-logos"
 LOGO_MAX_BYTES = 2 * 1024 * 1024  # 2MB
 LOGO_ALLOWED = {"image/png": "png", "image/jpeg": "jpg"}
@@ -85,7 +87,10 @@ async def upload_company_logo(
     except httpx.HTTPError:
         raise APIError(502, "STORAGE_ERROR", "Logo yüklenemedi")
     if resp.status_code not in (200, 201):
-        raise APIError(502, "STORAGE_ERROR", "Logo yüklenemedi")
+        # Surface the upstream status so misconfiguration (e.g. wrong service
+        # key) is diagnosable instead of a generic failure.
+        logger.error("Logo upload failed: storage %s %s", resp.status_code, resp.text[:300])
+        raise APIError(502, "STORAGE_ERROR", f"Logo yüklenemedi (depolama hatası {resp.status_code})")
 
     public_url = (
         f"{app_settings.supabase_url}/storage/v1/object/public/{LOGO_BUCKET}/{object_path}"
@@ -184,3 +189,29 @@ def update_user(
     db.commit()
     db.refresh(target)
     return success(UserOut.model_validate(target).model_dump(mode="json"))
+
+
+from typing import Any  # noqa: E402
+
+from pydantic import BaseModel  # noqa: E402
+
+
+class DashboardLayoutIn(BaseModel):
+    layout: Any
+
+
+@router.get("/dashboard-layout")
+def get_dashboard_layout(user: CurrentUser, db: Session = Depends(get_db)):
+    """The current user's saved Ana Sayfa widget layout (null = use default)."""
+    u = db.get(User, user.id)
+    return success({"layout": u.dashboard_layout if u else None})
+
+
+@router.put("/dashboard-layout")
+def set_dashboard_layout(payload: DashboardLayoutIn, user: CurrentUser, db: Session = Depends(get_db)):
+    u = db.get(User, user.id)
+    if u is None:
+        raise APIError(404, "NOT_FOUND", "Kullanıcı bulunamadı")
+    u.dashboard_layout = payload.layout
+    db.commit()
+    return success({"layout": u.dashboard_layout})

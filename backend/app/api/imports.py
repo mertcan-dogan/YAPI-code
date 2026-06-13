@@ -20,7 +20,7 @@ from app.schemas.cost import CostEntryCreate
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
-from app.services.excel_import import build_template, list_sheet_names, validate_rows
+from app.services.excel_import import LEGACY_XLS_MESSAGE, build_template, is_legacy_xls, list_sheet_names, validate_rows
 
 router = APIRouter(tags=["imports"])
 
@@ -59,6 +59,8 @@ async def import_sheets(
     try:
         sheets = list_sheet_names(data)
     except Exception as exc:
+        if is_legacy_xls(file.filename, exc):
+            raise APIError(422, "VALIDATION_ERROR", LEGACY_XLS_MESSAGE, field="file")
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
     return success({"sheets": sheets})
 
@@ -81,6 +83,8 @@ async def preview_import(
     try:
         result = validate_rows(data, sheet_name=sheet_name)
     except Exception as exc:
+        if is_legacy_xls(file.filename, exc):
+            raise APIError(422, "VALIDATION_ERROR", LEGACY_XLS_MESSAGE, field="file")
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
     rows = result["rows"]
     valid = sum(1 for r in rows if r["valid"])

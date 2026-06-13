@@ -38,7 +38,7 @@ function decideUrl(it: ApprovalItem, action: "approve" | "reject"): string {
 
 export default function ApprovalsPage() {
   const { user } = useAuth();
-  const { data, loading, refetch } = useFetch<ApprovalItem[]>("/approvals");
+  const { data, loading, refetch, error } = useFetch<ApprovalItem[]>("/approvals");
   const [rejecting, setRejecting] = useState<ApprovalItem | null>(null);
 
   if (user && user.role !== "director") return <Navigate to="/dashboard" replace />;
@@ -74,7 +74,7 @@ export default function ApprovalsPage() {
   return (
     <div>
       <PageHeader title="Onay Bekleyenler" subtitle="Eşiği aşan işlemler onayınızı bekliyor" />
-      <DataTable columns={columns} rows={data ?? []} loading={loading} emptyMessage="Onay bekleyen işlem yok." />
+      <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} emptyMessage="Onay bekleyen işlem yok." />
       {rejecting && <RejectModal item={rejecting} onClose={() => setRejecting(null)} onDone={() => { setRejecting(null); refetch(); }} />}
     </div>
   );
@@ -98,7 +98,7 @@ function RejectModal({ item, onClose, onDone }: { item: ApprovalItem; onClose: (
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-lg bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="w-full max-w-sm rounded-xl bg-surface p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-3 text-base font-semibold text-primary">İşlemi Reddet</h3>
         <Label required>Red Nedeni</Label>
         <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Neden bu işlemi reddediyorsunuz?" />

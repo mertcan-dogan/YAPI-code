@@ -53,8 +53,11 @@ def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
         return _extract_json(text)
     except AIUnavailable:
         raise
-    except Exception as exc:  # network, rate limit, etc.
-        logger.warning("Claude API call failed: %s", exc)
+    except Exception as exc:  # network, TLS, rate limit, etc.
+        # Log the exception type + message so SSL/cert, auth, and rate-limit
+        # failures are distinguishable in the logs (the user only ever sees the
+        # generic AI_UNAVAILABLE message).
+        logger.warning("Claude API call failed: %s: %s", type(exc).__name__, exc)
         raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
 
 
@@ -345,3 +348,56 @@ def extract_invoice(pdf_bytes: bytes) -> dict:
     except Exception as exc:
         logger.warning("Invoice extraction failed: %s", exc)
         raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
+
+
+def analyze_document_image(data: bytes, content_type: str) -> dict:
+    """Track A: vision extraction for a supplier-invoice photo or PDF.
+
+    Accepts JPEG/PNG photos (phone camera) and PDF. Returns supplier-invoice
+    fields plus a suggested cost_category (one of the standard keys) and an
+    overall confidence (0..1). Never writes to the DB — the user confirms.
+    """
+    import base64
+
+    from app.constants import COST_CATEGORY_KEYS
+
+    client = _client()
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    if content_type == "application/pdf":
+        source_block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}}
+    elif content_type in ("image/jpeg", "image/png"):
+        source_block = {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": b64}}
+    else:
+        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+    categories = ", ".join(COST_CATEGORY_KEYS)
+    prompt = (
+        "Bu bir tedarikçi/malzeme faturasının fotoğrafı veya PDF'idir (Türkçe olabilir). "
+        "Faturadaki bilgileri çıkar ve SADECE şu JSON nesnesini döndür:\n"
+        '{"supplier_name": "...", "invoice_number": "...", "invoice_date": "YYYY-MM-DD", '
+        '"amount_try": 0.00, "vat_rate": 20, "description": "kısa açıklama", '
+        '"cost_category": "<anahtar>", "confidence": 0.0}\n'
+        "Kurallar: amount_try KDV HARİÇ matrah tutarıdır (sayı, ondalık ayırıcı nokta). "
+        "vat_rate yüzde olarak KDV oranıdır (örn. 20). "
+        f"cost_category şu anahtarlardan faturaya EN UYGUN olanı olmalı: {categories}. "
+        "confidence 0 ile 1 arası genel güven skorudur. "
+        "Bir alanı okuyamazsan o alan için null döndür. JSON dışında hiçbir şey yazma."
+    )
+    last_err: Exception | None = None
+    for _ in range(2):  # retry JSON parsing
+        try:
+            msg = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": [source_block, {"type": "text", "text": prompt}]}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            result = _extract_json(text)
+            if isinstance(result, dict):
+                return result
+        except AIUnavailable:
+            raise
+        except Exception as exc:  # JSON parse / API error -> retry
+            last_err = exc
+    logger.warning("Document image extraction failed: %s", last_err)
+    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)

@@ -1,5 +1,6 @@
 import { CashFlowChart } from "@/components/charts";
 import { Card, CardBody } from "@/components/ui";
+import { LoadError } from "@/components/EmptyState";
 import { CashFlowMonthDrawer } from "@/components/cashflow/CashFlowMonthDrawer";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { cn } from "@/lib/cn";
@@ -30,7 +31,7 @@ type Row = {
 
 export default function CashFlowPage() {
   const { id } = useParams();
-  const { data, loading } = useFetch<Row[]>(`/projects/${id}/cashflow`);
+  const { data, loading, error, refetch } = useFetch<Row[]>(`/projects/${id}/cashflow`);
   const { data: risk } = useFetch<RiskWindow[]>(`/projects/${id}/cashflow/risk`);
   const [view, setView] = useState<"both" | "planned" | "actual">("both");
   const [monthDetail, setMonthDetail] = useState<string | null>(null);
@@ -78,17 +79,21 @@ export default function CashFlowPage() {
         })}
       </div>
 
+      {error && !loading ? (
+        <Card className="mb-6"><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
+      ) : (
+      <>
       <Card className="mb-6"><CardBody><CashFlowChart data={chart} height={300} /></CardBody></Card>
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
         <table className="w-full min-w-[720px] text-sm">
-          <thead className="bg-primary text-white">
+          <thead className="border-b border-border bg-bg text-text-secondary">
             <tr>
-              <th className="px-3 py-2 text-left text-xs">Ay</th>
-              <th className="px-3 py-2 text-right text-xs">Gider</th>
-              <th className="px-3 py-2 text-right text-xs">Gelir</th>
-              <th className="px-3 py-2 text-right text-xs">Net Aylık</th>
-              <th className="px-3 py-2 text-right text-xs">Kümülatif</th>
+              <th className="px-3 py-2.5 text-left text-xs font-medium">Ay</th>
+              <th className="px-3 py-2.5 text-right text-xs font-medium">Gider</th>
+              <th className="px-3 py-2.5 text-right text-xs font-medium">Gelir</th>
+              <th className="px-3 py-2.5 text-right text-xs font-medium">Net Aylık</th>
+              <th className="px-3 py-2.5 text-right text-xs font-medium">Kümülatif</th>
             </tr>
           </thead>
           <tbody>
@@ -99,7 +104,7 @@ export default function CashFlowPage() {
                 const cumNeg = toNumber(r.cumulative_try) < 0;
                 return (
                   <tr key={r.month} onClick={() => setMonthDetail(r.month)} className={cn("cursor-pointer border-b border-border hover:bg-navy-50", r.is_current && "bg-amber-50")}>
-                    <td className="px-3 py-2 text-primary hover:underline">{r.month}{r.is_current && " (bu ay)"}</td>
+                    <td className="px-3 py-2 font-medium text-brand hover:underline">{r.month}{r.is_current && " (bu ay)"}</td>
                     <td className="px-3 py-2 text-right tabular text-danger">{formatCurrency(showOut(r))}</td>
                     <td className="px-3 py-2 text-right tabular text-success">{formatCurrency(showIn(r))}</td>
                     <td className="px-3 py-2 text-right tabular">{formatCurrency(r.net_try)}</td>
@@ -111,6 +116,8 @@ export default function CashFlowPage() {
           </tbody>
         </table>
       </div>
+      </>
+      )}
 
       {id && (
         <CashFlowMonthDrawer

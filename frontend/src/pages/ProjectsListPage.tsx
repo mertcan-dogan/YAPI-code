@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 export default function ProjectsListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { data, loading } = useFetch<Project[]>("/projects");
+  const { data, loading, error, refetch } = useFetch<Project[]>("/projects");
 
   const columns: Column<Project>[] = [
     {
@@ -61,6 +61,8 @@ export default function ProjectsListPage() {
         columns={columns}
         rows={data ?? []}
         loading={loading}
+        error={error}
+        onRetry={refetch}
         emptyMessage="Henüz proje yok. İlk projenizi oluşturun."
         emptyAction={user?.role === "director" ? { label: "Yeni Proje", onClick: () => navigate("/projects/new") } : undefined}
         onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
