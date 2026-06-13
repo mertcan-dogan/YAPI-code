@@ -5,6 +5,8 @@ import { BudgetBreakdownCard, type BudgetBreakdownItem } from "@/components/dash
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/components/dashboard/DashboardToolbar";
 import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
+import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
+import { ApprovalsPanel } from "@/components/dashboard/ApprovalsPanel";
 import { InsightItem, type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
 import { RAGIndicator } from "@/components/RAGIndicator";
@@ -13,7 +15,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
-import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
+import { formatCurrency, formatCurrencyAbbrev, formatDateTime, formatPct, toNumber } from "@/utils/format";
 import { AlarmClock, CheckCircle2, Hammer, Info, PlusSquare, RefreshCw, Sparkles, Target, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -42,6 +44,7 @@ interface DashboardData {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const firstName = useAuth((s) => s.user?.full_name?.split(" ")[0]);
+  const isDirector = useAuth((s) => s.user?.role === "director");
   // Phase 1: toolbar filter state (threaded into the data fetch in Phase 6).
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
   const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard");
@@ -98,10 +101,22 @@ export default function DashboardPage() {
   const marginSeries = data?.kpi_trends?.weighted_avg_margin_pct?.series;
   const marginPP = marginSeries && marginSeries.length >= 2 ? marginSeries[marginSeries.length - 1] - marginSeries[0] : null;
 
+  // Proje Performans Sıralaması — compact margin-ranked list (rank baked in).
+  const rankedProjects = [...(data?.projects ?? [])]
+    .sort((a, b) => toNumber(b.margin_pct) - toNumber(a.margin_pct))
+    .map((r, i) => ({ ...r, _rank: i + 1 }));
+
+  const RISK_MAP: Record<string, { l: string; c: string }> = {
+    green: { l: "Düşük", c: "bg-green-50 text-success" },
+    amber: { l: "Orta", c: "bg-amber-50 text-warning" },
+    red: { l: "Yüksek", c: "bg-red-50 text-danger" },
+  };
+
   const columns: Column<any>[] = [
+    { key: "_rank", header: "#", maxWidth: 44, render: (r) => <span className="tabular text-text-secondary">{r._rank}</span> },
     {
       key: "name",
-      header: "Proje Adı",
+      header: "Proje",
       sortable: true,
       maxWidth: 220,
       render: (r) => (
@@ -110,25 +125,9 @@ export default function DashboardPage() {
         </span>
       ),
     },
-    { key: "client_name", header: "İşveren", maxWidth: 160 },
-    { key: "contract_value_try", header: "Sözleşme Değeri", align: "right", render: (r) => formatCurrency(r.contract_value_try), sortValue: (r) => toNumber(r.contract_value_try) },
-    {
-      key: "spent_pct",
-      header: "Harcanan %",
-      align: "right",
-      render: (r) => (
-        <div className="flex items-center justify-end gap-2">
-          <div className="h-1.5 w-16 overflow-hidden rounded-full bg-border">
-            <div className={`h-full ${toNumber(r.spent_pct) >= 90 ? "bg-danger" : "bg-brand"}`} style={{ width: `${Math.min(toNumber(r.spent_pct), 100)}%` }} />
-          </div>
-          {formatPct(r.spent_pct)}
-        </div>
-      ),
-    },
-    { key: "completion_pct", header: "Tamamlanma %", align: "right", render: (r) => formatPct(r.completion_pct) },
     {
       key: "margin_pct",
-      header: "Kar Marjı %",
+      header: "Marj % (Tahmini)",
       align: "right",
       sortable: true,
       sortValue: (r) => toNumber(r.margin_pct),
@@ -139,24 +138,19 @@ export default function DashboardPage() {
       },
     },
     {
-      key: "net_cash_position_try",
-      header: "Nakit Durumu",
+      key: "margin_try",
+      header: "Marj ₺ (Tahmini)",
       align: "right",
-      render: (r) => <span className={toNumber(r.net_cash_position_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.net_cash_position_try)}</span>,
+      sortValue: (r) => toNumber(r.margin_try),
+      render: (r) => <span className={toNumber(r.margin_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.margin_try)}</span>,
     },
     {
-      key: "rag_label_tr",
-      header: "Durum",
+      key: "rag_status",
+      header: "Risk",
       render: (r) => {
-        const map: Record<string, string> = { green: "bg-green-50 text-success", amber: "bg-amber-50 text-warning", red: "bg-red-50 text-danger" };
-        return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${map[r.rag_status] ?? "bg-bg text-text-secondary"}`}>{r.rag_label_tr}</span>;
+        const x = RISK_MAP[r.rag_status] ?? { l: r.rag_label_tr, c: "bg-bg text-text-secondary" };
+        return <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${x.c}`}>{x.l}</span>;
       },
-    },
-    {
-      key: "planned_end_date",
-      header: "Bitiş Tarihi",
-      align: "right",
-      render: (r) => <span className={r.overdue ? "text-danger" : ""}>{formatDate(r.planned_end_date)}</span>,
     },
   ];
 
@@ -316,16 +310,21 @@ export default function DashboardPage() {
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
         <DashboardSection
           className="lg:col-span-2"
-          title="Proje Durumu"
-          subtitle="Aktif projelerin finansal sıralaması ve durum göstergeleri."
+          title="Proje Performans Sıralaması"
+          subtitle="Tahmini kar marjına göre sıralı aktif projeler."
+          right={
+            <button onClick={() => navigate("/projects")} className="text-sm font-medium text-brand hover:underline">
+              Tüm projeler →
+            </button>
+          }
         >
           <DataTable
             columns={columns}
-            rows={data?.projects ?? []}
+            rows={rankedProjects}
             loading={loading}
             error={error}
             onRetry={refetch}
-            minWidth={900}
+            minWidth={560}
             emptyMessage="Henüz proje yok. İlk projenizi oluşturun."
             emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }}
             onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
@@ -360,6 +359,28 @@ export default function DashboardPage() {
             </CardBody>
           </Card>
         </DashboardSection>
+      </div>
+
+      {/* --- Incoming documents + pending approvals (director) --- */}
+      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
+        <DashboardSection
+          className={isDirector ? "lg:col-span-2" : "lg:col-span-3"}
+          title="Gelen Belgeler"
+          subtitle="Son eklenen faturalar, hakedişler ve ek işler."
+          right={
+            <button onClick={() => navigate("/document-capture")} className="text-sm font-medium text-brand hover:underline">
+              Belge Yükle →
+            </button>
+          }
+        >
+          <IncomingWorkflowCard />
+        </DashboardSection>
+
+        {isDirector && (
+          <DashboardSection title="Onay Bekleyenler" subtitle="Onayınızı bekleyen işlemler.">
+            <ApprovalsPanel onGoToApprovals={() => navigate("/approvals")} />
+          </DashboardSection>
+        )}
       </div>
 
       {/* --- Portfolio budget totals + AR aging --- */}
