@@ -1,6 +1,9 @@
 import { CashFlowChart, PortfolioBudgetChart } from "@/components/charts";
 import { AIDisclaimer, Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
+import { BudgetBreakdownCard, type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
+import { DashboardSection } from "@/components/dashboard/DashboardSection";
+import { InsightItem, type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
@@ -9,7 +12,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, AlertTriangle, Banknote, Building2, CheckCircle2, Info, Layers, PiggyBank, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
+import { AlarmClock, Banknote, Building2, CheckCircle2, Info, Layers, PiggyBank, RefreshCw, Sparkles, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -25,6 +28,7 @@ interface DashboardData {
   kpi_trends?: Record<string, { series: number[]; delta_pct: number | null }>;
   exec_kpis?: { backlog_try: string; projected_profit_try: string; total_receivables_try: string; net_cash_position_try: string };
   portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
+  budget_breakdown?: { total_try: string; items: BudgetBreakdownItem[] };
   ar_aging?: { not_due_try: string; d1_30_try: string; d31_60_try: string; d60_plus_try: string; total_outstanding_try: string; dso_days: number | null };
   cash_forecast?: { starting_cash_try: string; months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
   margin_fade?: { has_targets: boolean; weighted_target_pct: string; weighted_current_pct: string; projects: { name: string; target_pct: string; current_pct: string }[] };
@@ -33,7 +37,7 @@ interface DashboardData {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { data, loading, refetch, error } = useFetch<DashboardData>("/dashboard");
-  const [briefing, setBriefing] = useState<any[]>([]);
+  const [briefing, setBriefing] = useState<BriefingItem[]>([]);
   const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [overdueOpen, setOverdueOpen] = useState(false);
@@ -154,6 +158,7 @@ export default function DashboardPage() {
 
   const ex = data?.exec_kpis;
   const pb = data?.portfolio_budget;
+  const bb = data?.budget_breakdown;
   const budgetChartData = pb
     ? [
         { name: "Sözleşme", value: toNumber(pb.contract_try), fill: "#059669" },
@@ -186,12 +191,29 @@ export default function DashboardPage() {
     cumulative: toNumber(mo.cumulative_try),
   }));
 
+  // Header slot for the AI insights rail: last-updated timestamp + manual refresh.
+  const briefingRight = (
+    <div className="flex items-center gap-2">
+      {generatedAt && <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(generatedAt)}</span>}
+      <button
+        onClick={handleRefreshBriefing}
+        disabled={briefingState === "loading"}
+        title="Yenile"
+        className="rounded p-1 text-text-secondary hover:text-primary disabled:opacity-50"
+        aria-label="Yenile"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${briefingState === "loading" ? "animate-spin" : ""}`} />
+      </button>
+    </div>
+  );
+
   return (
     <div>
       <PageHeader title="Ana Sayfa" subtitle="Tüm aktif projelerin finansal durumu" />
 
       <AISummaryStrip k={k} briefing={briefing} navigate={navigate} />
 
+      {/* --- KPI strip: primary row --- */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard
           loading={loading}
@@ -234,6 +256,7 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* --- KPI strip: secondary (executive) row --- */}
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard loading={loading} label="İş Bakiyesi (Backlog)" value={formatCurrencyAbbrev(ex?.backlog_try)} valueTitle={formatCurrency(ex?.backlog_try)} icon={Layers} series={data?.kpi_trends?.backlog_try?.series} delta={data?.kpi_trends?.backlog_try?.delta_pct} />
         <KPICard loading={loading} label="Tahmini Tamamlanma Karı" value={formatCurrencyAbbrev(ex?.projected_profit_try)} valueTitle={formatCurrency(ex?.projected_profit_try)} icon={PiggyBank} series={data?.kpi_trends?.projected_profit_try?.series} delta={data?.kpi_trends?.projected_profit_try?.delta_pct} alert={toNumber(ex?.projected_profit_try) < 0 ? "red" : null} />
@@ -249,34 +272,40 @@ export default function DashboardPage() {
       />
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <h2 className="mb-3 text-lg font-semibold text-primary">Proje Durumu</h2>
-          <DataTable columns={columns} rows={data?.projects ?? []} loading={loading} error={error} onRetry={refetch} minWidth={900} emptyMessage="Henüz proje yok. İlk projenizi oluşturun." emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }} onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)} />
-        </div>
+      {/* --- Hero: portfolio budget & forecast --- */}
+      <DashboardSection
+        className="mt-8"
+        title="Portföy Bütçe & Tahmin"
+        subtitle="Tüm aktif projelerin toplamı — sözleşme geliri, bütçe, taahhüt, harcanan ve tahmini final maliyet."
+      >
+        <Card>
+          <CardBody>
+            <PortfolioBudgetChart data={budgetChartData} height={320} />
+          </CardBody>
+        </Card>
+      </DashboardSection>
 
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-primary">
-              <Sparkles className="h-4 w-4 text-brand" /> Bugün Ne Yapmalısın
-            </h2>
-            <div className="flex items-center gap-2">
-              {generatedAt && (
-                <span className="text-[11px] italic text-text-secondary">
-                  Son güncelleme: {formatDateTime(generatedAt)}
-                </span>
-              )}
-              <button
-                onClick={handleRefreshBriefing}
-                disabled={briefingState === "loading"}
-                title="Yenile"
-                className="rounded p-1 text-text-secondary hover:text-primary disabled:opacity-50"
-                aria-label="Yenile"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${briefingState === "loading" ? "animate-spin" : ""}`} />
-              </button>
-            </div>
-          </div>
+      {/* --- Project ranking + AI insights rail --- */}
+      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start">
+        <DashboardSection
+          className="lg:col-span-2"
+          title="Proje Durumu"
+          subtitle="Aktif projelerin finansal sıralaması ve durum göstergeleri."
+        >
+          <DataTable
+            columns={columns}
+            rows={data?.projects ?? []}
+            loading={loading}
+            error={error}
+            onRetry={refetch}
+            minWidth={900}
+            emptyMessage="Henüz proje yok. İlk projenizi oluşturun."
+            emptyAction={{ label: "Yeni Proje", onClick: () => navigate("/projects/new") }}
+            onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
+          />
+        </DashboardSection>
+
+        <DashboardSection className="lg:sticky lg:top-6" icon={Sparkles} title="Bugün Ne Yapmalısın" right={briefingRight}>
           <Card>
             <CardBody className="space-y-3">
               {briefingState === "loading" && (
@@ -297,70 +326,29 @@ export default function DashboardPage() {
                   Bugün için öncelikli işlem bulunmuyor.
                 </div>
               )}
-              {briefing.slice(0, 8).map((item, i) => {
-                const sv = sevStyle(item.severity);
-                return (
-                  <div key={i} className="flex gap-3 border-b border-border pb-3 last:border-0 last:pb-0">
-                    <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${sv.bg} ${sv.fg}`}>
-                      <sv.Icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="block truncate text-xs font-semibold text-text-secondary">{item.project_name}</span>
-                      <p className="mt-0.5 text-sm font-medium text-text-primary">{item.issue}</p>
-                      <p className="mt-0.5 text-xs text-text-secondary">→ {item.recommended_action}</p>
-                    </div>
-                  </div>
-                );
-              })}
+              {briefing.slice(0, 8).map((item, i) => (
+                <InsightItem key={i} item={item} />
+              ))}
               {briefingState === "ready" && <AIDisclaimer />}
             </CardBody>
           </Card>
-        </div>
+        </DashboardSection>
       </div>
 
-      <div className="mt-6">
-        <h2 className="mb-1 text-lg font-semibold text-primary">Portföy Bütçe &amp; Tahmin</h2>
-        <p className="mb-3 text-xs text-text-secondary">Tüm aktif projelerin toplamı — sözleşme geliri, bütçe, taahhüt, harcanan ve tahmini final maliyet.</p>
-        <Card>
-          <CardBody>
-            <PortfolioBudgetChart data={budgetChartData} />
-          </CardBody>
-        </Card>
-      </div>
+      {/* --- Budget breakdown by cost category + AR aging --- */}
+      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+        <DashboardSection
+          title="Bütçe Dağılımı — Maliyet Kategorisi"
+          info="Aktif projelerde girilmiş bütçe kalemlerinin (orijinal + onaylı ek işler) maliyet kategorisine göre toplamıdır. Kategori bazında bütçe girilmemiş projeler dahil olmadığından, yukarıdaki “Revize Bütçe” toplamından düşük olabilir."
+          subtitle="Girilmiş bütçe kalemlerinin kategori bazında toplamı — kategori bütçesi girilmemiş projeler hariç."
+        >
+          <BudgetBreakdownCard items={bb?.items ?? []} total={bb?.total_try ?? "0"} loading={loading} />
+        </DashboardSection>
 
-      {forecastChartData.length > 0 && (
-        <div className="mt-6">
-          <div className="mb-1 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-primary">Nakit Akış Projeksiyonu (Önümüzdeki 6 Ay)</h2>
-            {fc?.shortfall && (
-              <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-danger">Nakit açığı riski</span>
-            )}
-          </div>
-          <p className="mb-3 text-xs text-text-secondary">
-            Bekleyen faturalardan beklenen tahsilatlar ile vadesi gelen ödemelerin projeksiyonu. En düşük öngörülen nakit:{" "}
-            <span className={fc?.shortfall ? "font-semibold text-danger" : "font-semibold text-text-primary"}>{formatCurrency(fc?.min_cash_try)}</span>
-            {fc?.min_cash_month ? ` (${fc.min_cash_month})` : ""}.
-          </p>
-          <Card>
-            <CardBody>
-              <CashFlowChart data={forecastChartData} />
-            </CardBody>
-          </Card>
-        </div>
-      )}
-
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
-        <div>
-          <h2 className="mb-3 text-lg font-semibold text-primary">Birleşik Nakit Akışı (Son 6 Ay)</h2>
-          <Card>
-            <CardBody>
-              <CashFlowChart data={chartData} />
-            </CardBody>
-          </Card>
-        </div>
-        <div>
-          <h2 className="mb-1 text-lg font-semibold text-primary">Alacak Yaşlandırması</h2>
-          <p className="mb-3 text-xs text-text-secondary">Bekleyen alacakların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO).</p>
+        <DashboardSection
+          title="Alacak Yaşlandırması"
+          subtitle="Bekleyen alacakların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO)."
+        >
           <Card>
             <CardBody>
               <div className="flex items-end justify-between">
@@ -392,17 +380,53 @@ export default function DashboardPage() {
               </div>
             </CardBody>
           </Card>
-        </div>
+        </DashboardSection>
       </div>
 
+      {/* --- Forward cash-flow projection (conditional) --- */}
+      {forecastChartData.length > 0 && (
+        <DashboardSection
+          className="mt-8"
+          title="Nakit Akış Projeksiyonu (Önümüzdeki 6 Ay)"
+          right={fc?.shortfall ? <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-danger">Nakit açığı riski</span> : undefined}
+          subtitle={
+            <>
+              Bekleyen faturalardan beklenen tahsilatlar ile vadesi gelen ödemelerin projeksiyonu. En düşük öngörülen nakit:{" "}
+              <span className={fc?.shortfall ? "font-semibold text-danger" : "font-semibold text-text-primary"}>{formatCurrency(fc?.min_cash_try)}</span>
+              {fc?.min_cash_month ? ` (${fc.min_cash_month})` : ""}.
+            </>
+          }
+        >
+          <Card>
+            <CardBody>
+              <CashFlowChart data={forecastChartData} />
+            </CardBody>
+          </Card>
+        </DashboardSection>
+      )}
+
+      {/* --- Combined historical cash flow --- */}
+      <DashboardSection className="mt-8" title="Birleşik Nakit Akışı (Son 6 Ay)">
+        <Card>
+          <CardBody>
+            <CashFlowChart data={chartData} />
+          </CardBody>
+        </Card>
+      </DashboardSection>
+
+      {/* --- Margin fade (conditional) --- */}
       {mf?.has_targets && (
-        <div className="mt-6">
-          <h2 className="mb-1 text-lg font-semibold text-primary">Kar Marjı Erozyonu</h2>
-          <p className="mb-3 text-xs text-text-secondary">
-            Hedeflenen kar marjına karşı güncel (tahmini) marj. Portföy: Hedef{" "}
-            <span className="font-semibold text-text-primary">{formatPct(mf.weighted_target_pct)}</span> · Güncel{" "}
-            <span className="font-semibold text-text-primary">{formatPct(mf.weighted_current_pct)}</span>.
-          </p>
+        <DashboardSection
+          className="mt-8"
+          title="Kar Marjı Erozyonu"
+          subtitle={
+            <>
+              Hedeflenen kar marjına karşı güncel (tahmini) marj. Portföy: Hedef{" "}
+              <span className="font-semibold text-text-primary">{formatPct(mf.weighted_target_pct)}</span> · Güncel{" "}
+              <span className="font-semibold text-text-primary">{formatPct(mf.weighted_current_pct)}</span>.
+            </>
+          }
+        >
           <Card>
             <CardBody>
               {mf.projects.map((pr, i) => {
@@ -421,13 +445,13 @@ export default function DashboardPage() {
               })}
             </CardBody>
           </Card>
-        </div>
+        </DashboardSection>
       )}
     </div>
   );
 }
 
-function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: any[]; navigate: (p: string) => void }) {
+function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: BriefingItem[]; navigate: (p: string) => void }) {
   const parts: string[] = [];
   if (k) {
     parts.push(`${k.active_project_count ?? 0} aktif proje`);
@@ -461,15 +485,4 @@ function AISummaryStrip({ k, briefing, navigate }: { k: any; briefing: any[]; na
       </button>
     </div>
   );
-}
-
-function sevStyle(severity: string): { bg: string; fg: string; Icon: typeof AlertTriangle } {
-  switch (severity) {
-    case "high":
-      return { bg: "bg-red-50", fg: "text-danger", Icon: AlertTriangle };
-    case "medium":
-      return { bg: "bg-amber-50", fg: "text-warning", Icon: AlarmClock };
-    default:
-      return { bg: "bg-navy-50", fg: "text-brand", Icon: Info };
-  }
 }

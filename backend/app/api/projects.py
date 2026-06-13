@@ -4,7 +4,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from slugify import slugify
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.calculations.money import D, money, pct, safe_div
@@ -364,6 +364,49 @@ def _combined_cashflow_chart(db: Session, project_ids: list, anchor: date | None
     return chart
 
 
+def _budget_breakdown(db, project_ids):
+    """Revised budget (original + approved variations) per cost category, summed
+    across the given projects.
+
+    `project_ids` MUST be the already role/visibility-scoped active project list
+    the dashboard computes (_list_visible_projects), so the breakdown inherits the
+    same per-role project visibility — a project manager never sees budget from
+    projects they cannot access.
+
+    Returns {"total_try": str, "items": [{category, label_tr, value_try,
+    pct_of_total}]} sorted descending by value (TRY as strings via money(), like
+    every other dashboard figure). Empty items when there are no budget rows.
+    """
+    if not project_ids:
+        return {"total_try": str(money(D(0))), "items": []}
+    rows = db.execute(
+        select(
+            BudgetLineItem.cost_category,
+            func.sum(BudgetLineItem.original_budget_try + BudgetLineItem.approved_variations_try),
+        )
+        .where(
+            BudgetLineItem.project_id.in_(project_ids),
+            BudgetLineItem.is_deleted.is_(False),
+        )
+        .group_by(BudgetLineItem.cost_category)
+    ).all()
+    # Only positive categories are shown; total = sum of shown bars so the
+    # percentages add up to 100% and the footer matches the bars.
+    positive = [(cat, val) for cat, val in rows if val and val > 0]
+    total = sum((val for _, val in positive), D(0))
+    items = [
+        {
+            "category": cat,
+            "label_tr": COST_CATEGORIES.get(cat, cat),
+            "value_try": str(money(val)),
+            "pct_of_total": str(pct(safe_div(val, total) * 100)),
+        }
+        for cat, val in positive
+    ]
+    items.sort(key=lambda x: float(x["value_try"]), reverse=True)
+    return {"total_try": str(money(total)), "items": items}
+
+
 @router.get("/dashboard")
 def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
     projects = _list_visible_projects(db, user, only_active=True)
@@ -476,6 +519,8 @@ def company_dashboard(user: CurrentUser, db: Session = Depends(get_db)):
                 "actual_try": str(money(total_actual)),
                 "forecast_final_cost_try": str(money(total_forecast_cost)),
             },
+            # Scoped to the same visible active projects (per-role visibility).
+            "budget_breakdown": _budget_breakdown(db, [p.id for p in projects]),
             "projects": rows,
             "cashflow_chart": cashflow_chart,
         }
