@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { CalendarRange, Filter as FilterIcon, X } from "lucide-react";
+import { AlarmClock, CalendarRange, Filter as FilterIcon, X } from "lucide-react";
 import { useState } from "react";
 
 /** Dashboard filter state (wired into the data fetch in Phase 6). */
@@ -40,10 +40,14 @@ export function DashboardToolbar({
   firstName,
   filters,
   onChange,
+  overdueCount = 0,
+  onOverdueClick,
 }: {
   firstName?: string;
   filters: DashboardFilters;
   onChange: (f: DashboardFilters) => void;
+  overdueCount?: number;
+  onOverdueClick?: () => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const activeCount = filters.rag.length + (filters.range !== "all" ? 1 : 0);
@@ -61,6 +65,19 @@ export function DashboardToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        {/* Overdue payments — small square alert card (opens the drill-down) */}
+        {overdueCount > 0 && onOverdueClick && (
+          <button
+            onClick={onOverdueClick}
+            title={`${overdueCount} vadesi geçmiş ödeme — görüntüle`}
+            aria-label={`${overdueCount} vadesi geçmiş ödeme`}
+            className="flex h-[42px] w-[42px] shrink-0 flex-col items-center justify-center rounded-lg border border-danger/40 bg-red-50 text-danger transition-colors hover:brightness-95"
+          >
+            <AlarmClock className="h-3.5 w-3.5" />
+            <span className="tabular text-xs font-bold leading-none">{overdueCount}</span>
+          </button>
+        )}
+
         {/* Date-range select */}
         <div className="relative">
           <CalendarRange className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />

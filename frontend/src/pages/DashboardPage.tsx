@@ -14,7 +14,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
-import { AlarmClock, Hammer, PlusSquare, Target, TrendingUp, Wallet } from "lucide-react";
+import { Hammer, PlusSquare, Target, TrendingUp, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -168,20 +168,16 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <DashboardToolbar firstName={firstName} filters={filters} onChange={setFilters} />
+      <DashboardToolbar
+        firstName={firstName}
+        filters={filters}
+        onChange={setFilters}
+        overdueCount={overdueCount}
+        onOverdueClick={() => setOverdueOpen(true)}
+      />
 
       <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
-      {overdueCount > 0 && (
-        <button
-          onClick={() => setOverdueOpen(true)}
-          className="mb-5 flex w-full items-center gap-2 rounded-xl border-l-4 border-danger bg-red-50 px-4 py-2.5 text-left text-sm font-medium text-danger transition-colors hover:brightness-95"
-        >
-          <AlarmClock className="h-4 w-4 shrink-0" />
-          {overdueCount} vadesi geçmiş ödeme — görüntüle →
-        </button>
-      )}
-
       {/* --- KPI strip: hero row (5) --- */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         <KPICard
@@ -248,7 +244,7 @@ export default function DashboardPage() {
         >
           <Card>
             <CardBody>
-              <PortfolioPerformanceChart data={performanceData} height={240} />
+              <PortfolioPerformanceChart data={performanceData} height={200} />
             </CardBody>
           </Card>
         </DashboardSection>
@@ -256,7 +252,7 @@ export default function DashboardPage() {
         {isDirector && (
           <DashboardSection
             title="Onay Bekleyenler"
-            subtitle="Onayınızı bekleyen işlemler."
+            subtitle={<span className="block truncate">Onayınızı bekleyen işlemler.</span>}
             right={
               <button onClick={() => navigate("/approvals")} className="text-sm font-medium text-brand hover:underline">
                 Tüm onaylar →
