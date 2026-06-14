@@ -5,6 +5,7 @@ import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { DashboardToolbar, DEFAULT_FILTERS, type DashboardFilters } from "@/components/dashboard/DashboardToolbar";
 import { YapiAIRail } from "@/components/dashboard/YapiAIRail";
 import { ApprovalsPanel } from "@/components/dashboard/ApprovalsPanel";
+import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailModal";
 import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
@@ -68,6 +69,7 @@ export default function DashboardPage() {
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [overdueOpen, setOverdueOpen] = useState(false);
   const [marginOpen, setMarginOpen] = useState(false);
+  const [kpiDetail, setKpiDetail] = useState<KpiInfo | null>(null);
   const { getSummary, setSummary, clearSummary } = useAISummaryStore();
   const CACHE_KEY = "dashboard-summary";
 
@@ -198,6 +200,17 @@ export default function DashboardPage() {
           accentColor="#2563EB"
           series={data?.kpi_trends?.total_contract_value_try?.series}
           delta={data?.kpi_trends?.total_contract_value_try?.delta_pct}
+          onClick={() =>
+            setKpiDetail({
+              title: "Gelir (Sözleşme Toplamı)",
+              value: formatCurrency(k?.total_contract_value_try),
+              description: "Tüm aktif projelerin sözleşme bedellerinin toplamı. Portföyün toplam gelir potansiyelini gösterir.",
+              series: data?.kpi_trends?.total_contract_value_try?.series,
+              delta: data?.kpi_trends?.total_contract_value_try?.delta_pct,
+              accentColor: "#2563EB",
+              action: { label: "Projeleri gör", onClick: () => navigate("/projects") },
+            })
+          }
         />
         <KPICard
           loading={loading}
@@ -208,6 +221,16 @@ export default function DashboardPage() {
           accentColor="#F59E0B"
           series={data?.kpi_trends?.cost_to_complete_try?.series}
           delta={data?.kpi_trends?.cost_to_complete_try?.delta_pct}
+          onClick={() =>
+            setKpiDetail({
+              title: "Tamamlanma Maliyeti",
+              value: formatCurrency(k?.cost_to_complete_try),
+              description: "Tahmini final maliyet ile bugüne kadar gerçekleşen maliyet arasındaki fark — işi tamamlamak için kalan tahmini maliyet.",
+              series: data?.kpi_trends?.cost_to_complete_try?.series,
+              delta: data?.kpi_trends?.cost_to_complete_try?.delta_pct,
+              accentColor: "#F59E0B",
+            })
+          }
         />
         <KPICard
           loading={loading}
@@ -219,7 +242,18 @@ export default function DashboardPage() {
           delta={marginPP}
           deltaUnit="pp"
           alert={marginNum < 5 ? "red" : marginNum < 10 ? "amber" : null}
-          onClick={() => setMarginOpen(true)}
+          onClick={() =>
+            setKpiDetail({
+              title: "Brüt Kar Marjı",
+              value: formatPct(k?.weighted_avg_margin_pct),
+              description: "Aktif projelerin sözleşme bedeline göre ağırlıklı ortalama (tahmini) kar marjı.",
+              series: marginSeries,
+              delta: marginPP,
+              deltaUnit: "pp",
+              accentColor: "#059669",
+              action: { label: "Düşük marjlı projeler", onClick: () => setMarginOpen(true) },
+            })
+          }
         />
         <KPICard
           loading={loading}
@@ -231,6 +265,16 @@ export default function DashboardPage() {
           series={data?.kpi_trends?.net_cash_position_try?.series}
           delta={data?.kpi_trends?.net_cash_position_try?.delta_pct}
           alert={toNumber(data?.exec_kpis?.net_cash_position_try) < 0 ? "red" : null}
+          onClick={() =>
+            setKpiDetail({
+              title: "Nakit Pozisyonu",
+              value: formatCurrency(data?.exec_kpis?.net_cash_position_try),
+              description: "Tüm aktif projelerin net nakit pozisyonu — tahsil edilen tutarlar eksi yapılan ödemeler.",
+              series: data?.kpi_trends?.net_cash_position_try?.series,
+              delta: data?.kpi_trends?.net_cash_position_try?.delta_pct,
+              accentColor: "#0E1525",
+            })
+          }
         />
       </div>
 
@@ -241,6 +285,7 @@ export default function DashboardPage() {
         onGoToReminders={() => navigate("/reminders")}
       />
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
+      <KpiDetailModal open={!!kpiDetail} onClose={() => setKpiDetail(null)} kpi={kpiDetail} />
 
       {/* --- Hero: portfolio performance + tahmini final maliyet graph --- */}
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">

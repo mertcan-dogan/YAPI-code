@@ -232,16 +232,18 @@ export function MetricLineChart({
   data,
   height = 200,
   color = COLORS.warning,
+  hideXAxis = false,
 }: {
   data: { name: string; value: number }[];
   height?: number;
   color?: string;
+  hideXAxis?: boolean;
 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 10, right: 14, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
-        <XAxis dataKey="name" tickLine={false} axisLine={false} {...axisProps} />
+        <XAxis dataKey="name" tickLine={false} axisLine={false} stroke={COLORS.border} tick={hideXAxis ? false : { fontSize: 11, fill: COLORS.muted }} />
         <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tickLine={false} axisLine={false} {...axisProps} width={64} />
         <Tooltip content={<ChartTooltip />} />
         <Line type="monotone" dataKey="value" name="Tutar" stroke={color} strokeWidth={2.5} dot={{ r: 4, fill: color }} activeDot={{ r: 5 }} />
