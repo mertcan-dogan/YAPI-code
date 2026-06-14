@@ -3,8 +3,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
-from sqlalchemy.dialects.postgresql import JSONB
 from app.models.types import GUID as PGUUID
+from app.models.types import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampSoftDeleteMixin

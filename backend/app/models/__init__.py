@@ -16,6 +16,7 @@ from app.models.budget_template import CustomBudgetTemplate
 from app.models.approval_request import ApprovalRequest
 from app.models.notification import Notification
 from app.models.kpi_snapshot import KPISnapshot
+from app.models.ai_conversation import AIConversation
 
 __all__ = [
     "Base",
@@ -35,4 +36,5 @@ __all__ = [
     "ApprovalRequest",
     "Notification",
     "KPISnapshot",
+    "AIConversation",
 ]

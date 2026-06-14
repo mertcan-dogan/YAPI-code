@@ -29,6 +29,7 @@ from app.startup import run_migrations
 # Routers
 from app.api import (
     ai,
+    ai_conversations,
     ai_import,
     document_capture,
     approvals,
@@ -117,6 +118,7 @@ for r in (
     reminders.router,
     reports.router,
     ai.router,
+    ai_conversations.router,
     uploads.router,
     audit.router,
     settings_router.router,
