@@ -58,9 +58,9 @@ export function KPICard({ label, value, valueTitle, unit, subtitle, alert, loadi
         onClick && "cursor-pointer hover:border-brand"
       )}
     >
-      {/* Title + circular accent symbol */}
+      {/* Title (wraps fully) + circular accent symbol */}
       <div className="flex items-start justify-between gap-2">
-        <span className="min-w-0 truncate text-xs text-text-secondary">{label}</span>
+        <span className="text-xs leading-snug text-text-secondary">{label}</span>
         {Icon && (
           <span
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
@@ -71,30 +71,32 @@ export function KPICard({ label, value, valueTitle, unit, subtitle, alert, loadi
         )}
       </div>
 
-      {/* Value */}
+      {/* Value — smaller, kept on a single line with its currency symbol */}
       <div className="mt-2 flex items-baseline gap-1">
-        <span title={valueTitle ?? value} className="tabular text-[22px] font-bold leading-tight text-primary">{value}</span>
+        <span title={valueTitle ?? value} className="tabular whitespace-nowrap text-lg font-bold leading-tight text-primary">{value}</span>
         {unit && <span className="shrink-0 text-sm text-text-secondary">{unit}</span>}
       </div>
 
-      {/* Delta + "geçen aya göre" (left) and sparkline (bottom-right) */}
-      <div className="mt-2 flex items-end justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1 text-xs">
-          {hasDelta ? (
-            <>
-              <span className={cn("flex items-center gap-0.5 font-medium", deltaColor)}>
-                {delta! >= 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
-                {Math.abs(delta!).toFixed(1)}
-                {deltaUnit === "pp" ? " pp" : "%"}
-              </span>
-              <span className="truncate text-text-disabled">geçen aya göre</span>
-            </>
-          ) : (
-            <span className="text-text-disabled">{subtitle ?? "—"}</span>
-          )}
-        </div>
-        {series && series.length >= 2 && <Sparkline data={series} color={accentColor} />}
+      {/* Delta + "geçen aya göre" (left); sparkline pinned to the card's bottom-right */}
+      <div className="mt-2 flex items-center gap-1 pr-[72px] text-xs">
+        {hasDelta ? (
+          <>
+            <span className={cn("flex items-center gap-0.5 font-medium", deltaColor)}>
+              {delta! >= 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+              {Math.abs(delta!).toFixed(1)}
+              {deltaUnit === "pp" ? " pp" : "%"}
+            </span>
+            <span className="truncate text-text-disabled">geçen aya göre</span>
+          </>
+        ) : (
+          <span className="text-text-disabled">{subtitle ?? "—"}</span>
+        )}
       </div>
+      {series && series.length >= 2 && (
+        <div className="absolute bottom-3 right-3">
+          <Sparkline data={series} color={accentColor} />
+        </div>
+      )}
     </div>
   );
 }
