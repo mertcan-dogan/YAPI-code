@@ -1,5 +1,4 @@
 import { CashFlowChart, PortfolioBudgetChart, PortfolioPerformanceChart } from "@/components/charts";
-import { Card, CardBody } from "@/components/ui";
 import { KPICard } from "@/components/KPICard";
 import { type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
@@ -249,11 +248,9 @@ export default function DashboardPage() {
           title="Portföy Performansı (Gerçekleşen vs Tahmin)"
           subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
         >
-          <Card>
-            <CardBody>
-              <PortfolioPerformanceChart data={performanceData} height={200} />
-            </CardBody>
-          </Card>
+          <div className="px-4 pb-4">
+            <PortfolioPerformanceChart data={performanceData} height={200} />
+          </div>
         </DashboardSection>
 
         {isDirector && (
@@ -293,19 +290,16 @@ export default function DashboardPage() {
           title="Portföy Bütçe & Tahmin"
           subtitle="Tüm aktif projelerin toplamı — sözleşme, revize bütçe, taahhüt, harcanan ve tahmini final maliyet."
         >
-          <Card>
-            <CardBody>
-              <PortfolioBudgetChart data={budgetChartData} height={300} />
-            </CardBody>
-          </Card>
+          <div className="px-4 pb-4">
+            <PortfolioBudgetChart data={budgetChartData} height={300} />
+          </div>
         </DashboardSection>
 
         <DashboardSection
           title="Alacak Yaşlandırması"
           subtitle="Bekleyen alacakların vade yaşına göre dağılımı ve ortalama tahsilat süresi (DSO)."
         >
-          <Card>
-            <CardBody>
+          <div className="px-4 pb-4">
               <div className="flex items-end justify-between">
                 <div>
                   <div className="text-xs text-text-secondary">Ortalama Tahsilat Süresi (DSO)</div>
@@ -333,8 +327,7 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
-            </CardBody>
-          </Card>
+          </div>
         </DashboardSection>
       </div>
 
@@ -352,21 +345,17 @@ export default function DashboardPage() {
             </>
           }
         >
-          <Card>
-            <CardBody>
-              <CashFlowChart data={forecastChartData} />
-            </CardBody>
-          </Card>
+          <div className="px-4 pb-4">
+            <CashFlowChart data={forecastChartData} />
+          </div>
         </DashboardSection>
       )}
 
       {/* --- Combined historical cash flow --- */}
       <DashboardSection className="mt-5" title="Birleşik Nakit Akışı (Son 6 Ay)">
-        <Card>
-          <CardBody>
-            <CashFlowChart data={chartData} />
-          </CardBody>
-        </Card>
+        <div className="px-4 pb-4">
+          <CashFlowChart data={chartData} />
+        </div>
       </DashboardSection>
 
       {/* --- Margin fade (conditional) --- */}
@@ -382,8 +371,7 @@ export default function DashboardPage() {
             </>
           }
         >
-          <Card>
-            <CardBody>
+          <div className="px-4 pb-4">
               {mf.projects.map((pr, i) => {
                 const diff = toNumber(pr.current_pct) - toNumber(pr.target_pct);
                 const chip = diff >= 0 ? "bg-green-50 text-success" : "bg-red-50 text-danger";
@@ -398,8 +386,7 @@ export default function DashboardPage() {
                   </div>
                 );
               })}
-            </CardBody>
-          </Card>
+          </div>
         </DashboardSection>
       )}
         </div>

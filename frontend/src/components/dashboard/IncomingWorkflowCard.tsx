@@ -1,4 +1,4 @@
-import { Card, CardBody, Skeleton } from "@/components/ui";
+import { Skeleton } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { cn } from "@/lib/cn";
 import { formatCurrencyAbbrev, formatDate } from "@/utils/format";
@@ -59,8 +59,7 @@ export function IncomingWorkflowCard() {
   const items = data?.[tab] ?? [];
 
   return (
-    <Card>
-      <CardBody className="p-0">
+    <div className="border-t border-border">
         <div className="flex items-center gap-1 border-b border-border px-3 pt-2">
           {TABS.map((t) => {
             const count = data?.[t.key]?.length ?? 0;
@@ -125,7 +124,6 @@ export function IncomingWorkflowCard() {
             })
           )}
         </div>
-      </CardBody>
-    </Card>
+    </div>
   );
 }

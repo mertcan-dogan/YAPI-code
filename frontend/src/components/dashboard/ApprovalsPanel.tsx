@@ -1,4 +1,4 @@
-import { Card, CardBody, Skeleton } from "@/components/ui";
+import { Skeleton } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { formatCurrencyAbbrev } from "@/utils/format";
 import { Calculator, CheckCircle2, ClipboardCheck, PlusSquare, Receipt, Trash2, Users, type LucideIcon } from "lucide-react";
@@ -39,9 +39,8 @@ export function ApprovalsPanel({ onGoToApprovals }: { onGoToApprovals: () => voi
   const items = data ?? [];
 
   return (
-    <Card>
-      <CardBody className="p-0">
-        {loading ? (
+    <div className="border-t border-border">
+      {loading ? (
           <div className="space-y-3 p-4">
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="h-10 w-full" />
@@ -89,7 +88,6 @@ export function ApprovalsPanel({ onGoToApprovals }: { onGoToApprovals: () => voi
             </button>
           </>
         )}
-      </CardBody>
-    </Card>
+    </div>
   );
 }
