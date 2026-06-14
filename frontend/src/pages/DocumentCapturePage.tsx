@@ -1,10 +1,9 @@
-import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select } from "@/components/ui";
 import { COST_CATEGORIES, VAT_RATES } from "@/constants";
 import { api, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
 import { formatCurrency, formatDate } from "@/utils/format";
-import { AlertTriangle, Camera, CheckCircle2, Copy, Loader2, Sparkles, Upload } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, Copy, FileText, Loader2, ShieldCheck, Sparkles, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -177,18 +176,54 @@ export default function DocumentCapturePage() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <PageHeader title="Belge Tara" subtitle="Faturayı yükle — yapay zeka alanları çıkarsın, doğru proje ve maliyet kodunu önersin" />
+      {/* AI hero — what it is, that it uses AI, and what it does */}
+      <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-[#1e3a8a] via-[#2563eb] to-[#0891b2] p-5 text-white shadow-sm">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-bold">Akıllı Belge Tarama</h1>
+              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">Yapay Zeka</span>
+            </div>
+            <p className="mt-0.5 text-[13px] leading-snug text-white/85">
+              Fatura fotoğrafını veya PDF'ini yükleyin. <b>Yapı AI</b> belgeyi okur, bilgileri çıkarır,
+              doğru proje ve maliyet kodunu gerekçesiyle önerir ve mükerrer/anormal kayıtları yakalar.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {[
+            { icon: FileText, title: "Otomatik Çıkarım", desc: "Tedarikçi, fatura no, tarih, vade, KDV, toplam ve satır kalemleri." },
+            { icon: Sparkles, title: "Akıllı Sınıflandırma", desc: "Tedarikçi geçmişi ve bütçeye göre proje + maliyet kodu önerisi — gerekçeli." },
+            { icon: ShieldCheck, title: "Mükerrer & Anomali", desc: "Aynı fatura/tutar veya olağandışı maliyetleri otomatik kontrol eder." },
+          ].map((f) => (
+            <div key={f.title} className="rounded-lg bg-white/10 p-2.5">
+              <div className="flex items-center gap-1.5 text-[13px] font-semibold">
+                <f.icon className="h-3.5 w-3.5 text-brand-2" /> {f.title}
+              </div>
+              <p className="mt-0.5 text-[11px] leading-snug text-white/80">{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
 
-      <Card>
-        <CardBody className="space-y-3">
-          {preview && <img src={preview} alt="Önizleme" className="max-h-56 w-full rounded-md border border-border object-contain" />}
-          {isPdf && !preview && <div className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-secondary">PDF yüklendi</div>}
-
-          <div className="grid grid-cols-2 gap-2">
-            <Button type="button" variant="outline" onClick={() => cameraRef.current?.click()} disabled={reading}>
+      {/* Upload zone */}
+      <div className="mt-4">
+        <div className="rounded-xl border border-dashed border-border bg-surface p-5 text-center shadow-sm">
+          <span className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand-2 text-white shadow-sm">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <p className="text-sm font-medium text-primary">Faturayı yükleyin, gerisini Yapı AI halletsin</p>
+          <p className="mb-3 text-xs text-text-secondary">JPEG, PNG veya PDF · en fazla 10MB</p>
+          {preview && <img src={preview} alt="Önizleme" className="mx-auto mb-3 max-h-56 w-full rounded-md border border-border object-contain" />}
+          {isPdf && !preview && <div className="mb-3 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-secondary">PDF yüklendi</div>}
+          <div className="mx-auto flex max-w-sm flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="outline" className="flex-1" onClick={() => cameraRef.current?.click()} disabled={reading}>
               <Camera className="h-4 w-4" /> Fotoğraf Çek
             </Button>
-            <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={reading}>
+            <Button type="button" className="flex-1" onClick={() => fileRef.current?.click()} disabled={reading}>
               <Upload className="h-4 w-4" /> Dosya Seç
             </Button>
           </div>
@@ -196,12 +231,12 @@ export default function DocumentCapturePage() {
           <input ref={fileRef} type="file" accept="image/png,image/jpeg,application/pdf" className="hidden" onChange={onPick} />
 
           {reading && (
-            <div className="flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-accent">
-              <Loader2 className="h-4 w-4 animate-spin" /> Yapay zeka belgeyi okuyor ve sınıflandırıyor…
+            <div className="mt-3 flex items-center justify-center gap-2 rounded-md bg-navy-50 px-3 py-2 text-sm text-brand">
+              <Loader2 className="h-4 w-4 animate-spin" /> Yapı AI belgeyi okuyor ve sınıflandırıyor…
             </div>
           )}
-        </CardBody>
-      </Card>
+        </div>
+      </div>
 
       {form && (
         <Card className="mt-4">
