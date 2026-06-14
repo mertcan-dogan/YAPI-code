@@ -372,14 +372,6 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
           <Menu className="h-5 w-5" />
         </button>
         <ProjectSelector />
-        <button
-          onClick={() => setCmdOpen(true)}
-          className="hidden items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text-secondary transition-colors hover:border-brand md:flex"
-        >
-          <Sparkles className="h-4 w-4 text-brand" />
-          <span>Ara, sor veya komut ver…</span>
-          <span className="ml-2 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-disabled">⌘K</span>
-        </button>
       </div>
       <div className="relative flex items-center gap-3">
         <button
