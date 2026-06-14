@@ -83,13 +83,32 @@ export default function DocumentCapturePage() {
   const [duplicates, setDuplicates] = useState<DupItem[]>([]);
   const [anomalies, setAnomalies] = useState<AnomalyItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   const set = (k: keyof Form, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
-  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const ACCEPTED = ["image/png", "image/jpeg", "application/pdf"];
+
+  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
+    if (file) processFile(file);
+  };
+
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (reading) return;
+    const file = e.dataTransfer.files?.[0];
     if (!file) return;
+    if (!ACCEPTED.includes(file.type)) {
+      toast.error("Yalnızca JPEG, PNG veya PDF yükleyebilirsiniz");
+      return;
+    }
+    processFile(file);
+  };
+
+  const processFile = async (file: File) => {
     setIsPdf(file.type === "application/pdf");
     setPreview(file.type === "application/pdf" ? null : URL.createObjectURL(file));
     setForm(null);
@@ -211,14 +230,35 @@ export default function DocumentCapturePage() {
 
       {/* Upload zone */}
       <div className="mt-4">
-        <div className="rounded-xl border border-dashed border-border bg-surface p-5 text-center shadow-sm">
+        <div className="rounded-xl border border-border bg-surface p-5 text-center shadow-sm">
           <span className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-brand-2 text-white shadow-sm">
             <Sparkles className="h-5 w-5" />
           </span>
           <p className="text-sm font-medium text-primary">Faturayı yükleyin, gerisini Yapı AI halletsin</p>
-          <p className="mb-3 text-xs text-text-secondary">JPEG, PNG veya PDF · en fazla 10MB</p>
-          {preview && <img src={preview} alt="Önizleme" className="mx-auto mb-3 max-h-56 w-full rounded-md border border-border object-contain" />}
-          {isPdf && !preview && <div className="mb-3 rounded-md border border-border bg-bg px-3 py-2 text-sm text-text-secondary">PDF yüklendi</div>}
+
+          {/* Grey drag-and-drop section */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); if (!reading) setDragOver(true); }}
+            onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+            onDrop={onDrop}
+            className={`my-4 flex min-h-[225px] flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed p-4 transition-colors ${
+              dragOver ? "border-brand bg-navy-50 ring-2 ring-brand/30" : "border-border bg-bg"
+            }`}
+          >
+            {preview ? (
+              <img src={preview} alt="Önizleme" className="mx-auto max-h-48 w-full rounded-md border border-border object-contain" />
+            ) : isPdf ? (
+              <div className="rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-secondary">PDF yüklendi</div>
+            ) : (
+              <>
+                <Upload className="mb-1 h-7 w-7 text-text-secondary" />
+                <p className="text-sm font-medium text-text-primary">Dosyayı buraya sürükleyip bırakın</p>
+                <p className="text-xs text-text-secondary">veya aşağıdaki butonları kullanın</p>
+                <p className="mt-1 text-xs text-text-secondary">JPEG, PNG veya PDF · en fazla 10MB</p>
+              </>
+            )}
+          </div>
+
           <div className="mx-auto flex max-w-sm flex-col gap-2 sm:flex-row">
             <Button type="button" variant="outline" className="flex-1" onClick={() => cameraRef.current?.click()} disabled={reading}>
               <Camera className="h-4 w-4" /> Fotoğraf Çek
