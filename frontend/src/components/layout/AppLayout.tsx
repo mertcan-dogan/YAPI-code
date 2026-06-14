@@ -294,12 +294,24 @@ function ProjectSelector() {
   const { activeProjectId, setActiveProject } = useProjectStore();
   const [open, setOpen] = React.useState(false);
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([]);
+  const selectorRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     apiGet<{ id: string; name: string; status: string }[]>("/projects")
       .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active")))
       .catch(() => setProjects([]));
   }, []);
+
+  // Close on outside click via a document listener (not an overlay) so the
+  // page stays scrollable while the selector is open.
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [open]);
 
   const selectedId = params.id ?? activeProjectId;
   const current = projects.find((p) => p.id === selectedId);
@@ -310,7 +322,7 @@ function ProjectSelector() {
   };
 
   return (
-    <div className="relative">
+    <div ref={selectorRef} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm text-text-primary hover:bg-bg sm:px-3"
@@ -320,8 +332,6 @@ function ProjectSelector() {
         <ChevronDown className="h-4 w-4 text-text-secondary" />
       </button>
       {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-11 z-20 max-h-80 w-64 overflow-auto rounded-md border border-border bg-surface py-1 shadow-lg">
             {projects.length === 0 && <div className="px-3 py-2 text-xs text-text-secondary">Aktif proje yok</div>}
             {projects.map((p) => (
@@ -342,7 +352,6 @@ function ProjectSelector() {
               </button>
             </div>
           </div>
-        </>
       )}
     </div>
   );
@@ -354,6 +363,7 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [cmdOpen, setCmdOpen] = React.useState(false);
   const [helpOpen, setHelpOpen] = React.useState(false);
+  const menuRef = React.useRef<HTMLDivElement>(null);
   const roleLabel = user?.role ? ROLE_LABELS[user.role] ?? user.role : null;
   React.useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -365,6 +375,16 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, []);
+  // Close the profile menu on outside click. We use a document listener instead
+  // of a full-screen overlay so it never intercepts page scroll while open.
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [open]);
   return (
     <header className="flex h-16 items-center justify-between border-b border-border bg-surface px-4 lg:px-6">
       <div className="flex items-center gap-3">
@@ -373,7 +393,7 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
         </button>
         <ProjectSelector />
       </div>
-      <div className="relative flex items-center gap-3">
+      <div ref={menuRef} className="relative flex items-center gap-3">
         <button
           onClick={() => setHelpOpen(true)}
           className="text-text-secondary transition-colors hover:text-primary"
@@ -393,8 +413,6 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
           </span>
         </button>
         {open && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
             <div className="absolute right-0 top-12 z-50 w-48 rounded-md border border-border bg-surface py-1 shadow-lg">
             <div className="border-b border-border px-3 py-2 text-xs text-text-secondary">{user?.email}</div>
             <Link to="/settings" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-bg">
@@ -410,7 +428,6 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
               <LogOut className="h-4 w-4" /> Çıkış Yap
             </button>
             </div>
-          </>
         )}
       </div>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
