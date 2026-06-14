@@ -14,7 +14,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
-import { Hammer, PlusSquare, Target, TrendingUp, Wallet } from "lucide-react";
+import { Banknote, Hammer, Percent, Target, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -174,6 +174,7 @@ export default function DashboardPage() {
         onChange={setFilters}
         overdueCount={overdueCount}
         onOverdueClick={() => setOverdueOpen(true)}
+        onAddDocument={() => navigate("/document-capture")}
       />
 
       <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
@@ -186,6 +187,7 @@ export default function DashboardPage() {
           value={formatCurrencyAbbrev(k?.total_contract_value_try)}
           valueTitle={formatCurrency(k?.total_contract_value_try)}
           icon={Wallet}
+          accentColor="#2563EB"
           series={data?.kpi_trends?.total_contract_value_try?.series}
           delta={data?.kpi_trends?.total_contract_value_try?.delta_pct}
         />
@@ -195,6 +197,7 @@ export default function DashboardPage() {
           value={formatCurrencyAbbrev(k?.cost_to_complete_try)}
           valueTitle={formatCurrency(k?.cost_to_complete_try)}
           icon={Hammer}
+          accentColor="#F59E0B"
           series={data?.kpi_trends?.cost_to_complete_try?.series}
           delta={data?.kpi_trends?.cost_to_complete_try?.delta_pct}
         />
@@ -204,12 +207,14 @@ export default function DashboardPage() {
           value={formatCurrencyAbbrev(pb?.forecast_final_cost_try)}
           valueTitle={formatCurrency(pb?.forecast_final_cost_try)}
           icon={Target}
+          accentColor="#06B6D4"
         />
         <KPICard
           loading={loading}
           label="Brüt Kar Marjı"
           value={formatPct(k?.weighted_avg_margin_pct)}
-          icon={TrendingUp}
+          icon={Percent}
+          accentColor="#059669"
           series={marginSeries}
           delta={marginPP}
           deltaUnit="pp"
@@ -218,12 +223,14 @@ export default function DashboardPage() {
         />
         <KPICard
           loading={loading}
-          label="Ek İşler (Net)"
-          value={formatCurrencyAbbrev(k?.variations_net_try)}
-          valueTitle={formatCurrency(k?.variations_net_try)}
-          icon={PlusSquare}
-          series={data?.kpi_trends?.variations_net_try?.series}
-          delta={data?.kpi_trends?.variations_net_try?.delta_pct}
+          label="Nakit Pozisyonu"
+          value={formatCurrencyAbbrev(data?.exec_kpis?.net_cash_position_try)}
+          valueTitle={formatCurrency(data?.exec_kpis?.net_cash_position_try)}
+          icon={Banknote}
+          accentColor="#0E1525"
+          series={data?.kpi_trends?.net_cash_position_try?.series}
+          delta={data?.kpi_trends?.net_cash_position_try?.delta_pct}
+          alert={toNumber(data?.exec_kpis?.net_cash_position_try) < 0 ? "red" : null}
         />
       </div>
 
@@ -236,7 +243,7 @@ export default function DashboardPage() {
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
       {/* --- Hero: portfolio performance + pending approvals (director) --- */}
-      <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3 xl:items-start">
+      <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-3 xl:items-start">
         <DashboardSection
           className={isDirector ? "xl:col-span-2" : "xl:col-span-3"}
           title="Portföy Performansı (Gerçekleşen vs Tahmin)"
@@ -266,20 +273,22 @@ export default function DashboardPage() {
 
       {/* --- Incoming documents (full width) --- */}
       <DashboardSection
-        className="mt-8"
-        title="Gelen Belgeler"
-        subtitle="Son eklenen faturalar, hakedişler ve ek işler."
-        right={
-          <button onClick={() => navigate("/document-capture")} className="text-sm font-medium text-brand hover:underline">
-            Belge Yükle →
-          </button>
+        className="mt-5"
+        title={
+          <span className="inline-flex items-center gap-3">
+            Gelen Belgeler
+            <button onClick={() => navigate("/document-capture")} className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-brand hover:border-brand">
+              Belge Yükle →
+            </button>
+          </span>
         }
+        subtitle="Son eklenen faturalar, hakedişler ve ek işler."
       >
         <IncomingWorkflowCard />
       </DashboardSection>
 
       {/* --- Portfolio budget totals + AR aging --- */}
-      <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+      <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
         <DashboardSection
           title="Portföy Bütçe & Tahmin"
           subtitle="Tüm aktif projelerin toplamı — sözleşme, revize bütçe, taahhüt, harcanan ve tahmini final maliyet."
@@ -332,7 +341,7 @@ export default function DashboardPage() {
       {/* --- Forward cash-flow projection (conditional) --- */}
       {forecastChartData.length > 0 && (
         <DashboardSection
-          className="mt-8"
+          className="mt-5"
           title="Nakit Akış Projeksiyonu (Önümüzdeki 6 Ay)"
           right={fc?.shortfall ? <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-danger">Nakit açığı riski</span> : undefined}
           subtitle={
@@ -352,7 +361,7 @@ export default function DashboardPage() {
       )}
 
       {/* --- Combined historical cash flow --- */}
-      <DashboardSection className="mt-8" title="Birleşik Nakit Akışı (Son 6 Ay)">
+      <DashboardSection className="mt-5" title="Birleşik Nakit Akışı (Son 6 Ay)">
         <Card>
           <CardBody>
             <CashFlowChart data={chartData} />
@@ -363,7 +372,7 @@ export default function DashboardPage() {
       {/* --- Margin fade (conditional) --- */}
       {mf?.has_targets && (
         <DashboardSection
-          className="mt-8"
+          className="mt-5"
           title="Kar Marjı Erozyonu"
           subtitle={
             <>

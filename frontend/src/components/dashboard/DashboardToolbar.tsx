@@ -1,5 +1,5 @@
 import { cn } from "@/lib/cn";
-import { AlarmClock, CalendarRange, Filter as FilterIcon, X } from "lucide-react";
+import { AlarmClock, CalendarRange, Filter as FilterIcon, ScanLine, X } from "lucide-react";
 import { useState } from "react";
 
 /** Dashboard filter state (wired into the data fetch in Phase 6). */
@@ -42,12 +42,14 @@ export function DashboardToolbar({
   onChange,
   overdueCount = 0,
   onOverdueClick,
+  onAddDocument,
 }: {
   firstName?: string;
   filters: DashboardFilters;
   onChange: (f: DashboardFilters) => void;
   overdueCount?: number;
   onOverdueClick?: () => void;
+  onAddDocument?: () => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const activeCount = filters.rag.length + (filters.range !== "all" ? 1 : 0);
@@ -65,6 +67,16 @@ export function DashboardToolbar({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        {/* Add document with AI */}
+        {onAddDocument && (
+          <button
+            onClick={onAddDocument}
+            className="flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-light"
+          >
+            <ScanLine className="h-4 w-4" /> AI ile Belge Ekle
+          </button>
+        )}
+
         {/* Overdue payments — small square alert card (opens the drill-down) */}
         {overdueCount > 0 && onOverdueClick && (
           <button
