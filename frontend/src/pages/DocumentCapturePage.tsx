@@ -3,8 +3,8 @@ import { Button, Card, CardBody, Input, Label, Select } from "@/components/ui";
 import { COST_CATEGORIES, VAT_RATES } from "@/constants";
 import { api, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
-import { formatCurrency } from "@/utils/format";
-import { Camera, CheckCircle2, Loader2, Sparkles, Upload } from "lucide-react";
+import { formatCurrency, formatDate } from "@/utils/format";
+import { AlertTriangle, Camera, CheckCircle2, Copy, Loader2, Sparkles, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -33,6 +33,9 @@ interface Extracted {
 }
 
 interface ProjectOpt { id: string; name: string }
+
+interface DupItem { id: string; supplier?: string | null; invoice_number?: string | null; amount_try: string; entry_date: string; project?: string | null; reasons: string[] }
+interface AnomalyItem { type: string; message: string }
 
 type Form = {
   supplier_name: string;
@@ -78,6 +81,8 @@ export default function DocumentCapturePage() {
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
   const [projectId, setProjectId] = useState("");
   const [suggestedProjectId, setSuggestedProjectId] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState<DupItem[]>([]);
+  const [anomalies, setAnomalies] = useState<AnomalyItem[]>([]);
   const [saving, setSaving] = useState(false);
 
   const set = (k: keyof Form, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
@@ -91,15 +96,20 @@ export default function DocumentCapturePage() {
     setForm(null);
     setExtracted(null);
     setDocPath(null);
+    setDuplicates([]);
+    setAnomalies([]);
     setReading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
       const res = await api.post(`/document-capture`, fd);
-      const { extracted, document_path, file_sha256, projects } = res.data.data as {
+      const { extracted, document_path, file_sha256, projects, duplicates, anomalies } = res.data.data as {
         extracted: Extracted; document_path: string; file_sha256: string; projects: ProjectOpt[];
+        duplicates?: DupItem[]; anomalies?: AnomalyItem[];
       };
       setExtracted(extracted);
+      setDuplicates(duplicates ?? []);
+      setAnomalies(anomalies ?? []);
       setDocPath(document_path);
       setFileSha(file_sha256);
       setProjects(projects ?? []);
@@ -151,6 +161,8 @@ export default function DocumentCapturePage() {
       setExtracted(null);
       setPreview(null);
       setDocPath(null);
+      setDuplicates([]);
+      setAnomalies([]);
     } catch (err: any) {
       toast.error(err.message ?? "Kaydedilemedi");
     } finally {
@@ -200,6 +212,38 @@ export default function DocumentCapturePage() {
               </h3>
               {conf != null && <span className={`text-xs font-semibold ${confColor}`}>Güven: %{conf}</span>}
             </div>
+
+            {/* Duplicate warnings */}
+            {duplicates.length > 0 && (
+              <div className="rounded-lg border border-danger/40 bg-red-50 px-3 py-2 text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-danger">
+                  <Copy className="h-3.5 w-3.5" /> Olası mükerrer kayıt ({duplicates.length})
+                </div>
+                <ul className="mt-1.5 space-y-1.5">
+                  {duplicates.map((d) => (
+                    <li key={d.id}>
+                      <span className="font-medium text-text-primary">
+                        {[d.supplier || "—", d.invoice_number, formatCurrency(d.amount_try), formatDate(d.entry_date)].filter(Boolean).join(" · ")}
+                      </span>
+                      {d.project && <span className="text-text-secondary"> · {d.project}</span>}
+                      <div className="text-[11px] text-danger">{d.reasons.join(" · ")}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Anomaly warnings */}
+            {anomalies.length > 0 && (
+              <div className="rounded-lg border border-warning/40 bg-amber-50 px-3 py-2 text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-warning">
+                  <AlertTriangle className="h-3.5 w-3.5" /> Dikkat ({anomalies.length})
+                </div>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4 text-text-secondary">
+                  {anomalies.map((a, i) => <li key={i}>{a.message}</li>)}
+                </ul>
+              </div>
+            )}
 
             {/* AI reasoning for the project + cost-code suggestion */}
             {extracted?.reasoning && (

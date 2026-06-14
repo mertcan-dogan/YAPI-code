@@ -15,7 +15,7 @@ from decimal import Decimal
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -216,6 +216,85 @@ def _capture_context(db: Session, user) -> dict:
     return {"projects": project_list, "categories": COST_CATEGORIES, "suppliers": suppliers}
 
 
+def _try_money(v) -> str:
+    try:
+        return f"{float(v):,.0f}".replace(",", ".") + " ₺"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _capture_checks(db: Session, user, extracted: dict, file_sha256: str | None, context: dict) -> dict:
+    """Phase 2: duplicate + anomaly detection against existing cost entries and
+    the supplier/budget history in `context`. Returns warnings only — never blocks."""
+    from decimal import Decimal
+
+    from app.constants import COST_CATEGORIES
+
+    supplier = (extracted.get("supplier_name") or "").strip()
+    invoice_no = (extracted.get("invoice_number") or "").strip()
+    sug_cat = extracted.get("suggested_cost_category")
+    sug_proj = extracted.get("suggested_project_id")
+    pname = {p["id"]: p["name"] for p in context["projects"]}
+    cat_label = lambda k: COST_CATEGORIES.get(k, k)  # noqa: E731
+
+    try:
+        amount = Decimal(str(extracted.get("subtotal"))).quantize(Decimal("0.01"))
+    except Exception:
+        amount = None
+    inv_date = None
+    try:
+        inv_date = date.fromisoformat(str(extracted.get("invoice_date"))[:10])
+    except Exception:
+        pass
+
+    base = select(CostEntry).where(CostEntry.company_id == user.company_id, CostEntry.is_deleted.is_(False))
+    duplicates: list[dict] = []
+    by_id: dict = {}
+
+    def add_dup(e, reason: str):
+        d = by_id.get(str(e.id))
+        if d:
+            if reason not in d["reasons"]:
+                d["reasons"].append(reason)
+            return
+        d = {
+            "id": str(e.id), "supplier": e.supplier_name, "invoice_number": e.invoice_number,
+            "amount_try": str(e.amount_try), "entry_date": e.entry_date.isoformat(),
+            "project": pname.get(str(e.project_id)), "reasons": [reason],
+        }
+        by_id[str(e.id)] = d
+        duplicates.append(d)
+
+    if file_sha256:
+        for e in db.execute(base.where(CostEntry.document_sha256 == file_sha256)).scalars().all():
+            add_dup(e, "Birebir aynı dosya")
+    if invoice_no and supplier:
+        for e in db.execute(base.where(func.lower(CostEntry.invoice_number) == invoice_no.lower(), func.lower(CostEntry.supplier_name) == supplier.lower())).scalars().all():
+            add_dup(e, "Aynı tedarikçi + aynı fatura no")
+    if supplier and amount is not None and amount > 0:
+        for e in db.execute(base.where(func.lower(CostEntry.supplier_name) == supplier.lower(), CostEntry.amount_try == amount)).scalars().all():
+            near = inv_date is None or abs((e.entry_date - inv_date).days) <= 5
+            if near:
+                add_dup(e, "Aynı tedarikçi + aynı tutar" + (" + yakın tarih" if inv_date else ""))
+
+    # --- Anomalies ---
+    anomalies: list[dict] = []
+    sup = next((s for s in context["suppliers"] if s["name"].lower() == supplier.lower()), None) if supplier else None
+    if sup and amount is not None and sup["avg_amount"] and float(amount) > 3 * sup["avg_amount"]:
+        anomalies.append({"type": "amount", "message": f"Tutar ({_try_money(amount)}) bu tedarikçinin ortalamasının ({_try_money(sup['avg_amount'])}) çok üzerinde."})
+    if sup and sug_cat and sup["usual_category"] and sug_cat != sup["usual_category"]:
+        anomalies.append({"type": "category", "message": f"Bu tedarikçi genellikle '{cat_label(sup['usual_category'])}' kategorisinde; önerilen kategori farklı: '{cat_label(sug_cat)}'."})
+    if sup and sug_proj and sup["projects"]:
+        sp = pname.get(sug_proj)
+        if sp and sp not in sup["projects"]:
+            anomalies.append({"type": "project", "message": f"Bu tedarikçi daha önce {', '.join(sup['projects'])} projelerinde kullanılmış; önerilen proje farklı: {sp}."})
+    proj = next((p for p in context["projects"] if p["id"] == sug_proj), None) if sug_proj else None
+    if proj and sug_cat and proj["categories"] and sug_cat not in proj["categories"]:
+        anomalies.append({"type": "budget", "message": f"'{cat_label(sug_cat)}' kategorisi '{proj['name']}' projesinin bütçesinde yer almıyor."})
+
+    return {"duplicates": duplicates, "anomalies": anomalies}
+
+
 def _validate_upload(file: UploadFile, data: bytes) -> None:
     if file.content_type not in ALLOWED:
         raise APIError(422, "VALIDATION_ERROR", "Sadece JPEG, PNG veya PDF yükleyebilirsiniz", field="file")
@@ -248,7 +327,15 @@ async def smart_capture(user: CurrentUser, db: Session = Depends(get_db), file: 
     except ai_service.AIUnavailable:
         raise APIError(503, "AI_UNAVAILABLE", "AI belgeyi okuyamadı. Lütfen alanları elle doldurun.")
 
-    return success({"extracted": fields, "document_path": path, "file_sha256": sha, "projects": context["projects"]})
+    checks = _capture_checks(db, user, fields, sha, context)
+    return success({
+        "extracted": fields,
+        "document_path": path,
+        "file_sha256": sha,
+        "projects": context["projects"],
+        "duplicates": checks["duplicates"],
+        "anomalies": checks["anomalies"],
+    })
 
 
 class SmartCaptureConfirm(BaseModel):
