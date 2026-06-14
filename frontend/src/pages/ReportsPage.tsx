@@ -67,7 +67,7 @@ export default function ReportsPage() {
     <div>
       <PageHeader title="Raporlar" />
 
-      <Card className="mb-6">
+      <Card className="mb-4">
         <CardBody className="flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-sm font-medium text-text-secondary">Aylık Yönetim Paketi</label>

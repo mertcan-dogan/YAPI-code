@@ -245,7 +245,7 @@ export default function BudgetPage() {
       />
 
       {budgetFailed ? (
-        <div className="mb-6 flex flex-col items-center justify-center gap-3 rounded-xl border border-danger/40 bg-red-50 py-10 text-center">
+        <div className="mb-4 flex flex-col items-center justify-center gap-3 rounded-xl border border-danger/40 bg-red-50 py-10 text-center">
           <AlertTriangle className="h-8 w-8 text-danger" />
           <p className="text-sm text-text-secondary">Bütçe verileri yüklenemedi. Lütfen tekrar deneyin.</p>
           <Button variant="outline" onClick={() => budget.refetch()}><RefreshCw className="h-4 w-4" /> Tekrar Dene</Button>
@@ -275,7 +275,7 @@ export default function BudgetPage() {
       </>
       )}
 
-      <div className="mt-6 flex items-center justify-between">
+      <div className="mt-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-primary">Maliyet Girişleri</h2>
         <div className="flex gap-2">
           <Select value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))} className="w-44">

@@ -125,7 +125,7 @@ export default function ProjectsListPage() {
         onRowClick={(r) => navigate(`/projects/${r.id}/dashboard`)}
       />
 
-      <h2 className="mb-3 mt-8 text-lg font-semibold text-primary">Tüm Projeler</h2>
+      <h2 className="mb-3 mt-4 text-lg font-semibold text-primary">Tüm Projeler</h2>
       <DataTable
         columns={columns}
         rows={data ?? []}

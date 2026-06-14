@@ -168,7 +168,7 @@ export default function NewProjectPage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Yeni Proje" />
-      <div className="mb-6 flex gap-2">
+      <div className="mb-4 flex gap-2">
         {STEPS.map((s, i) => (
           <div key={s} className="flex-1">
             <div className={cn("h-1 rounded-full", i <= step ? "bg-primary" : "bg-border")} />
