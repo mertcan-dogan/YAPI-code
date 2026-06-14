@@ -1,4 +1,4 @@
-import { CashFlowChart, PortfolioBudgetChart, PortfolioPerformanceChart } from "@/components/charts";
+import { CashFlowChart, MetricLineChart, PortfolioBudgetChart, PortfolioPerformanceChart } from "@/components/charts";
 import { KPICard } from "@/components/KPICard";
 import { type BudgetBreakdownItem } from "@/components/dashboard/BudgetBreakdownCard";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
@@ -259,7 +259,7 @@ export default function DashboardPage() {
           subtitle="Sözleşme bedeli, gerçekleşen ve tahmini final maliyet."
         >
           <div className="px-4 pb-4">
-            <PortfolioBudgetChart data={finalCostChartData} height={200} />
+            <MetricLineChart data={finalCostChartData} height={200} />
           </div>
         </DashboardSection>
       </div>

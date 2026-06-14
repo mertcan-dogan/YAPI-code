@@ -227,6 +227,29 @@ export function PortfolioPerformanceChart({
   );
 }
 
+// Single-series money line chart over named points (e.g. Sözleşme / Gerçekleşen / Tahmini Final).
+export function MetricLineChart({
+  data,
+  height = 200,
+  color = COLORS.warning,
+}: {
+  data: { name: string; value: number }[];
+  height?: number;
+  color?: string;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data} margin={{ top: 10, right: 14, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
+        <XAxis dataKey="name" tickLine={false} axisLine={false} {...axisProps} />
+        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tickLine={false} axisLine={false} {...axisProps} width={64} />
+        <Tooltip content={<ChartTooltip />} />
+        <Line type="monotone" dataKey="value" name="Tutar" stroke={color} strokeWidth={2.5} dot={{ r: 4, fill: color }} activeDot={{ r: 5 }} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
 // Bütçe Dağılımı — horizontal bar chart of cost categories (calm cycling palette).
 const BUDGET_BAR_COLORS = [COLORS.brand, COLORS.brand2, COLORS.accent, COLORS.success, COLORS.primary];
 
