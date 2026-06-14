@@ -48,6 +48,17 @@ type Form = {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** Normalise any AI-returned date string to YYYY-MM-DD (what <input type=date> needs). */
+function toISODate(s: unknown): string {
+  if (!s) return "";
+  const str = String(s).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);
+  const m = str.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})/); // DD.MM.YYYY / DD/MM/YYYY
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  const dt = new Date(str);
+  return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+}
+
 function blank(): Form {
   return { supplier_name: "", invoice_number: "", entry_date: today(), amount_try: "", vat_rate: "20", cost_category: "material_other", description: "", payment_due_date: "", payment_status: "unpaid" };
 }
@@ -99,8 +110,8 @@ export default function DocumentCapturePage() {
       const f = blank();
       if (extracted.supplier_name) f.supplier_name = String(extracted.supplier_name);
       if (extracted.invoice_number) f.invoice_number = String(extracted.invoice_number);
-      if (extracted.invoice_date) f.entry_date = String(extracted.invoice_date);
-      if (extracted.due_date) f.payment_due_date = String(extracted.due_date);
+      if (extracted.invoice_date) f.entry_date = toISODate(extracted.invoice_date) || f.entry_date;
+      f.payment_due_date = toISODate(extracted.due_date);
       if (extracted.subtotal != null) f.amount_try = String(extracted.subtotal);
       if (extracted.vat_rate != null) f.vat_rate = String(extracted.vat_rate);
       if (extracted.suggested_cost_category && COST_CATEGORIES[String(extracted.suggested_cost_category)]) f.cost_category = String(extracted.suggested_cost_category);
