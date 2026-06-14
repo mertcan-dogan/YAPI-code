@@ -30,8 +30,8 @@ export function DashboardSection({
   className?: string;
 }) {
   return (
-    <section className={cn(className)}>
-      <Card className="overflow-hidden">
+    <section className={cn("h-full", className)}>
+      <Card className="h-full overflow-hidden">
         <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-4">
           <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-primary">

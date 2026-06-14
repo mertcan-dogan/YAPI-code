@@ -242,7 +242,7 @@ export default function DashboardPage() {
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
       {/* --- Hero: portfolio performance + pending approvals (director) --- */}
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-start">
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
         <DashboardSection
           className={isDirector ? "xl:col-span-2" : "xl:col-span-3"}
           title="Portföy Performansı (Gerçekleşen vs Tahmin)"
