@@ -1,5 +1,5 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
-import { AIDisclaimer, Button } from "@/components/ui";
+import { AIDisclaimer } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { EmptyState, LoadError } from "@/components/EmptyState";
@@ -107,11 +107,36 @@ export default function ProjectDashboardPage() {
 
   return (
     <div>
-      <PageHeader
-        title={p?.name ?? "Proje Özeti"}
-        subtitle={p ? `${p.client_name} · ${p.project_code}` : undefined}
-        action={f && <RAGIndicator status={f.rag_status} label={f.rag_label_tr} reason={f.rag_reason_tr} />}
-      />
+      {/* Header: project title (left) + compact AI summary (right) */}
+      <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-primary">{p?.name ?? "Proje Özeti"}</h1>
+            {f && <RAGIndicator status={f.rag_status} label={f.rag_label_tr} reason={f.rag_reason_tr} />}
+          </div>
+          {p && <p className="mt-0.5 text-sm text-text-secondary">{p.client_name} · {p.project_code}</p>}
+        </div>
+
+        <div className="w-full shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-sm lg:max-w-[440px]">
+          <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2.5">
+            <span className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+              <Sparkles className="h-3.5 w-3.5 text-brand" /> AI Proje Özeti
+            </span>
+            <div className="flex items-center gap-1.5">
+              {narrCachedAt && <span className="hidden text-[10px] italic text-text-disabled sm:inline">{formatDateTime(narrCachedAt)}</span>}
+              <button onClick={refreshNarrative} disabled={narrLoading} title="Yenile" aria-label="Yenile" className="text-text-secondary hover:text-primary disabled:opacity-50">
+                <RefreshCw className={`h-3.5 w-3.5 ${narrLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+          </div>
+          <div className="px-3 pb-2.5">
+            <p className="line-clamp-3 text-xs leading-snug text-text-secondary">
+              {narrative?.narrative ?? (narrLoading ? "AI özeti hazırlanıyor…" : "Özet bulunamadı.")}
+            </p>
+            {!narrLoading && narrative?.narrative && <AIDisclaimer short />}
+          </div>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrencyAbbrev(f?.contract_value_try)} valueTitle={formatCurrency(f?.contract_value_try)} icon={Wallet} accentColor="#2563EB" />
@@ -141,26 +166,6 @@ export default function ProjectDashboardPage() {
           <KPICard loading={loading} label="Tahmini Final Marj" value={formatPct(fac?.forecast_final_margin_pct)} icon={Percent} accentColor="#059669" alert={facMargin < 5 ? "red" : facMargin < 10 ? "amber" : null} />
         </div>
       </div>
-
-      {/* AI project summary */}
-      <DashboardSection
-        className="mt-4"
-        icon={Sparkles}
-        title="AI Proje Özeti"
-        right={
-          <div className="flex items-center gap-2">
-            {narrCachedAt && <span className="text-[11px] italic text-text-secondary">Son güncelleme: {formatDateTime(narrCachedAt)}</span>}
-            <Button variant="ghost" className="px-2 py-1 text-xs" loading={narrLoading} onClick={refreshNarrative}>
-              <RefreshCw className="h-3.5 w-3.5" /> Yenile
-            </Button>
-          </div>
-        }
-      >
-        <div className="px-4 pb-4">
-          <p className="text-sm text-text-primary">{narrative?.narrative ?? (narrLoading ? "AI özeti hazırlanıyor…" : "Özet bulunamadı.")}</p>
-          {!narrLoading && narrative?.narrative && <AIDisclaimer />}
-        </div>
-      </DashboardSection>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
         <DashboardSection title="S-Eğrisi (Kümülatif Maliyet)">
