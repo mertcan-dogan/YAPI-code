@@ -1,5 +1,5 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
-import { AIDisclaimer } from "@/components/ui";
+import { AIDisclaimer, Button, Modal } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { EmptyState, LoadError } from "@/components/EmptyState";
@@ -29,6 +29,7 @@ export default function ProjectDashboardPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [costDrawer, setCostDrawer] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
     `/projects/${id}/dashboard`
   );
@@ -117,26 +118,46 @@ export default function ProjectDashboardPage() {
           {p && <p className="mt-0.5 text-sm text-text-secondary">{p.client_name} · {p.project_code}</p>}
         </div>
 
-        <div className="w-full shrink-0 overflow-hidden rounded-xl border border-border bg-surface shadow-sm lg:max-w-[440px]">
-          <div className="flex items-center justify-between gap-2 px-3 pb-1.5 pt-2.5">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setAiOpen(true)}
+          onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setAiOpen(true)}
+          title="Detaylı özeti aç"
+          className="group w-full shrink-0 cursor-pointer overflow-hidden rounded-xl border border-border bg-surface shadow-sm transition-colors hover:border-brand lg:w-[640px]"
+        >
+          <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-2">
             <span className="flex items-center gap-1.5 text-xs font-semibold text-primary">
               <Sparkles className="h-3.5 w-3.5 text-brand" /> AI Proje Özeti
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               {narrCachedAt && <span className="hidden text-[10px] italic text-text-disabled sm:inline">{formatDateTime(narrCachedAt)}</span>}
-              <button onClick={refreshNarrative} disabled={narrLoading} title="Yenile" aria-label="Yenile" className="text-text-secondary hover:text-primary disabled:opacity-50">
+              <button onClick={(e) => { e.stopPropagation(); refreshNarrative(); }} disabled={narrLoading} title="Yenile" aria-label="Yenile" className="text-text-secondary hover:text-primary disabled:opacity-50">
                 <RefreshCw className={`h-3.5 w-3.5 ${narrLoading ? "animate-spin" : ""}`} />
               </button>
+              <span className="text-[10px] font-medium text-brand opacity-0 transition-opacity group-hover:opacity-100">Detay →</span>
             </div>
           </div>
-          <div className="px-3 pb-2.5">
-            <p className="line-clamp-3 text-xs leading-snug text-text-secondary">
-              {narrative?.narrative ?? (narrLoading ? "AI özeti hazırlanıyor…" : "Özet bulunamadı.")}
-            </p>
-            {!narrLoading && narrative?.narrative && <AIDisclaimer short />}
-          </div>
+          <p className="line-clamp-2 px-3 pb-2 text-xs leading-snug text-text-secondary">
+            {narrative?.narrative ?? (narrLoading ? "AI özeti hazırlanıyor…" : "Özet bulunamadı.")}
+          </p>
         </div>
       </div>
+
+      <Modal open={aiOpen} title="AI Proje Özeti" onClose={() => setAiOpen(false)} size="lg">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-text-secondary">{narrCachedAt ? `Son güncelleme: ${formatDateTime(narrCachedAt)}` : ""}</span>
+            <Button variant="ghost" className="px-2 py-1 text-xs" loading={narrLoading} onClick={refreshNarrative}>
+              <RefreshCw className="h-3.5 w-3.5" /> Yenile
+            </Button>
+          </div>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-primary">
+            {narrative?.narrative ?? (narrLoading ? "AI özeti hazırlanıyor…" : "Özet bulunamadı.")}
+          </p>
+          {!narrLoading && narrative?.narrative && <AIDisclaimer />}
+        </div>
+      </Modal>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrencyAbbrev(f?.contract_value_try)} valueTitle={formatCurrency(f?.contract_value_try)} icon={Wallet} accentColor="#2563EB" />
