@@ -87,8 +87,8 @@ export default function ReportsPage() {
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {REPORTS.map((r) => (
-          <Card key={r.key}>
-            <CardBody>
+          <Card key={r.key} className="h-full">
+            <CardBody className="flex h-full flex-col">
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-navy-50"><FileText className="h-5 w-5 text-primary" /></div>
                 <div className="flex-1">
@@ -97,7 +97,7 @@ export default function ReportsPage() {
                   <span className="mt-1 inline-block rounded bg-bg px-1.5 py-0.5 text-[10px] text-text-secondary">{r.formats}</span>
                 </div>
               </div>
-              <Button variant="outline" className="mt-3 w-full" onClick={() => download(r.key)}>
+              <Button variant="outline" className="mt-auto w-full" onClick={() => download(r.key)}>
                 <Download className="h-4 w-4" /> İndir
               </Button>
             </CardBody>
