@@ -66,7 +66,7 @@ export function DashboardToolbar({
         <p className="mt-0.5 text-sm text-text-secondary">Portföy Görünümü · Tüm Projeler</p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="relative flex flex-wrap items-center gap-2">
         {/* Add document with AI */}
         {onAddDocument && (
           <button
@@ -108,23 +108,24 @@ export function DashboardToolbar({
         </div>
 
         {/* Filtreler popover */}
-        <div className="relative">
-          <button
-            onClick={() => setFilterOpen((o) => !o)}
-            className={cn(
-              "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
-              activeCount > 0 ? "border-brand bg-navy-50 text-brand" : "border-border bg-surface text-text-primary hover:border-brand"
-            )}
-          >
-            <FilterIcon className="h-4 w-4" /> Filtreler
-            {activeCount > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">{activeCount}</span>
-            )}
-          </button>
-          {filterOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setFilterOpen(false)} />
-              <div className="absolute right-0 top-11 z-20 w-60 rounded-xl border border-border bg-surface p-3 shadow-lg">
+        <button
+          onClick={() => setFilterOpen((o) => !o)}
+          className={cn(
+            "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
+            activeCount > 0 ? "border-brand bg-navy-50 text-brand" : "border-border bg-surface text-text-primary hover:border-brand"
+          )}
+        >
+          <FilterIcon className="h-4 w-4" /> Filtreler
+          {activeCount > 0 && (
+            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">{activeCount}</span>
+          )}
+        </button>
+        {/* Anchored to the toolbar group (right-aligned, below the row) so it never
+            slides off-screen on phones regardless of where the button wraps. */}
+        {filterOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setFilterOpen(false)} />
+            <div className="absolute right-0 top-full z-30 mt-2 w-60 max-w-[calc(100vw-2rem)] rounded-xl border border-border bg-surface p-3 shadow-lg">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Proje Durumu (RAG)</span>
                   {activeCount > 0 && (
@@ -145,7 +146,6 @@ export function DashboardToolbar({
               </div>
             </>
           )}
-        </div>
       </div>
     </div>
   );

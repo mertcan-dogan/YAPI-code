@@ -393,7 +393,9 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
           </span>
         </button>
         {open && (
-          <div className="absolute right-0 top-12 w-48 rounded-md border border-border bg-surface py-1 shadow-lg">
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div className="absolute right-0 top-12 z-50 w-48 rounded-md border border-border bg-surface py-1 shadow-lg">
             <div className="border-b border-border px-3 py-2 text-xs text-text-secondary">{user?.email}</div>
             <Link to="/settings" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-bg">
               <Settings className="h-4 w-4" /> Ayarlar
@@ -407,7 +409,8 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
             >
               <LogOut className="h-4 w-4" /> Çıkış Yap
             </button>
-          </div>
+            </div>
+          </>
         )}
       </div>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />

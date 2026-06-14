@@ -157,27 +157,29 @@ export default function RemindersPage() {
           {items.map((r) => (
             <div
               key={r.record_id}
-              className="flex items-center gap-4 rounded-xl border border-border bg-surface p-4 shadow-sm"
+              className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-sm sm:flex-row sm:items-center sm:gap-4"
               style={{
                 borderLeft: `4px solid ${reminderColors(r.days_remaining, r.status === "paid").border}`,
                 backgroundColor: reminderColors(r.days_remaining, r.status === "paid").bg,
               }}
             >
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="rounded bg-navy-50 px-2 py-0.5 text-xs text-primary-light">{r.project_name}</span>
+                  <span className="truncate rounded bg-navy-50 px-2 py-0.5 text-xs text-primary-light">{r.project_name}</span>
                   <StatusBadge status={r.status} />
                 </div>
                 <p className="mt-1 font-semibold text-text-primary">{r.party}</p>
                 <p className="text-xs text-text-secondary">{r.description}</p>
               </div>
-              <div className="text-right">
-                <div className="tabular text-lg font-bold text-primary">{formatCurrency(r.amount_try)}</div>
-                <div className={cn("text-xs font-medium", r.days_remaining <= 0 ? "text-danger font-bold" : r.days_remaining <= 7 ? "text-accent" : r.days_remaining <= 30 ? "text-warning" : "text-text-secondary")}>{r.days_label}</div>
+              <div className="flex items-center justify-between gap-3 sm:justify-end">
+                <div className="text-left sm:text-right">
+                  <div className="tabular text-lg font-bold text-primary">{formatCurrency(r.amount_try)}</div>
+                  <div className={cn("text-xs font-medium", r.days_remaining <= 0 ? "text-danger font-bold" : r.days_remaining <= 7 ? "text-accent" : r.days_remaining <= 30 ? "text-warning" : "text-text-secondary")}>{r.days_label}</div>
+                </div>
+                <Button variant="outline" className="shrink-0 whitespace-nowrap" onClick={() => markDone(r)}>
+                  {r.kind === "payable" ? "Ödendi İşaretle" : "Tahsil Edildi İşaretle"}
+                </Button>
               </div>
-              <Button variant="outline" onClick={() => markDone(r)}>
-                {r.kind === "payable" ? "Ödendi İşaretle" : "Tahsil Edildi İşaretle"}
-              </Button>
             </div>
           ))}
         </div>
