@@ -60,13 +60,13 @@ export function DashboardToolbar({
   };
 
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <div className="min-w-0">
-        <h1 className="truncate text-2xl font-bold text-primary">{greeting(firstName)}</h1>
+        <h1 className="text-2xl font-bold text-primary">{greeting(firstName)}</h1>
         <p className="mt-0.5 text-sm text-text-secondary">Portföy Görünümü · Tüm Projeler</p>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {/* Add document with AI */}
         {onAddDocument && (
           <button
