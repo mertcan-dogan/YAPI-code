@@ -13,7 +13,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
-import { Banknote, Hammer, Percent, Target, Wallet } from "lucide-react";
+import { Banknote, Hammer, Percent, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -134,6 +134,15 @@ export default function DashboardPage() {
       ]
     : [];
 
+  // Compact comparison shown next to Portföy Performansı (replaces the KPI card).
+  const finalCostChartData = pb
+    ? [
+        { name: "Sözleşme", value: toNumber(pb.contract_try), fill: "#059669" },
+        { name: "Gerçekleşen", value: toNumber(pb.actual_try), fill: "#2563EB" },
+        { name: "Tahmini Final", value: toNumber(pb.forecast_final_cost_try), fill: "#D97706" },
+      ]
+    : [];
+
   const performanceData = (data?.portfolio_performance ?? []).map((p) => ({
     project: p.project,
     contract: toNumber(p.contract_try),
@@ -178,8 +187,8 @@ export default function DashboardPage() {
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
-      {/* --- KPI strip: hero row (5) --- */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+      {/* --- KPI strip: hero row (4) --- */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KPICard
           loading={loading}
           label="Gelir (Sözleşme Toplamı)"
@@ -199,14 +208,6 @@ export default function DashboardPage() {
           accentColor="#F59E0B"
           series={data?.kpi_trends?.cost_to_complete_try?.series}
           delta={data?.kpi_trends?.cost_to_complete_try?.delta_pct}
-        />
-        <KPICard
-          loading={loading}
-          label="Tahmini Final Maliyet"
-          value={formatCurrencyAbbrev(pb?.forecast_final_cost_try)}
-          valueTitle={formatCurrency(pb?.forecast_final_cost_try)}
-          icon={Target}
-          accentColor="#06B6D4"
         />
         <KPICard
           loading={loading}
@@ -241,16 +242,27 @@ export default function DashboardPage() {
       />
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
-      {/* --- Hero: portfolio performance (full width) --- */}
-      <DashboardSection
-        className="mt-4"
-        title="Portföy Performansı (Gerçekleşen vs Tahmin)"
-        subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
-      >
-        <div className="px-4 pb-4">
-          <PortfolioPerformanceChart data={performanceData} height={200} />
-        </div>
-      </DashboardSection>
+      {/* --- Hero: portfolio performance + tahmini final maliyet graph --- */}
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
+        <DashboardSection
+          className="xl:col-span-2"
+          title="Portföy Performansı (Gerçekleşen vs Tahmin)"
+          subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
+        >
+          <div className="px-4 pb-4">
+            <PortfolioPerformanceChart data={performanceData} height={200} />
+          </div>
+        </DashboardSection>
+
+        <DashboardSection
+          title="Tahmini Final Maliyet"
+          subtitle="Sözleşme bedeli, gerçekleşen ve tahmini final maliyet."
+        >
+          <div className="px-4 pb-4">
+            <PortfolioBudgetChart data={finalCostChartData} height={200} />
+          </div>
+        </DashboardSection>
+      </div>
 
       {/* --- Incoming documents + pending approvals (director) --- */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-stretch">
