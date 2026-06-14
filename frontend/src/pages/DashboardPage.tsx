@@ -13,7 +13,7 @@ import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
-import { Banknote, Hammer, Percent, PlusSquare, Target, Wallet } from "lucide-react";
+import { Banknote, Hammer, Percent, Target, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -178,8 +178,8 @@ export default function DashboardPage() {
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
-      {/* --- KPI strip: hero row (6) --- */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+      {/* --- KPI strip: hero row (5) --- */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         <KPICard
           loading={loading}
           label="Gelir (Sözleşme Toplamı)"
@@ -231,16 +231,6 @@ export default function DashboardPage() {
           delta={data?.kpi_trends?.net_cash_position_try?.delta_pct}
           alert={toNumber(data?.exec_kpis?.net_cash_position_try) < 0 ? "red" : null}
         />
-        <KPICard
-          loading={loading}
-          label="Ek İşler (Net)"
-          value={formatCurrencyAbbrev(k?.variations_net_try)}
-          valueTitle={formatCurrency(k?.variations_net_try)}
-          icon={PlusSquare}
-          accentColor="#7C3AED"
-          series={data?.kpi_trends?.variations_net_try?.series}
-          delta={data?.kpi_trends?.variations_net_try?.delta_pct}
-        />
       </div>
 
       <OverduePaymentsModal
@@ -251,16 +241,32 @@ export default function DashboardPage() {
       />
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
-      {/* --- Hero: portfolio performance + pending approvals (director) --- */}
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-stretch">
+      {/* --- Hero: portfolio performance (full width) --- */}
+      <DashboardSection
+        className="mt-4"
+        title="Portföy Performansı (Gerçekleşen vs Tahmin)"
+        subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
+      >
+        <div className="px-4 pb-4">
+          <PortfolioPerformanceChart data={performanceData} height={200} />
+        </div>
+      </DashboardSection>
+
+      {/* --- Incoming documents + pending approvals (director) --- */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-stretch">
         <DashboardSection
-          className={isDirector ? "xl:col-span-2" : "xl:col-span-3"}
-          title="Portföy Performansı (Gerçekleşen vs Tahmin)"
-          subtitle="Proje bazında gerçekleşen maliyet, tahmini final maliyet ve sözleşme bedeli."
+          className={isDirector ? "lg:col-span-2" : "lg:col-span-3"}
+          title={
+            <span className="inline-flex items-center gap-3">
+              Gelen Belgeler
+              <button onClick={() => navigate("/document-capture")} className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-brand hover:border-brand">
+                Belge Yükle →
+              </button>
+            </span>
+          }
+          subtitle="Son eklenen faturalar, hakedişler ve ek işler."
         >
-          <div className="px-4 pb-4">
-            <PortfolioPerformanceChart data={performanceData} height={200} />
-          </div>
+          <IncomingWorkflowCard />
         </DashboardSection>
 
         {isDirector && (
@@ -277,22 +283,6 @@ export default function DashboardPage() {
           </DashboardSection>
         )}
       </div>
-
-      {/* --- Incoming documents (full width) --- */}
-      <DashboardSection
-        className="mt-4"
-        title={
-          <span className="inline-flex items-center gap-3">
-            Gelen Belgeler
-            <button onClick={() => navigate("/document-capture")} className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-brand hover:border-brand">
-              Belge Yükle →
-            </button>
-          </span>
-        }
-        subtitle="Son eklenen faturalar, hakedişler ve ek işler."
-      >
-        <IncomingWorkflowCard />
-      </DashboardSection>
 
       {/* --- Portfolio budget totals + AR aging --- */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
