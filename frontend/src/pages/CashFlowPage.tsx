@@ -1,5 +1,6 @@
 import { CashFlowChart } from "@/components/charts";
 import { Card, CardBody } from "@/components/ui";
+import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { LoadError } from "@/components/EmptyState";
 import { CashFlowMonthDrawer } from "@/components/cashflow/CashFlowMonthDrawer";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -61,7 +62,7 @@ export default function CashFlowPage() {
         }
       />
       {/* CR-004-M: 30/60/90-day cash-need cards */}
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {(risk ?? []).map((w) => {
           const need = toNumber(w.net_need_try);
           const colour = w.shortfall ? "text-danger" : "text-success";
@@ -80,12 +81,15 @@ export default function CashFlowPage() {
       </div>
 
       {error && !loading ? (
-        <Card className="mb-6"><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
+        <Card className="mb-4"><CardBody><LoadError onRetry={refetch} /></CardBody></Card>
       ) : (
       <>
-      <Card className="mb-6"><CardBody><CashFlowChart data={chart} height={300} /></CardBody></Card>
+      <DashboardSection className="mb-4" title="Nakit Akış Grafiği">
+        <div className="px-4 pb-4"><CashFlowChart data={chart} height={300} /></div>
+      </DashboardSection>
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
+      <DashboardSection title="Aylık Detay">
+      <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
           <thead className="border-b border-border bg-bg text-text-secondary">
             <tr>
@@ -116,6 +120,7 @@ export default function CashFlowPage() {
           </tbody>
         </table>
       </div>
+      </DashboardSection>
       </>
       )}
 
