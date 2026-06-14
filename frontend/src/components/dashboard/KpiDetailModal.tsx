@@ -12,6 +12,8 @@ export interface KpiInfo {
   deltaUnit?: "%" | "pp";
   invertDelta?: boolean;
   accentColor?: string;
+  /** Unit for the trend chart axis/tooltip. */
+  valueKind?: "currency" | "percent";
   action?: { label: string; onClick: () => void };
 }
 
@@ -40,7 +42,7 @@ export function KpiDetailModal({ open, onClose, kpi }: { open: boolean; onClose:
         {trend.length >= 2 ? (
           <div className="rounded-lg border border-border p-2">
             <div className="mb-1 px-1 text-xs font-medium text-text-secondary">Eğilim (kayıtlı geçmiş)</div>
-            <MetricLineChart data={trend} height={160} color={kpi.accentColor} hideXAxis />
+            <MetricLineChart data={trend} height={160} color={kpi.accentColor} hideXAxis unit={kpi.valueKind === "percent" ? "percent" : "currency"} />
           </div>
         ) : (
           <div className="rounded-lg bg-bg px-3 py-2 text-xs text-text-secondary">

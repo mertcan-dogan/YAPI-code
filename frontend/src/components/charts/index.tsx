@@ -233,19 +233,30 @@ export function MetricLineChart({
   height = 200,
   color = COLORS.warning,
   hideXAxis = false,
+  unit = "currency",
 }: {
   data: { name: string; value: number }[];
   height?: number;
   color?: string;
   hideXAxis?: boolean;
+  unit?: "currency" | "percent";
 }) {
+  const fmt = (v: any) => (unit === "percent" ? `%${Math.round(Number(v) * 10) / 10}` : formatCurrencyAbbrev(v));
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data} margin={{ top: 10, right: 14, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F6" vertical={false} />
         <XAxis dataKey="name" tickLine={false} axisLine={false} stroke={COLORS.border} tick={hideXAxis ? false : { fontSize: 11, fill: COLORS.muted }} />
-        <YAxis tickFormatter={(v) => formatCurrencyAbbrev(v)} tickLine={false} axisLine={false} {...axisProps} width={64} />
-        <Tooltip content={<ChartTooltip />} />
+        <YAxis tickFormatter={fmt} tickLine={false} axisLine={false} {...axisProps} width={64} />
+        <Tooltip
+          content={({ active, payload }: any) =>
+            active && payload?.length ? (
+              <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs shadow-md">
+                <span className="tabular font-medium text-text-primary">{fmt(payload[0].value)}</span>
+              </div>
+            ) : null
+          }
+        />
         <Line type="monotone" dataKey="value" name="Tutar" stroke={color} strokeWidth={2.5} dot={{ r: 4, fill: color }} activeDot={{ r: 5 }} />
       </LineChart>
     </ResponsiveContainer>

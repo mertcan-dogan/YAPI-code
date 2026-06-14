@@ -250,6 +250,7 @@ export default function DashboardPage() {
               series: marginSeries,
               delta: marginPP,
               deltaUnit: "pp",
+              valueKind: "percent",
               accentColor: "#059669",
               action: { label: "Düşük marjlı projeler", onClick: () => setMarginOpen(true) },
             })
