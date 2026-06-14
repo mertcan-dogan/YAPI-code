@@ -405,3 +405,77 @@ def analyze_document_image(data: bytes, content_type: str) -> dict:
             last_err = exc
     logger.warning("Document image extraction failed: %s", last_err)
     raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+
+def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dict:
+    """Smart capture: rich invoice extraction + context-grounded project & cost-code
+    suggestion with reasoning. The AI is given supplier history, the active project
+    list with their budget categories, and the cost-category descriptions, so it can
+    suggest WHERE the cost belongs and explain WHY. Never writes — the user confirms.
+
+    Returns a dict with: supplier_name, invoice_number, invoice_date, due_date,
+    currency, subtotal, vat_amount, vat_rate, total, line_items[], confidence,
+    suggested_project_id, suggested_cost_category, reasoning.
+    """
+    import base64
+
+    from app.constants import COST_CATEGORY_KEYS
+
+    client = _client()
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    if content_type == "application/pdf":
+        source_block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}}
+    elif content_type in ("image/jpeg", "image/png"):
+        source_block = {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": b64}}
+    else:
+        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+    ctx = json.dumps(context, ensure_ascii=False, default=_decimal_default)
+    categories = ", ".join(COST_CATEGORY_KEYS)
+    schema = (
+        '{"supplier_name": "...", "invoice_number": "...", "invoice_date": "YYYY-MM-DD", '
+        '"due_date": "YYYY-MM-DD", "currency": "TRY", "subtotal": 0.00, "vat_amount": 0.00, '
+        '"vat_rate": 20, "total": 0.00, '
+        '"line_items": [{"description": "...", "quantity": 0, "unit_price": 0.00, "amount": 0.00}], '
+        '"confidence": 0.0, "suggested_project_id": "<id|null>", '
+        '"suggested_cost_category": "<anahtar>", "reasoning": "..."}'
+    )
+    prompt = (
+        "Bu bir tedarikçi/malzeme faturasının görüntüsü veya PDF'idir (genellikle Türkçe). "
+        "İki görevi yap:\n"
+        "1) Fatura alanlarını ve TÜM satır kalemlerini eksiksiz çıkar.\n"
+        "2) Bu faturanın HANGİ projeye ve HANGİ maliyet kategorisine ait olduğunu, sana verilen "
+        "BAĞLAM'ı (tedarikçi geçmişi ve daha önce onaylanmış sınıflandırmalar, aktif proje listesi "
+        "ve her projenin bütçe kategorileri, kategori açıklamaları) kullanarak öner.\n\n"
+        "SADECE şu JSON nesnesini döndür:\n" + schema + "\n\n"
+        "Kurallar:\n"
+        "- subtotal KDV hariç matrah, vat_amount KDV tutarı, total KDV dahil genel toplam "
+        "(sayı, ondalık ayırıcı nokta).\n"
+        "- vat_rate yüzde (örn. 20). currency ISO para birimi kodu (TRY, EUR, USD...).\n"
+        "- line_items faturadaki her satır kalemini içersin (yoksa boş dizi).\n"
+        f"- suggested_cost_category şu anahtarlardan biri olmalı: {categories}.\n"
+        "- suggested_project_id BAĞLAM'daki projelerden birinin id'si olmalı; uygun proje yoksa null.\n"
+        "- reasoning Türkçe olmalı ve seçimini AÇIKLA: tedarikçinin geçmiş kullanımına, satır "
+        "kalemlerine, projelerin bütçe kategorilerine ve kategori açıklamalarına atıfta bulun.\n"
+        "- confidence 0 ile 1 arası genel güven skoru. Okuyamadığın alan için null döndür.\n"
+        "- JSON dışında hiçbir şey yazma.\n\n"
+        "BAĞLAM:\n" + ctx
+    )
+    last_err: Exception | None = None
+    for _ in range(2):
+        try:
+            msg = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=2500,
+                messages=[{"role": "user", "content": [source_block, {"type": "text", "text": prompt}]}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            result = _extract_json(text)
+            if isinstance(result, dict):
+                return result
+        except AIUnavailable:
+            raise
+        except Exception as exc:  # JSON parse / API error -> retry
+            last_err = exc
+    logger.warning("Smart document extraction failed: %s", last_err)
+    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
