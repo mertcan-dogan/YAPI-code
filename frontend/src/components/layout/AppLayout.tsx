@@ -488,7 +488,7 @@ export function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNav onMenu={() => setDrawerOpen(true)} />
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
-          <div className="mx-auto max-w-[1400px] p-4 lg:p-6">
+          <div className="mx-auto max-w-[calc(50%_+_700px)] p-4 lg:p-6">
             <Outlet />
           </div>
         </main>
