@@ -176,7 +176,7 @@ export default function DashboardPage() {
         onAddDocument={() => navigate("/document-capture")}
       />
 
-      <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
       {/* --- KPI strip: hero row (5) --- */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
@@ -242,7 +242,7 @@ export default function DashboardPage() {
       <LowMarginModal open={marginOpen} onClose={() => setMarginOpen(false)} projects={data?.projects ?? []} onSelect={(id) => { setMarginOpen(false); navigate(`/projects/${id}/dashboard`); }} />
 
       {/* --- Hero: portfolio performance + pending approvals (director) --- */}
-      <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-3 xl:items-start">
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3 xl:items-start">
         <DashboardSection
           className={isDirector ? "xl:col-span-2" : "xl:col-span-3"}
           title="Portföy Performansı (Gerçekleşen vs Tahmin)"
@@ -270,7 +270,7 @@ export default function DashboardPage() {
 
       {/* --- Incoming documents (full width) --- */}
       <DashboardSection
-        className="mt-5"
+        className="mt-4"
         title={
           <span className="inline-flex items-center gap-3">
             Gelen Belgeler
@@ -285,7 +285,7 @@ export default function DashboardPage() {
       </DashboardSection>
 
       {/* --- Portfolio budget totals + AR aging --- */}
-      <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         <DashboardSection
           title="Portföy Bütçe & Tahmin"
           subtitle="Tüm aktif projelerin toplamı — sözleşme, revize bütçe, taahhüt, harcanan ve tahmini final maliyet."
@@ -334,7 +334,7 @@ export default function DashboardPage() {
       {/* --- Forward cash-flow projection (conditional) --- */}
       {forecastChartData.length > 0 && (
         <DashboardSection
-          className="mt-5"
+          className="mt-4"
           title="Nakit Akış Projeksiyonu (Önümüzdeki 6 Ay)"
           right={fc?.shortfall ? <span className="rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-danger">Nakit açığı riski</span> : undefined}
           subtitle={
@@ -352,7 +352,7 @@ export default function DashboardPage() {
       )}
 
       {/* --- Combined historical cash flow --- */}
-      <DashboardSection className="mt-5" title="Birleşik Nakit Akışı (Son 6 Ay)">
+      <DashboardSection className="mt-4" title="Birleşik Nakit Akışı (Son 6 Ay)">
         <div className="px-4 pb-4">
           <CashFlowChart data={chartData} />
         </div>
@@ -361,7 +361,7 @@ export default function DashboardPage() {
       {/* --- Margin fade (conditional) --- */}
       {mf?.has_targets && (
         <DashboardSection
-          className="mt-5"
+          className="mt-4"
           title="Kar Marjı Erozyonu"
           subtitle={
             <>
