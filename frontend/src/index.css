@@ -94,3 +94,39 @@ body {
 .yapi-row-flash {
   animation: yapiRowFlash 2.2s ease-out;
 }
+
+/* CR-009-B: workspace board — make RGL resize handles reliably grabbable above
+   the chart. RGL's defaults rotate the e/s handles 45deg into tiny diagonal
+   boxes; override (with !important to beat RGL's stylesheet load order) into
+   clean, full-length edge strips that sit above the cell content. */
+.wsp-board .react-resizable-handle {
+  z-index: 20 !important;
+  background: none !important;
+}
+.wsp-board .react-resizable-handle-e {
+  top: 0 !important;
+  bottom: 0 !important;
+  height: auto !important;
+  right: 0 !important;
+  left: auto !important;
+  width: 16px !important;
+  margin: 0 !important;
+  transform: none !important;
+  cursor: ew-resize;
+}
+.wsp-board .react-resizable-handle-s {
+  left: 0 !important;
+  right: 0 !important;
+  width: auto !important;
+  bottom: 0 !important;
+  top: auto !important;
+  height: 16px !important;
+  margin: 0 !important;
+  transform: none !important;
+  cursor: ns-resize;
+}
+.wsp-board .react-resizable-handle-se {
+  z-index: 21 !important;
+  transform: none !important;
+  cursor: nwse-resize;
+}

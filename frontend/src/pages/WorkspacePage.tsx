@@ -53,15 +53,11 @@ function useIsDesktop(): boolean {
   return desktop;
 }
 
-const layoutSig = (l: Layout[]) =>
-  JSON.stringify([...l].map((x) => [x.i, x.x, x.y, x.w, x.h]).sort());
-
 export default function WorkspacePage() {
   const { data, loading, error, refetch } = useFetch<WorkspaceItem[]>("/workspace/items");
   const [items, setItems] = useState<WorkspaceItem[]>([]);
   const isDesktop = useIsDesktop();
 
-  const lastSig = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
@@ -91,20 +87,13 @@ export default function WorkspacePage() {
     [items]
   );
 
-  // Seed the signature from the rendered layout so the mount onLayoutChange is a
-  // no-op; only genuine drag/resize then persists.
-  useEffect(() => {
-    if (lastSig.current === null && items.length) lastSig.current = layoutSig(lgLayout);
-  }, [items.length, lgLayout]);
-
-  const onLayoutChange = (layout: Layout[]) => {
-    // Don't let the mobile (1-col) layout overwrite the saved desktop layout.
-    if (!isDesktop) return;
-    const sig = layoutSig(layout);
-    if (sig === lastSig.current) return;
-    lastSig.current = sig;
-
-    // Keep items state in sync with the new positions/sizes.
+  // Persist on the END of a drag/resize (onDragStop/onResizeStop) rather than on
+  // every onLayoutChange tick. Feeding an items-derived `layouts` prop back during
+  // an active resize fights RGL's in-progress change (and reverted width). Doing
+  // it on stop keeps `layouts` identity stable through the gesture, then syncs
+  // items + debounce-PUTs once.
+  const persistLayout = (layout: Layout[]) => {
+    if (!isDesktop) return; // mobile is read-only; never overwrite the desktop layout
     const byId = new Map(layout.map((l) => [l.i, l]));
     setItems((prev) =>
       prev.map((it) => {
@@ -112,7 +101,6 @@ export default function WorkspacePage() {
         return l ? { ...it, layout: { x: l.x, y: l.y, w: l.w, h: l.h } } : it;
       })
     );
-
     const payload = layout.map((l) => ({ id: l.i, x: l.x, y: l.y, w: l.w, h: l.h }));
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -154,7 +142,7 @@ export default function WorkspacePage() {
         </div>
       ) : (
         <ResponsiveGridLayout
-          className="layout"
+          className="wsp-board layout"
           // Drive the column count off isDesktop, NOT RGL's container-width
           // breakpoints — a narrow content area (sidebar + small window) would
           // otherwise collapse to 1 column and block width resizing. A single
@@ -171,7 +159,8 @@ export default function WorkspacePage() {
           draggableHandle=".wsp-drag"
           draggableCancel=".wsp-nodrag"
           resizeHandles={["se", "e", "s"]}
-          onLayoutChange={onLayoutChange}
+          onResizeStop={persistLayout}
+          onDragStop={persistLayout}
         >
           {items.map((it) => {
             const isChart = it.item_type === "chart";
@@ -191,8 +180,10 @@ export default function WorkspacePage() {
                       className="rounded p-1 text-text-secondary hover:text-danger"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </div>
-                {/* Charts FILL the cell (no inner scrollbar); long analyses scroll. */}
-                <div className={`min-h-0 flex-1 p-2 ${isChart ? "overflow-hidden" : "overflow-auto"}`}>
+                {/* Charts FILL the cell (no inner scrollbar); long analyses scroll.
+                    pointer-events-none on the chart so the resize/drag never gets
+                    eaten by Recharts' pointer surface (snapshot — no tooltips needed). */}
+                <div className={`min-h-0 flex-1 p-2 ${isChart ? "overflow-hidden [&_.recharts-wrapper]:pointer-events-none" : "overflow-auto"}`}>
                   {isChart ? (
                     <AgentChart spec={it.payload as AgentChartSpec} fill />
                   ) : (
