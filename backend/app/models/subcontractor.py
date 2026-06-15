@@ -17,6 +17,10 @@ class Subcontractor(TimestampSoftDeleteMixin, Base):
     company_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # CR-008-E: optional link to the canonical vendor (additive; name kept).
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vendors.id"), nullable=True
+    )
     scope_of_work: Mapped[str | None] = mapped_column(Text, nullable=True)
     contract_value_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     approved_variations_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), server_default="0")

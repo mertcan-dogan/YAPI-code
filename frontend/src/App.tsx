@@ -25,6 +25,8 @@ import SettingsPage from "./pages/SettingsPage";
 import SubcontractorsPage from "./pages/SubcontractorsPage";
 import TwoFactorSetupPage from "./pages/TwoFactorSetupPage";
 import VariationsPage from "./pages/VariationsPage";
+import VendorsPage from "./pages/VendorsPage";
+import WorkspacePage from "./pages/WorkspacePage";
 
 function FullScreenLoader() {
   return (
@@ -89,6 +91,8 @@ export default function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/ai-assistant" element={<AIAssistantPage />} />
+          <Route path="/workspace" element={<WorkspacePage />} />
+          <Route path="/vendors" element={<VendorsPage />} />
           <Route path="/document-capture" element={<DocumentCapturePage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/settings/*" element={<SettingsPage />} />

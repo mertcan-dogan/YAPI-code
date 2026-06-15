@@ -51,6 +51,8 @@ from app.api import (
     uploads,
     users,
     variations,
+    vendors,
+    workspace,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -130,5 +132,7 @@ for r in (
     budget_templates.router,
     users.router,
     notifications.router,
+    workspace.router,
+    vendors.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

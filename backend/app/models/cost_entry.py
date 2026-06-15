@@ -26,6 +26,10 @@ class CostEntry(TimestampSoftDeleteMixin, Base):
     subcontractor_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("subcontractors.id"), nullable=True
     )
+    # CR-008-E: optional link to the canonical vendor (additive; supplier_name kept).
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("vendors.id"), nullable=True
+    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     invoice_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
 

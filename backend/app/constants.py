@@ -94,4 +94,6 @@ AUDITED_TABLES = {
     "client_invoices",
     "subcontractors",
     "budget_line_items",
+    # CR-008-H/I: vendor merges & legacy relinks change financial groupings.
+    "vendors",
 }

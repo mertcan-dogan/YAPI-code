@@ -25,7 +25,7 @@ import re
 import uuid
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.calculations.money import D, money
@@ -34,6 +34,7 @@ from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
 from app.models.project import Project
 from app.models.subcontractor import Subcontractor
+from app.models.vendor import Vendor, VendorAlias
 
 # At most this many raw records are returned; beyond it we set truncated=True and
 # rely on the aggregated summary (§2.2).
@@ -739,28 +740,82 @@ def _matching_vendors(db: Session, company_id, vendor_name: str):
     return matched_suppliers, matched_sub_ids, sorted(matched_names)
 
 
+def _resolve_vendor(db: Session, company_id, vendor_name: str) -> Vendor | None:
+    """CR-008-G: resolve a free-text query to a canonical Vendor by exact
+    normalised match against its aliases, then its canonical name. Returns None
+    if no vendor matches (then the legacy pg_trgm/normalised fallback applies)."""
+    norm = normalize_vendor_name(vendor_name)
+    if not norm:
+        return None
+    alias = db.execute(
+        select(VendorAlias).where(
+            VendorAlias.company_id == company_id,
+            VendorAlias.alias_normalised == norm,
+            VendorAlias.is_deleted.is_(False),
+        )
+    ).scalars().first()
+    if alias:
+        v = db.get(Vendor, alias.vendor_id)
+        if v is not None and not v.is_deleted:
+            return v
+    for v in db.execute(
+        select(Vendor).where(Vendor.company_id == company_id, Vendor.is_deleted.is_(False))
+    ).scalars().all():
+        if normalize_vendor_name(v.canonical_name) == norm:
+            return v
+    return None
+
+
 def get_vendor_spend(db: Session, company_id, *, vendor_name: str,
                      date_from: date | None = None, date_to: date | None = None) -> dict:
     """Cross-portfolio spend with one vendor, broken down by month, category and
-    project, citing the underlying cost entries (§5.2). The headline tool."""
-    suppliers, sub_ids, matched_names = _matching_vendors(db, company_id, vendor_name)
+    project, citing the underlying cost entries (§5.2). The headline tool.
 
-    if not suppliers and not sub_ids:
+    CR-008-G: prefers an exact ``vendor_id`` match (canonical vendor + aliases);
+    unlinked legacy rows (vendor_id IS NULL) still match via the CR-007
+    normalised/pg_trgm fallback so nothing regresses."""
+    vendor = _resolve_vendor(db, company_id, vendor_name)
+    suppliers, sub_ids, legacy_names = _matching_vendors(db, company_id, vendor_name)
+
+    match_or = []
+    matched_names: set[str] = set()
+
+    if vendor is not None:
+        # Primary, exact path: rows linked to this canonical vendor.
+        match_or.append(CostEntry.vendor_id == vendor.id)
+        aliases = db.execute(
+            select(VendorAlias.alias_name).where(
+                VendorAlias.vendor_id == vendor.id, VendorAlias.is_deleted.is_(False)
+            )
+        ).scalars().all()
+        matched_names.add(vendor.canonical_name)
+        matched_names.update(aliases)
+
+    # Legacy fallback for still-unlinked rows. When a vendor resolved, only
+    # vendor_id IS NULL rows fall back (linked rows already counted, no double).
+    legacy_or = []
+    if suppliers:
+        legacy_or.append(CostEntry.supplier_name.in_(suppliers))
+    if sub_ids:
+        legacy_or.append(CostEntry.subcontractor_id.in_(sub_ids))
+    if legacy_or:
+        if vendor is not None:
+            match_or.append(and_(CostEntry.vendor_id.is_(None), or_(*legacy_or)))
+        else:
+            match_or.append(or_(*legacy_or))
+            matched_names.update(legacy_names)
+
+    if not match_or:
         return {
             "summary": {
-                "vendor_name": vendor_name, "matched_names": [],
+                "vendor_name": vendor.canonical_name if vendor else vendor_name,
+                "matched_names": sorted(matched_names),
                 "total_try": "0.00", "total_with_vat_try": "0.00",
                 "invoice_count": 0, "project_count": 0,
                 "by_month": [], "by_category": [], "by_project": [],
             },
             "records": [], "row_count": 0, "truncated": False,
         }
-
-    match_or = []
-    if suppliers:
-        match_or.append(CostEntry.supplier_name.in_(suppliers))
-    if sub_ids:
-        match_or.append(CostEntry.subcontractor_id.in_(sub_ids))
 
     conds = [
         CostEntry.company_id == company_id,
@@ -832,8 +887,8 @@ def get_vendor_spend(db: Session, company_id, *, vendor_name: str,
 
     return {
         "summary": {
-            "vendor_name": vendor_name,
-            "matched_names": matched_names,
+            "vendor_name": vendor.canonical_name if vendor else vendor_name,
+            "matched_names": sorted(matched_names),
             "total_try": _s(totals[0]),
             "total_with_vat_try": _s(totals[1]),
             "invoice_count": int(totals[2]),
@@ -853,10 +908,13 @@ def compare_vendors(db: Session, company_id, *, date_from: date | None = None,
                     cost_category: str | None = None) -> dict:
     """Total spend per vendor over a window, ranked desc, limited to top_n (§5.3).
 
-    Spend is grouped in SQL by COALESCE(supplier_name, subcontractor.name); raw
-    names that normalise to the same vendor are then merged (summing SQL-computed
-    subtotals — the same pattern as get_cashflow's per-project merge)."""
-    vendor_expr = func.coalesce(CostEntry.supplier_name, Subcontractor.name)
+    CR-008-G: groups by the canonical vendor name when a row is linked
+    (``vendor_id``), else falls back to COALESCE(supplier_name, subcontractor.name)
+    for unlinked legacy rows. Raw names that normalise to the same vendor are then
+    merged (summing SQL-computed subtotals — the get_cashflow per-project pattern)."""
+    vendor_expr = func.coalesce(
+        Vendor.canonical_name, func.coalesce(CostEntry.supplier_name, Subcontractor.name)
+    )
     conds = [
         CostEntry.company_id == company_id,
         CostEntry.is_deleted.is_(False),
@@ -878,6 +936,7 @@ def compare_vendors(db: Session, company_id, *, date_from: date | None = None,
         )
         .select_from(CostEntry)
         .join(Subcontractor, CostEntry.subcontractor_id == Subcontractor.id, isouter=True)
+        .join(Vendor, CostEntry.vendor_id == Vendor.id, isouter=True)
         .where(*conds)
         .group_by(vendor_expr)
     ).all()

@@ -3,6 +3,7 @@ import { useAuth } from "@/store/auth";
 import {
   BarChart3,
   Bell,
+  Building2,
   Calculator,
   ChevronDown,
   ClipboardCheck,
@@ -12,6 +13,7 @@ import {
   HelpCircle,
   History,
   LayoutDashboard,
+  LayoutGrid,
   LogOut,
   Menu,
   MessageSquare,
@@ -39,6 +41,7 @@ const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
   { icon: FolderKanban, label: "Projeler", to: "/projects" },
   { icon: MessageSquare, label: "AI Asistan", to: "/ai-assistant" },
+  { icon: LayoutGrid, label: "Çalışma Alanım", to: "/workspace" },
 ];
 
 const PROJECT_NAV = (id: string) => [
@@ -52,6 +55,7 @@ const PROJECT_NAV = (id: string) => [
 ];
 
 const BOTTOM_NAV = [
+  { icon: Building2, label: "Tedarikçiler", to: "/vendors" },
   { icon: Bell, label: "Hatırlatıcılar", to: "/reminders" },
   { icon: FileBarChart, label: "Raporlar", to: "/reports" },
   { icon: Sparkles, label: "Yapay Zeka Uyarıları", to: "/ai-alerts" },

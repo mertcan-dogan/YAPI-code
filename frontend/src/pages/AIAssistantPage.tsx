@@ -1,61 +1,16 @@
 import { AIDisclaimer, Select } from "@/components/ui";
 import { AgentChart } from "@/components/charts/AgentChart";
+import { MarkdownText } from "@/components/MarkdownText";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { useFetch } from "@/hooks/useFetch";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
+import { toast } from "@/store/toast";
 import type { Project } from "@/types";
 import type { AgentChartSpec, AgentResponse, Citation } from "@/types/agent";
 import { formatDateTime } from "@/utils/format";
-import { ArrowUp, FileText, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUp, FileText, Loader2, Pin, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-
-// CR-004-I: render **bold** segments from the AI's markdown-style numbers.
-function renderInline(text: string) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith("**") && part.endsWith("**") ? <strong key={i}>{part.slice(2, -2)}</strong> : <span key={i}>{part}</span>
-  );
-}
-
-// Lightweight markdown renderer so AI replies read like the Claude chat page:
-// headings, bullet lists, dividers and bold — instead of raw ## / - markers.
-function renderMarkdown(text: string) {
-  const lines = text.replace(/\r/g, "").split("\n");
-  const blocks: JSX.Element[] = [];
-  let list: string[] = [];
-  const flushList = () => {
-    if (!list.length) return;
-    const items = list;
-    blocks.push(
-      <ul key={`ul-${blocks.length}`} className="my-1 list-disc space-y-1 pl-5">
-        {items.map((li, i) => <li key={i}>{renderInline(li)}</li>)}
-      </ul>
-    );
-    list = [];
-  };
-  lines.forEach((raw) => {
-    const line = raw.trimEnd();
-    const t = line.trim();
-    if (!t) { flushList(); return; }
-    if (/^#{1,6}\s/.test(t)) {
-      flushList();
-      const level = t.match(/^#+/)![0].length;
-      const content = t.replace(/^#+\s/, "");
-      blocks.push(
-        <p key={`h-${blocks.length}`} className={`font-semibold text-primary ${level <= 2 ? "mt-3 text-[15px]" : "mt-2 text-sm"} first:mt-0`}>
-          {renderInline(content)}
-        </p>
-      );
-      return;
-    }
-    if (/^([-*•])\s/.test(t)) { list.push(t.replace(/^([-*•])\s/, "")); return; }
-    if (/^[-—_]{3,}$/.test(t)) { flushList(); blocks.push(<hr key={`hr-${blocks.length}`} className="my-3 border-border" />); return; }
-    flushList();
-    blocks.push(<p key={`p-${blocks.length}`} className="my-1">{renderInline(t)}</p>);
-  });
-  flushList();
-  return blocks;
-}
 
 const PRESETS = [
   // CR-007-F: headline agent scenario (edit the firm name before sending).
@@ -163,14 +118,60 @@ export default function AIAssistantPage() {
   const messages = activeConv?.messages ?? [];
 
   // CR-007-I: the most recent chart across the conversation, shown enlarged on
-  // the "Tuval" (Canvas) panel.
-  const latestChart: AgentChartSpec | null = (() => {
+  // the "Tuval" (Canvas) panel. We keep its source message index for pin dedup.
+  const latestChartInfo: { spec: AgentChartSpec; msgIndex: number } | null = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const cs = messages[i].charts;
-      if (cs && cs.length) return cs[cs.length - 1];
+      if (cs && cs.length) return { spec: cs[cs.length - 1], msgIndex: i };
     }
     return null;
   })();
+  const latestChart: AgentChartSpec | null = latestChartInfo?.spec ?? null;
+
+  // CR-008-C: pin charts/analyses to "Çalışma Alanım". Session-scoped dedup keyed
+  // by the source message so a double-click can't create duplicates.
+  const [pinnedKeys, setPinnedKeys] = useState<Set<string>>(new Set());
+
+  const pinChart = async () => {
+    if (!latestChartInfo) return;
+    const key = `chart:${activeId ?? "new"}:${latestChartInfo.msgIndex}`;
+    if (pinnedKeys.has(key)) {
+      toast.info("Bu grafik zaten çalışma alanınızda");
+      return;
+    }
+    try {
+      await apiPost("/workspace/items", {
+        title: latestChartInfo.spec.title || "Grafik",
+        item_type: "chart",
+        payload: latestChartInfo.spec, // snapshot — exactly what's on screen
+        source_conversation_id: activeId || null,
+      });
+      setPinnedKeys((prev) => new Set(prev).add(key));
+      toast.success("Çalışma alanınıza eklendi");
+    } catch {
+      toast.error("Çalışma alanına eklenemedi");
+    }
+  };
+
+  const pinAnalysis = async (m: Msg, i: number) => {
+    const key = `analysis:${activeId ?? "new"}:${i}`;
+    if (pinnedKeys.has(key)) {
+      toast.info("Bu analiz zaten çalışma alanınızda");
+      return;
+    }
+    try {
+      await apiPost("/workspace/items", {
+        title: (m.text.split("\n")[0] || "Analiz").replace(/[*#]/g, "").slice(0, 80) || "Analiz",
+        item_type: "analysis",
+        payload: { answer_markdown: m.text, citations: m.citations ?? [] },
+        source_conversation_id: activeId || null,
+      });
+      setPinnedKeys((prev) => new Set(prev).add(key));
+      toast.success("Çalışma alanınıza eklendi");
+    } catch {
+      toast.error("Çalışma alanına eklenemedi");
+    }
+  };
 
   // Cache to localStorage for instant paint on the next visit/refresh.
   useEffect(() => {
@@ -353,7 +354,7 @@ export default function AIAssistantPage() {
                     <Sparkles className="h-4 w-4" />
                   </span>
                   <div className="min-w-0 flex-1 pt-0.5 text-sm leading-relaxed text-text-primary">
-                    <div className="space-y-0.5">{renderMarkdown(m.text)}</div>
+                    <MarkdownText text={m.text} />
                     {/* CR-007-G: inline charts rendered from the agent's chart specs. */}
                     {(m.charts ?? []).map((spec, ci) => (
                       <AgentChart key={ci} spec={spec} />
@@ -375,7 +376,16 @@ export default function AIAssistantPage() {
                       </div>
                     )}
                     {m.at && <div className="mt-1.5 text-[10px] text-text-secondary">Bu yanıt {formatDateTime(m.at)} itibarıyla hesaplanmıştır</div>}
-                    <AIDisclaimer short className="mt-1" />
+                    <div className="mt-1 flex items-center gap-3">
+                      <AIDisclaimer short />
+                      {/* CR-008-C: pin this answer (snapshot) to Çalışma Alanım. */}
+                      <button
+                        onClick={() => pinAnalysis(m, i)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-text-secondary transition hover:text-brand"
+                      >
+                        <Pin className="h-3 w-3" /> Sabitle
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -414,19 +424,26 @@ export default function AIAssistantPage() {
 
         {/* Sidebar: Tuval (Canvas) + project filter + conversation history */}
         <div className="space-y-5">
-          {/* CR-007-I: Canvas panel — most recent chart, enlarged. */}
+          {/* CR-007-I Canvas panel + CR-008-C pin action. */}
           <div>
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="text-sm font-medium text-text-secondary">Tuval</span>
-              <span title="Yakında — CR-008">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigate("/workspace")}
+                  className="text-[11px] font-medium text-brand hover:underline"
+                >
+                  Görüntüle
+                </button>
                 <button
                   type="button"
-                  disabled
-                  className="rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-text-secondary opacity-50 disabled:cursor-not-allowed"
+                  onClick={pinChart}
+                  disabled={!latestChart}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-text-primary transition hover:bg-navy-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Çalışma Alanıma Ekle
+                  <Pin className="h-3 w-3" /> Çalışma Alanıma Ekle
                 </button>
-              </span>
+              </div>
             </div>
             {latestChart ? (
               <AgentChart spec={latestChart} height={240} />

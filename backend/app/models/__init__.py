@@ -18,6 +18,8 @@ from app.models.notification import Notification
 from app.models.kpi_snapshot import KPISnapshot
 from app.models.ai_conversation import AIConversation
 from app.models.ai_query_log import AIQueryLog
+from app.models.vendor import Vendor, VendorAlias
+from app.models.workspace_item import WorkspaceItem
 
 __all__ = [
     "Base",
@@ -39,4 +41,7 @@ __all__ = [
     "KPISnapshot",
     "AIConversation",
     "AIQueryLog",
+    "Vendor",
+    "VendorAlias",
+    "WorkspaceItem",
 ]
