@@ -155,9 +155,14 @@ export default function WorkspacePage() {
       ) : (
         <ResponsiveGridLayout
           className="layout"
-          layouts={{ lg: lgLayout, md: lgLayout, sm: stackedLayout, xs: stackedLayout, xxs: stackedLayout }}
-          breakpoints={{ lg: 1024, md: 768, sm: 640, xs: 480, xxs: 0 }}
-          cols={{ lg: 12, md: 12, sm: 1, xs: 1, xxs: 1 }}
+          // Drive the column count off isDesktop, NOT RGL's container-width
+          // breakpoints — a narrow content area (sidebar + small window) would
+          // otherwise collapse to 1 column and block width resizing. A single
+          // always-active breakpoint (width 0) gives 12 cols on desktop (so the
+          // east/corner handles work) and 1 col read-only on mobile.
+          layouts={{ lg: isDesktop ? lgLayout : stackedLayout }}
+          breakpoints={{ lg: 0 }}
+          cols={{ lg: isDesktop ? 12 : 1 }}
           rowHeight={ROW_HEIGHT}
           margin={[16, MARGIN_Y]}
           measureBeforeMount
