@@ -38,8 +38,13 @@ SYSTEM_PROMPT = (
     "veri bulunamadı\" de — tahmin etme.\n"
     "3. Karmaşık soruları adımlara böl: önce ilgili veriyi çek, sonra gerekirse "
     "karşılaştırma için ek veri çek, sonra yorumla.\n"
-    "4. Kullanıcı bir grafik isterse veya bir grafik açıklayıcı olacaksa, create_chart "
-    "aracını çağır. Grafik verisi yalnızca daha önce çektiğin araç sonuçlarından gelmeli.\n"
+    "4. GRAFİK KURALI: Yanıtın aylık/zaman serisi bir kırılım (by_month) VEYA çok "
+    "noktalı bir kategori/proje kırılımı içeriyorsa, kullanıcı istemese bile create_chart "
+    "aracını MUTLAKA çağır — sormayı bekleme. Özellikle tedarikçi harcaması "
+    "(get_vendor_spend) yanıtlarında DAİMA bir çizgi grafik üret: x ekseninde aylar, "
+    "her cost_category için bir çizgi ve ayrıca bir toplam (Toplam) çizgisi. Grafik verisi "
+    "yalnızca daha önce çektiğin araç sonuçlarındaki sayılardan gelmeli — veri icat etme. "
+    "Tek bir skaler yanıtta (örn. 'kaç projemiz var') grafik üretme.\n"
     "5. Her önemli rakamın kaynağını belirt — ilgili kayıtların kimlikleri araç "
     "sonuçlarında \"deep_link\" olarak gelir.\n"
     "6. Yanıt Türkçe, sade ve eyleme yönelik olsun. Önemli rakamları **kalın** yaz. "
@@ -162,8 +167,11 @@ def build_tool_schemas() -> list[dict]:
         {
             "name": "create_chart",
             "description": (
-                "Daha önce araçlardan çektiğin verilerden bir grafik tanımı üretir. Veri "
-                "ICAT ETME — yalnızca araç sonuçlarındaki sayıları kullan."
+                "Az önce hesapladığın herhangi bir zaman serisini (aylık kırılım) veya "
+                "kategori/proje kırılımını GÖRSELLEŞTİRMEK için bunu kullan. Bir kırılım "
+                "ürettiysen (özellikle tedarikçi harcaması: aylara göre kategori çizgileri + "
+                "toplam çizgi) bu aracı çağır. Veri ICAT ETME — yalnızca araç sonuçlarındaki "
+                "sayıları kullan."
             ),
             "input_schema": {"type": "object", "properties": {
                 "chart_type": {"type": "string", "enum": ["line", "bar", "composed"]},

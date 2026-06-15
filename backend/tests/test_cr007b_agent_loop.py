@@ -117,11 +117,19 @@ def test_headline_loop_vendor_spend_chart_compare(db, seed, monkeypatch):
 
     assert out["tools_used"] == ["get_vendor_spend", "create_chart", "compare_vendors"]
     assert out["answer_markdown"].startswith("Akçansa")
-    # One chart, multiple series including a 'total' line.
+    # Vendor spend must render a line chart: months on the x-axis, one line per
+    # cost_category PLUS a total line (§5.1).
     assert len(out["charts"]) == 1
     chart = out["charts"][0]
-    assert len(chart["series"]) >= 2
-    assert any(s["key"] == "total" for s in chart["series"])
+    assert chart["chart_type"] == "line"
+    assert chart["x_key"] == "month"
+    assert all(s["type"] == "line" for s in chart["series"])
+    total_series = [s for s in chart["series"] if s["key"] == "total"]
+    category_series = [s for s in chart["series"] if s["key"] != "total"]
+    assert len(total_series) == 1                     # exactly one total line
+    assert len(category_series) >= 1                  # at least one per-category line
+    assert len(chart["series"]) >= 2                  # total + categories
+    assert len(chart["data"]) >= 1                    # non-empty series
     # Citations to the seeded cost entries.
     assert len(out["citations"]) >= 1
     assert all("highlight=" in c["deep_link"] for c in out["citations"])
@@ -246,3 +254,21 @@ def test_build_tool_schemas_have_no_company_id():
     for t in agent_service.build_tool_schemas():
         props = t["input_schema"].get("properties", {})
         assert "company_id" not in props, t["name"]
+
+
+def test_system_prompt_mandates_chart_for_breakdowns():
+    """The strengthened chart rule forces create_chart for time-series / breakdowns
+    (esp. vendor spend) but not for scalar answers."""
+    sp = agent_service.SYSTEM_PROMPT
+    assert "by_month" in sp
+    assert "create_chart" in sp
+    assert "get_vendor_spend" in sp
+    assert "Toplam" in sp                  # total line for vendor spend
+    assert "grafik üretme" in sp           # scalar answers: do NOT force a chart
+
+
+def test_create_chart_description_says_visualise():
+    desc = next(t for t in agent_service.build_tool_schemas() if t["name"] == "create_chart")["description"].lower()
+    # "görselle" prefix avoids the Turkish dotted-İ (lowercases to i + combining dot).
+    assert "görselle" in desc
+    assert "zaman seris" in desc
