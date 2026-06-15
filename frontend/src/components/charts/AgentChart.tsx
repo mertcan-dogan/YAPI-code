@@ -85,7 +85,7 @@ export function AgentChart({ spec, height = 280 }: { spec: AgentChartSpec; heigh
           s.type === "bar" ? (
             <Bar key={s.key} dataKey={s.key} name={s.label} fill={colorAt(i, s.color)} radius={[3, 3, 0, 0]} maxBarSize={28} />
           ) : (
-            <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={colorAt(i, s.color)} strokeWidth={2.5} dot={false} />
+            <Line key={s.key} type="linear" dataKey={s.key} name={s.label} stroke={colorAt(i, s.color)} strokeWidth={2.5} dot={false} />
           )
         )}
       </ComposedChart>

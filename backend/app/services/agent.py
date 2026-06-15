@@ -16,8 +16,10 @@ from datetime import date, datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.constants import COST_CATEGORIES
 from app.services import agent_tools as tools
 from app.services import ai as ai_service
+from app.utils.format import format_date_tr, format_number_tr
 
 logger = logging.getLogger("yapi.agent")
 
@@ -208,23 +210,65 @@ def _coerce_params(allowed: set[str], raw: dict) -> dict:
     return params
 
 
+# Citation amount: first present money field on the record.
+_CITATION_AMOUNT_KEYS = (
+    "total_with_vat_try", "amount_try", "outstanding_try", "remaining_try", "net_due_try",
+)
+
+
+def _citation_type(link: str) -> str:
+    """Type from the record's actual source (its deep_link target), NOT from the
+    presence of an invoice_number — a cost entry can carry one too."""
+    if "/invoices?highlight=" in link:
+        return "client_invoice"
+    if "/subcontractors?highlight=" in link:
+        return "subcontractor"
+    if "/dashboard?highlight=" in link:
+        return "cost_entry"
+    return "record"
+
+
+def _citation_amount(rec: dict) -> str:
+    for k in _CITATION_AMOUNT_KEYS:
+        v = rec.get(k)
+        if v not in (None, ""):
+            # Whole-TRY, Turkish grouping (e.g. "2.778.000 ₺").
+            return f"{format_number_tr(v, 0)} ₺"
+    return ""
+
+
 def _add_citations(result: dict, citations: list, seen: set) -> None:
-    """Derive citation chips from a tool result's highlightable records."""
+    """Derive citation chips from a tool result's highlightable records.
+
+    Labels carry a Turkish-formatted amount and a distinguishing token so that
+    several chips for the same vendor are not identical."""
     for rec in (result.get("records") or []):
         link = rec.get("deep_link", "")
         rid = rec.get("id")
         if not rid or "highlight=" not in link or rid in seen:
             continue
         seen.add(rid)
-        if rec.get("invoice_number"):
-            ctype = "client_invoice"
-            label = f"{rec['invoice_number']} — {rec.get('total_with_vat_try') or rec.get('outstanding_try') or ''} ₺"
-        elif "supplier_name" in rec:
-            ctype = "cost_entry"
-            label = f"{rec.get('supplier_name') or 'Maliyet'} — {rec.get('total_with_vat_try') or rec.get('amount_try') or ''} ₺"
+        ctype = _citation_type(link)
+        amount = _citation_amount(rec)
+
+        if ctype == "client_invoice":
+            head = rec.get("invoice_number") or "Fatura"
+        elif ctype == "cost_entry":
+            supplier = rec.get("supplier_name") or "Maliyet"
+            # Unique-ish token so 8 same-supplier chips differ: invoice no, else
+            # entry date, else cost category.
+            disc = rec.get("invoice_number")
+            if not disc and rec.get("entry_date"):
+                disc = format_date_tr(rec["entry_date"])
+            if not disc and rec.get("cost_category"):
+                disc = COST_CATEGORIES.get(rec["cost_category"], rec["cost_category"])
+            head = f"{supplier} · {disc}" if disc else supplier
+        elif ctype == "subcontractor":
+            head = rec.get("name") or "Alt Yüklenici"
         else:
-            ctype = "record"
-            label = rec.get("name") or rid
+            head = rec.get("name") or rid
+
+        label = f"{head} — {amount}" if amount else head
         citations.append({"type": ctype, "id": rid, "label": label.strip(), "deep_link": link})
         if len(citations) >= 25:
             return
