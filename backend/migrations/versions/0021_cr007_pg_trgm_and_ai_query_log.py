@@ -1,8 +1,13 @@
 """CR-007 step 1: enable pg_trgm extension + ai_query_log audit table
 
-Revision ID: 0021_cr007_pg_trgm_and_ai_query_log
+Revision ID: 0021_pg_trgm_ai_query_log
 Revises: 0020_ai_conversations
 Create Date: 2026-06-15
+
+NOTE: the revision id must stay <= 32 chars — alembic_version.version_num is
+VARCHAR(32). The original id (0021_cr007_pg_trgm_and_ai_query_log, 35 chars)
+overflowed it, so the version stamp failed and the whole migration rolled back
+on prod boot (SQLite tests don't run migrations, so they never caught it).
 
 Two pieces of groundwork for the AI Agent Core (CR-007), with no behaviour
 change to existing features:
@@ -24,7 +29,7 @@ from sqlalchemy.dialects import postgresql
 
 from migrations.idempotent import create_index, create_policy, create_table, enable_rls
 
-revision = "0021_cr007_pg_trgm_and_ai_query_log"
+revision = "0021_pg_trgm_ai_query_log"
 down_revision = "0020_ai_conversations"
 branch_labels = None
 depends_on = None
