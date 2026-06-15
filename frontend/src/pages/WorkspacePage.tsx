@@ -1,11 +1,9 @@
-// CR-008-D — "Çalışma Alanım": the board of pinned snapshot items.
+// CR-009-B — "Çalışma Alanım": real drag-and-drop / resizable board.
 //
-// Dependency note (§0.0 #5 / §5.1): react-grid-layout is declared in package.json
-// but is NOT installed in this environment, so per the spec's stated fallback this
-// page uses a responsive ordered grid (no new dependency) with move/resize controls
-// instead of free drag-drop. Order + width still persist via PUT /workspace/layout,
-// so swapping in react-grid-layout later is a drop-in upgrade. Mobile (<lg) renders
-// a single-column read-only stack.
+// Upgrades the CR-008 fallback ordered grid to react-grid-layout. Backend is
+// unchanged: layout {x,y,w,h} still persists via PUT /workspace/layout. Pinned
+// items stay SNAPSHOTS (no re-fetch). Below lg the board collapses to a single
+// read-only column (drag/resize disabled), preserving CR-008 behaviour.
 import { AgentChart } from "@/components/charts/AgentChart";
 import { MarkdownText } from "@/components/MarkdownText";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -15,8 +13,13 @@ import { apiDelete, apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
 import type { AgentChartSpec, Citation } from "@/types/agent";
 import { formatDate } from "@/utils/format";
-import { ArrowDown, ArrowUp, Maximize2, Minimize2, Pencil, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Pencil, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Responsive, WidthProvider, type Layout } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
+
+const ResponsiveGridLayout = WidthProvider(Responsive);
 
 interface WorkspaceItem {
   id: string;
@@ -28,51 +31,91 @@ interface WorkspaceItem {
 }
 
 const DEFAULT_W = 6;
-const FULL_W = 12;
+const DEFAULT_H = 3;
+const MIN_W = 3;
+const MIN_H = 2;
+const ROW_HEIGHT = 80;
+const MARGIN_Y = 16;
+const HEADER_PX = 64; // card header + caption + padding inside a cell
+const PERSIST_DEBOUNCE_MS = 600;
 
-function sortForDisplay(items: WorkspaceItem[]): WorkspaceItem[] {
-  return [...items].sort((a, b) => {
-    const ay = a.layout?.y, by = b.layout?.y;
-    if (ay != null && by != null) return ay - by;
-    if (ay != null) return -1;
-    if (by != null) return 1;
-    return 0; // both unlaid-out: keep API order (pinned_at desc)
-  });
+// Pixel height available to a cell's content for a given grid-row span `h`.
+function contentHeight(h: number): number {
+  return Math.max(120, h * ROW_HEIGHT + (h - 1) * MARGIN_Y - HEADER_PX);
 }
+
+function useIsDesktop(): boolean {
+  const query = "(min-width: 1024px)";
+  const [desktop, setDesktop] = useState(
+    () => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia(query).matches
+  );
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(query);
+    const onChange = () => setDesktop(mq.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+  return desktop;
+}
+
+const layoutSig = (l: Layout[]) =>
+  JSON.stringify([...l].map((x) => [x.i, x.x, x.y, x.w, x.h]).sort());
 
 export default function WorkspacePage() {
   const { data, loading, error, refetch } = useFetch<WorkspaceItem[]>("/workspace/items");
   const [items, setItems] = useState<WorkspaceItem[]>([]);
+  const isDesktop = useIsDesktop();
+
+  const lastSig = useRef<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    if (data) setItems(sortForDisplay(data));
+    if (data) setItems(data);
   }, [data]);
 
-  // Persist the whole board's order + widths atomically (PUT /workspace/layout).
-  const persist = (next: WorkspaceItem[]) => {
-    const payload = next.map((it, idx) => ({
-      id: it.id, x: 0, y: idx, w: it.layout?.w ?? DEFAULT_W, h: 1,
-    }));
-    apiPut("/workspace/layout", { items: payload }).catch(() => toast.error("Düzen kaydedilemedi"));
-  };
+  useEffect(() => () => clearTimeout(timer.current), []);
 
-  const move = (index: number, dir: -1 | 1) => {
-    const j = index + dir;
-    if (j < 0 || j >= items.length) return;
-    const next = [...items];
-    [next[index], next[j]] = [next[j], next[index]];
-    setItems(next);
-    persist(next);
-  };
+  // 12-col desktop layout: respect saved {x,y,w,h}; flow null-layout items in.
+  const lgLayout: Layout[] = useMemo(
+    () =>
+      items.map((it, idx) => ({
+        i: it.id,
+        x: it.layout?.x ?? (idx % 2) * DEFAULT_W,
+        y: it.layout?.y ?? Math.floor(idx / 2) * DEFAULT_H,
+        // Clamp to the minimums — legacy CR-008 items were saved with h=1.
+        w: Math.max(MIN_W, it.layout?.w ?? DEFAULT_W),
+        h: Math.max(MIN_H, it.layout?.h ?? DEFAULT_H),
+        minW: MIN_W,
+        minH: MIN_H,
+      })),
+    [items]
+  );
+  // Single-column stack for small screens (read-only).
+  const stackedLayout: Layout[] = useMemo(
+    () => items.map((it, idx) => ({ i: it.id, x: 0, y: idx * DEFAULT_H, w: 1, h: Math.max(MIN_H, it.layout?.h ?? DEFAULT_H), minW: 1, minH: MIN_H })),
+    [items]
+  );
 
-  const toggleWidth = (index: number) => {
-    const next = items.map((it, i) => {
-      if (i !== index) return it;
-      const w = (it.layout?.w ?? DEFAULT_W) >= FULL_W ? DEFAULT_W : FULL_W;
-      return { ...it, layout: { x: 0, y: i, w, h: 1 } };
-    });
-    setItems(next);
-    persist(next);
+  // Seed the signature from the rendered layout so the mount onLayoutChange is a
+  // no-op; only genuine drag/resize then persists.
+  useEffect(() => {
+    if (lastSig.current === null && items.length) lastSig.current = layoutSig(lgLayout);
+  }, [items.length, lgLayout]);
+
+  const hById = useMemo(() => new Map(lgLayout.map((l) => [l.i, l.h])), [lgLayout]);
+
+  const onLayoutChange = (layout: Layout[]) => {
+    // Don't let the mobile (1-col) layout overwrite the saved desktop layout.
+    if (!isDesktop) return;
+    const sig = layoutSig(layout);
+    if (sig === lastSig.current) return;
+    lastSig.current = sig;
+    const payload = layout.map((l) => ({ id: l.i, x: l.x, y: l.y, w: l.w, h: l.h }));
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      apiPut("/workspace/layout", { items: payload }).catch(() => toast.error("Düzen kaydedilemedi"));
+    }, PERSIST_DEBOUNCE_MS);
   };
 
   const rename = async (it: WorkspaceItem) => {
@@ -99,7 +142,7 @@ export default function WorkspacePage() {
 
   return (
     <div>
-      <PageHeader title="Çalışma Alanım" subtitle="Sabitlediğiniz grafikler ve analizler" />
+      <PageHeader title="Çalışma Alanım" subtitle="Sabitlediğiniz grafikler ve analizler — sürükleyip yeniden boyutlandırın" />
 
       {error && !loading ? (
         <div className="rounded-xl border border-border bg-surface shadow-sm"><LoadError onRetry={refetch} /></div>
@@ -108,47 +151,52 @@ export default function WorkspacePage() {
           <EmptyState message="Henüz bir şey sabitlemediniz. Yapı Agent'ta bir grafik veya analiz oluşturup '📌 Sabitle' deyin." />
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          {items.map((it, i) => {
-            const w = it.layout?.w ?? DEFAULT_W;
-            const spanClass = w >= FULL_W ? "lg:col-span-12" : "lg:col-span-6";
+        <ResponsiveGridLayout
+          className="layout"
+          layouts={{ lg: lgLayout, md: lgLayout, sm: stackedLayout, xs: stackedLayout, xxs: stackedLayout }}
+          breakpoints={{ lg: 1024, md: 768, sm: 640, xs: 480, xxs: 0 }}
+          cols={{ lg: 12, md: 12, sm: 1, xs: 1, xxs: 1 }}
+          rowHeight={ROW_HEIGHT}
+          margin={[16, MARGIN_Y]}
+          measureBeforeMount
+          isDraggable={isDesktop}
+          isResizable={isDesktop}
+          draggableHandle=".wsp-drag"
+          draggableCancel=".wsp-nodrag"
+          onLayoutChange={onLayoutChange}
+        >
+          {items.map((it) => {
+            const h = hById.get(it.id) ?? DEFAULT_H;
+            const ch = contentHeight(h);
             return (
-              <div key={it.id} className={`rounded-xl border border-border bg-surface p-4 ${spanClass}`}>
-                <div className="mb-2 flex items-start justify-between gap-2">
+              <div key={it.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
+                <div className={`flex items-start justify-between gap-2 border-b border-border px-3 py-2 ${isDesktop ? "wsp-drag cursor-move" : ""}`}>
                   <div className="min-w-0">
                     <h3 className="truncate text-sm font-semibold text-text-primary">{it.title}</h3>
                     {it.pinned_at && (
                       <p className="text-[11px] text-text-secondary">{formatDate(it.pinned_at)} tarihinde sabitlendi</p>
                     )}
                   </div>
-                  {/* Controls — desktop only (mobile board is read-only, §0.2/§5.1). */}
-                  <div className="hidden shrink-0 items-center gap-1 lg:flex">
-                    <button onClick={() => move(i, -1)} disabled={i === 0} aria-label="Yukarı taşı"
-                      className="rounded p-1 text-text-secondary hover:text-brand disabled:opacity-30"><ArrowUp className="h-4 w-4" /></button>
-                    <button onClick={() => move(i, 1)} disabled={i === items.length - 1} aria-label="Aşağı taşı"
-                      className="rounded p-1 text-text-secondary hover:text-brand disabled:opacity-30"><ArrowDown className="h-4 w-4" /></button>
-                    <button onClick={() => toggleWidth(i)} aria-label={w >= FULL_W ? "Daralt" : "Genişlet"}
-                      className="rounded p-1 text-text-secondary hover:text-brand">
-                      {w >= FULL_W ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                    </button>
+                  <div className="wsp-nodrag flex shrink-0 items-center gap-1">
                     <button onClick={() => rename(it)} aria-label="Yeniden adlandır"
                       className="rounded p-1 text-text-secondary hover:text-brand"><Pencil className="h-4 w-4" /></button>
                     <button onClick={() => remove(it)} aria-label="Kaldır"
                       className="rounded p-1 text-text-secondary hover:text-danger"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </div>
-
-                {it.item_type === "chart" ? (
-                  <AgentChart spec={it.payload as AgentChartSpec} height={240} />
-                ) : (
-                  <div className="text-sm leading-relaxed text-text-primary">
-                    <MarkdownText text={(it.payload as { answer_markdown: string }).answer_markdown} />
-                  </div>
-                )}
+                <div className="min-h-0 flex-1 overflow-auto p-3">
+                  {it.item_type === "chart" ? (
+                    <AgentChart spec={it.payload as AgentChartSpec} height={ch} />
+                  ) : (
+                    <div className="text-sm leading-relaxed text-text-primary">
+                      <MarkdownText text={(it.payload as { answer_markdown: string }).answer_markdown} />
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
-        </div>
+        </ResponsiveGridLayout>
       )}
     </div>
   );
