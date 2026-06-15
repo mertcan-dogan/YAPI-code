@@ -49,6 +49,18 @@ SYSTEM_PROMPT = (
 )
 
 
+def _date_grounding(today: date) -> str:
+    """Today's server date, appended to the system prompt so relative-time phrases
+    resolve to the correct year. The model must COPY literal ISO dates derived from
+    this context into date_from/date_to — it must not invent a year (§1.2)."""
+    return (
+        f"\n\nBUGÜN: {today:%Y-%m-%d}. Göreli tarih ifadelerini (son 6 ay, bu yıl, "
+        "geçen ay, son çeyrek, geçen yıl) DAİMA bu tarihe göre hesapla; yılı asla "
+        "tahmin etme. Araçlara verdiğin date_from/date_to değerleri, bu BUGÜN "
+        "bilgisinden türetilmiş birebir ISO tarihleri (YYYY-MM-DD) olmalı."
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Tool registry: name -> (callable, allowed-param whitelist)
 # The whitelist also blocks a model-supplied company_id (§1.2 #4).
@@ -244,18 +256,24 @@ def _text_of(content) -> str:
     return "".join(b.text for b in content if getattr(b, "type", "") == "text").strip()
 
 
-def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None) -> dict:
+def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None,
+              today: date | None = None) -> dict:
     """Execute the tool-use loop and return the structured response (§3.1).
 
     Raises ai_service.AIUnavailable if the model cannot be reached or the 60s
     server-side budget is exceeded; callers (api/ai.py) translate that into the
     graceful Turkish degradation response. On success, writes one ai_query_log
     row (§6.1) when user_id is supplied.
+
+    ``today`` (default date.today()) grounds relative date phrases ("son 6 ay",
+    "bu yıl") so the model resolves them against the real server date instead of
+    guessing a year. Injected, not computed — the model copies literal ISO dates
+    from this context into tool params (§1.2: the model never computes).
     """
     client = ai_service._client()  # raises AIUnavailable when no key/SDK
     tool_schemas = build_tool_schemas()
 
-    system = SYSTEM_PROMPT
+    system = SYSTEM_PROMPT + _date_grounding(today or date.today())
     if project_id is not None:
         system += f"\n\nAKTİF PROJE BAĞLAMI: Kullanıcı şu an proje {project_id} bağlamında çalışıyor. Aksi belirtilmedikçe bu projeyi varsay."
 
