@@ -2,7 +2,7 @@
 // react-grid-layout is mocked to a controllable stub so we can assert OUR page
 // contract: it renders pinned items, a (desktop) layout change debounce-PUTs to
 // /workspace/layout, and below lg the grid is read-only (no drag, no persist).
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { setMatchMedia } from "@/test/setup";
@@ -83,9 +83,9 @@ describe("WorkspacePage (drag-drop board)", () => {
     expect(h.grid.props.isResizable).toBe(true);
 
     // Simulate a drag/resize: rgl calls onLayoutChange with the new layout.
-    h.grid.props.onLayoutChange([{ i: "i1", x: 6, y: 2, w: 4, h: 4 }]);
+    act(() => h.grid.props.onLayoutChange([{ i: "i1", x: 6, y: 2, w: 4, h: 4 }]));
     expect(apiPut).not.toHaveBeenCalled(); // debounced
-    vi.advanceTimersByTime(700);
+    act(() => vi.advanceTimersByTime(700));
 
     expect(apiPut).toHaveBeenCalledWith("/workspace/layout", {
       items: [{ id: "i1", x: 6, y: 2, w: 4, h: 4 }],
@@ -101,8 +101,8 @@ describe("WorkspacePage (drag-drop board)", () => {
     expect(h.grid.props.isResizable).toBe(false);
 
     // A layout change on mobile must NOT overwrite the saved desktop layout.
-    h.grid.props.onLayoutChange([{ i: "i1", x: 0, y: 0, w: 1, h: 3 }]);
-    vi.advanceTimersByTime(700);
+    act(() => h.grid.props.onLayoutChange([{ i: "i1", x: 0, y: 0, w: 1, h: 3 }]));
+    act(() => vi.advanceTimersByTime(700));
     expect(apiPut).not.toHaveBeenCalled();
   });
 });

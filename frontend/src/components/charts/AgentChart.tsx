@@ -45,7 +45,7 @@ function AgentTooltip({ active, payload, label, symbol }: any) {
   );
 }
 
-export function AgentChart({ spec, height = 280 }: { spec: AgentChartSpec; height?: number }) {
+export function AgentChart({ spec, height = 280, fill = false }: { spec: AgentChartSpec; height?: number; fill?: boolean }) {
   if (!spec?.data?.length || !spec.series?.length) return null;
 
   const symbol = symbolFor(spec.currency);
@@ -101,6 +101,22 @@ export function AgentChart({ spec, height = 280 }: { spec: AgentChartSpec; heigh
     );
   }
 
+  // Fill mode (workspace cell): no chrome/title/border — just the chart filling
+  // its container so it scales with drag-resize. The card already shows the title.
+  if (fill) {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <div className="min-h-0 flex-1">
+          <ResponsiveContainer width="100%" height="100%">
+            {chart}
+          </ResponsiveContainer>
+        </div>
+        {spec.source_note && <p className="mt-1 shrink-0 text-[11px] text-text-secondary">{spec.source_note}</p>}
+      </div>
+    );
+  }
+
+  // Inline (chat) mode — fixed height + figure chrome. Unchanged.
   return (
     <figure className="my-3 rounded-xl border border-border bg-surface p-3">
       {spec.title && <figcaption className="mb-2 text-sm font-semibold text-text-primary">{spec.title}</figcaption>}

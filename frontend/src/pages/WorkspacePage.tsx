@@ -36,13 +36,7 @@ const MIN_W = 3;
 const MIN_H = 2;
 const ROW_HEIGHT = 80;
 const MARGIN_Y = 16;
-const HEADER_PX = 64; // card header + caption + padding inside a cell
 const PERSIST_DEBOUNCE_MS = 600;
-
-// Pixel height available to a cell's content for a given grid-row span `h`.
-function contentHeight(h: number): number {
-  return Math.max(120, h * ROW_HEIGHT + (h - 1) * MARGIN_Y - HEADER_PX);
-}
 
 function useIsDesktop(): boolean {
   const query = "(min-width: 1024px)";
@@ -103,14 +97,22 @@ export default function WorkspacePage() {
     if (lastSig.current === null && items.length) lastSig.current = layoutSig(lgLayout);
   }, [items.length, lgLayout]);
 
-  const hById = useMemo(() => new Map(lgLayout.map((l) => [l.i, l.h])), [lgLayout]);
-
   const onLayoutChange = (layout: Layout[]) => {
     // Don't let the mobile (1-col) layout overwrite the saved desktop layout.
     if (!isDesktop) return;
     const sig = layoutSig(layout);
     if (sig === lastSig.current) return;
     lastSig.current = sig;
+
+    // Keep items state in sync with the new positions/sizes.
+    const byId = new Map(layout.map((l) => [l.i, l]));
+    setItems((prev) =>
+      prev.map((it) => {
+        const l = byId.get(it.id);
+        return l ? { ...it, layout: { x: l.x, y: l.y, w: l.w, h: l.h } } : it;
+      })
+    );
+
     const payload = layout.map((l) => ({ id: l.i, x: l.x, y: l.y, w: l.w, h: l.h }));
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -163,11 +165,11 @@ export default function WorkspacePage() {
           isResizable={isDesktop}
           draggableHandle=".wsp-drag"
           draggableCancel=".wsp-nodrag"
+          resizeHandles={["se", "e", "s"]}
           onLayoutChange={onLayoutChange}
         >
           {items.map((it) => {
-            const h = hById.get(it.id) ?? DEFAULT_H;
-            const ch = contentHeight(h);
+            const isChart = it.item_type === "chart";
             return (
               <div key={it.id} className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
                 <div className={`flex items-start justify-between gap-2 border-b border-border px-3 py-2 ${isDesktop ? "wsp-drag cursor-move" : ""}`}>
@@ -184,9 +186,10 @@ export default function WorkspacePage() {
                       className="rounded p-1 text-text-secondary hover:text-danger"><Trash2 className="h-4 w-4" /></button>
                   </div>
                 </div>
-                <div className="min-h-0 flex-1 overflow-auto p-3">
-                  {it.item_type === "chart" ? (
-                    <AgentChart spec={it.payload as AgentChartSpec} height={ch} />
+                {/* Charts FILL the cell (no inner scrollbar); long analyses scroll. */}
+                <div className={`min-h-0 flex-1 p-2 ${isChart ? "overflow-hidden" : "overflow-auto"}`}>
+                  {isChart ? (
+                    <AgentChart spec={it.payload as AgentChartSpec} fill />
                   ) : (
                     <div className="text-sm leading-relaxed text-text-primary">
                       <MarkdownText text={(it.payload as { answer_markdown: string }).answer_markdown} />
