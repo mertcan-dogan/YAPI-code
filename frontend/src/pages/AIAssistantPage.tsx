@@ -1,12 +1,14 @@
 import { AIDisclaimer, Select } from "@/components/ui";
+import { AgentChart } from "@/components/charts/AgentChart";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { useFetch } from "@/hooks/useFetch";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import type { Project } from "@/types";
+import type { AgentChartSpec, AgentResponse, Citation } from "@/types/agent";
 import { formatDateTime } from "@/utils/format";
-import { ArrowUp, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUp, FileText, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 // CR-004-I: render **bold** segments from the AI's markdown-style numbers.
 function renderInline(text: string) {
@@ -56,6 +58,9 @@ function renderMarkdown(text: string) {
 }
 
 const PRESETS = [
+  // CR-007-F: headline agent scenario (edit the firm name before sending).
+  "[Firma adı] ile son 6 ayda ne kadar iş yaptık?",
+  "Tedarikçilerimizi bu yılki harcamaya göre karşılaştır.",
   "Hangi proje en fazla para kaybetme riski taşıyor?",
   "Bu ay marj neden düştü?",
   "Hangi tedarikçinin en yüksek vadesi geçmiş borcu var?",
@@ -64,11 +69,35 @@ const PRESETS = [
   "Önce hangi hakedişi takip etmeliyiz?",
 ];
 
+// Agent response shapes live in @/types/agent (shared with AgentChart, CR-007-G/H).
+
 interface Msg {
   role: "user" | "ai";
   text: string;
   at?: string;
+  // CR-007-F: agent extras (in-session; dropped by the conversation store on persist).
+  charts?: AgentChartSpec[];
+  citations?: Citation[];
+  tools_used?: string[];
 }
+
+// CR-007-F: tool name -> Turkish step label, for the post-response "thinking" replay.
+const TOOL_STEPS: Record<string, string> = {
+  list_projects: "Projeler listeleniyor…",
+  get_project_financials: "Proje finansalları getiriliyor…",
+  query_cost_entries: "Maliyet kayıtları inceleniyor…",
+  query_client_invoices: "Hakedişler inceleniyor…",
+  query_subcontractors: "Alt yükleniciler inceleniyor…",
+  get_vendor_spend: "Tedarikçi harcamaları inceleniyor…",
+  compare_vendors: "Tedarikçiler karşılaştırılıyor…",
+  get_cashflow: "Nakit akışı hesaplanıyor…",
+  get_overdue_payments: "Vadesi geçmiş ödemeler taranıyor…",
+  create_chart: "Grafik oluşturuluyor…",
+};
+
+const GENERIC_STEPS = ["Soru anlaşılıyor…", "Veriler inceleniyor…", "Analiz hazırlanıyor…"];
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 interface Conversation {
   id: string;
@@ -125,11 +154,23 @@ export default function AIAssistantPage() {
   });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [thinkingStep, setThinkingStep] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
   const messages = activeConv?.messages ?? [];
+
+  // CR-007-I: the most recent chart across the conversation, shown enlarged on
+  // the "Tuval" (Canvas) panel.
+  const latestChart: AgentChartSpec | null = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const cs = messages[i].charts;
+      if (cs && cs.length) return cs[cs.length - 1];
+    }
+    return null;
+  })();
 
   // Cache to localStorage for instant paint on the next visit/refresh.
   useEffect(() => {
@@ -189,24 +230,59 @@ export default function AIAssistantPage() {
     syncConversation(id, title, afterUser, projectId);
     setInput("");
     setLoading(true);
+
+    // Brief generic "thinking" animation during the request (no streaming yet, §7.2).
+    let gi = 0;
+    setThinkingStep(GENERIC_STEPS[0]);
+    const timer = window.setInterval(() => {
+      gi = (gi + 1) % GENERIC_STEPS.length;
+      setThinkingStep(GENERIC_STEPS[gi]);
+    }, 1100);
+
     try {
-      const res = await apiPost<{ answer: string; generated_at: string }>("/ai/assistant", {
-        question,
+      // CR-007-B agent endpoint: send the full session as Anthropic messages
+      // ({role:"ai"|"user", text} -> {role:"assistant"|"user", content}, §0 S2).
+      // The legacy single-shot POST /ai/assistant (CR-003-H) stays available as a
+      // fallback for now; plan its deprecation once the agent endpoint is stable.
+      const res = await apiPost<AgentResponse>("/ai/agent", {
+        messages: toAgentMessages(afterUser),
         project_id: projectId || null,
       });
-      const aiMsg: Msg = { role: "ai", text: res.answer, at: res.generated_at };
+      window.clearInterval(timer);
+
+      // Short replay of the real steps the agent took, derived from tools_used.
+      for (const t of res.tools_used ?? []) {
+        setThinkingStep(TOOL_STEPS[t] ?? "Araç çalıştırılıyor…");
+        await sleep(420);
+      }
+
+      const aiMsg: Msg = {
+        role: "ai",
+        text: res.answer_markdown || "Bu konuda veri bulunamadı.",
+        at: res.generated_at,
+        charts: res.charts ?? [],
+        citations: res.citations ?? [],
+        tools_used: res.tools_used ?? [],
+      };
       const afterAi = [...afterUser, aiMsg];
       setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: afterAi, updatedAt: new Date().toISOString() } : c)));
       syncConversation(id, title, afterAi, projectId);
     } catch (e: any) {
+      window.clearInterval(timer);
       const aiMsg: Msg = { role: "ai", text: e.message ?? "AI şu an kullanılamıyor." };
       const afterAi = [...afterUser, aiMsg];
       setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: afterAi, updatedAt: new Date().toISOString() } : c)));
       syncConversation(id, title, afterAi, projectId);
     } finally {
+      window.clearInterval(timer);
       setLoading(false);
+      setThinkingStep(null);
     }
   };
+
+  // {role:"ai", text} -> {role:"assistant", content}; user unchanged (§0 S2).
+  const toAgentMessages = (msgs: Msg[]) =>
+    msgs.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
 
   // Load the server copy on mount (authoritative — syncs across devices), then
   // run any handed-off question once the list is in place.
@@ -278,6 +354,26 @@ export default function AIAssistantPage() {
                   </span>
                   <div className="min-w-0 flex-1 pt-0.5 text-sm leading-relaxed text-text-primary">
                     <div className="space-y-0.5">{renderMarkdown(m.text)}</div>
+                    {/* CR-007-G: inline charts rendered from the agent's chart specs. */}
+                    {(m.charts ?? []).map((spec, ci) => (
+                      <AgentChart key={ci} spec={spec} />
+                    ))}
+                    {/* CR-007-H: citation chips — click navigates to + highlights the record. */}
+                    {(m.citations ?? []).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {(m.citations ?? []).map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => navigate(c.deep_link)}
+                            title={c.label}
+                            className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-bg px-2.5 py-1 text-xs text-text-primary transition hover:border-brand hover:bg-navy-50"
+                          >
+                            <FileText className="h-3 w-3 shrink-0 text-brand" />
+                            <span className="truncate">{c.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {m.at && <div className="mt-1.5 text-[10px] text-text-secondary">Bu yanıt {formatDateTime(m.at)} itibarıyla hesaplanmıştır</div>}
                     <AIDisclaimer short className="mt-1" />
                   </div>
@@ -289,7 +385,7 @@ export default function AIAssistantPage() {
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-2 text-white">
                   <Sparkles className="h-4 w-4 animate-pulse" />
                 </span>
-                <div className="pt-1.5 text-sm text-text-secondary">Yanıt hazırlanıyor…</div>
+                <div className="pt-1.5 text-sm text-text-secondary">{thinkingStep ?? "Yanıt hazırlanıyor…"}</div>
               </div>
             )}
             <div ref={endRef} />
@@ -316,8 +412,31 @@ export default function AIAssistantPage() {
           </form>
         </div>
 
-        {/* Sidebar: project filter + conversation history */}
+        {/* Sidebar: Tuval (Canvas) + project filter + conversation history */}
         <div className="space-y-5">
+          {/* CR-007-I: Canvas panel — most recent chart, enlarged. */}
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-text-secondary">Tuval</span>
+              <span title="Yakında — CR-008">
+                <button
+                  type="button"
+                  disabled
+                  className="rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-text-secondary opacity-50 disabled:cursor-not-allowed"
+                >
+                  Çalışma Alanıma Ekle
+                </button>
+              </span>
+            </div>
+            {latestChart ? (
+              <AgentChart spec={latestChart} height={240} />
+            ) : (
+              <p className="rounded-xl border border-dashed border-border bg-surface p-4 text-xs text-text-secondary">
+                Bir analiz veya grafik istediğinizde burada görünecek.
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="mb-1 block text-sm font-medium text-text-secondary">Proje Filtresi</label>
             <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>

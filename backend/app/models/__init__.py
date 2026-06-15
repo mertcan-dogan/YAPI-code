@@ -17,6 +17,7 @@ from app.models.approval_request import ApprovalRequest
 from app.models.notification import Notification
 from app.models.kpi_snapshot import KPISnapshot
 from app.models.ai_conversation import AIConversation
+from app.models.ai_query_log import AIQueryLog
 
 __all__ = [
     "Base",
@@ -37,4 +38,5 @@ __all__ = [
     "Notification",
     "KPISnapshot",
     "AIConversation",
+    "AIQueryLog",
 ]

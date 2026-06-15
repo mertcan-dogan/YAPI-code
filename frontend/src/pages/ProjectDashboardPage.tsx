@@ -13,7 +13,7 @@ import type { ProjectFinancials, Project } from "@/types";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
 import { Banknote, Clock, Coins, FileText, Hammer, Layers, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 interface FAC {
   original_budget_try: string;
@@ -30,6 +30,21 @@ export default function ProjectDashboardPage() {
   const navigate = useNavigate();
   const [costDrawer, setCostDrawer] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+
+  // CR-007-H: an AI cost-entry citation deep-links here as ?highlight=<id>. Open
+  // the cost drawer to that entry, then clear the param so back/refresh is clean.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [highlightCostId, setHighlightCostId] = useState<string | null>(null);
+  useEffect(() => {
+    const h = searchParams.get("highlight");
+    if (!h) return;
+    setHighlightCostId(h);
+    setCostDrawer(true);
+    searchParams.delete("highlight");
+    setSearchParams(searchParams, { replace: true });
+    const t = setTimeout(() => setHighlightCostId(null), 2500);
+    return () => clearTimeout(t);
+  }, [searchParams, setSearchParams]);
   const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
     `/projects/${id}/dashboard`
   );
@@ -173,7 +188,7 @@ export default function ProjectDashboardPage() {
         <KPICard loading={loading} label="Hakediş Kesintisi" value={formatCurrencyAbbrev(f?.total_retention_try)} valueTitle={formatCurrency(f?.total_retention_try)} icon={Layers} accentColor="#0E1525" onClick={() => navigate(`/projects/${id}/invoices`)} />
       </div>
 
-      {id && <CostEntriesDrawer open={costDrawer} onClose={() => setCostDrawer(false)} projectId={id} />}
+      {id && <CostEntriesDrawer open={costDrawer} onClose={() => setCostDrawer(false)} projectId={id} highlightId={highlightCostId} />}
 
       {/* CR-003-F: Forecast-at-Completion */}
       <div className="mt-4">

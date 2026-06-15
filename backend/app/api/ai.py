@@ -28,6 +28,16 @@ class AssistantQuestion(BaseModel):
     project_id: uuid.UUID | None = None
 
 
+class AgentMessage(BaseModel):
+    role: str  # "user" | "assistant" (Anthropic shape; mapped from the store in CR-007-F)
+    content: str
+
+
+class AgentRequest(BaseModel):
+    messages: list[AgentMessage]
+    project_id: uuid.UUID | None = None
+
+
 def _active_projects(db: Session, company_id):
     return db.execute(
         select(Project).where(
@@ -70,6 +80,32 @@ def assistant(payload: AssistantQuestion, user: CurrentUser, db: Session = Depen
 
     answer = ai_service.assistant_answer(payload.question, context)
     return success({"answer": answer, "data_points": context, "generated_at": datetime.now(timezone.utc).isoformat()})
+
+
+@router.post("/agent")
+def agent(payload: AgentRequest, user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-007-B/E: agentic tool-use loop. The model calls read-only, company-scoped
+    tools (which compute via SQL) and narrates the results in Turkish. Rate-limited
+    to 10 req/min/user; one ai_query_log row per successful request; graceful
+    degradation on Claude error/timeout."""
+    from app.config import settings
+    from app.middleware.limits import enforce_user_limit
+    from app.services import agent as agent_service
+
+    if not payload.messages:
+        raise APIError(422, "VALIDATION_ERROR", "En az bir mesaj gerekli")
+
+    # CR-007-E: 10 req/min/user (raises APIError 429 in Turkish).
+    enforce_user_limit(user.id, "ai_agent", settings.ai_agent_rate_per_minute)
+
+    messages = [{"role": m.role, "content": m.content} for m in payload.messages]
+    try:
+        result = agent_service.run_agent(
+            db, user.company_id, messages, project_id=payload.project_id, user_id=user.id
+        )
+    except ai_service.AIUnavailable:
+        return success(agent_service.degraded_response())
+    return success(result)
 
 
 @router.post("/analyze-project/{project_id}")

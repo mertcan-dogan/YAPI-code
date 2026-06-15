@@ -85,3 +85,12 @@ body {
 .sidebar-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.38);
 }
+
+/* CR-007-H: deep-link target flash for a cited record (row or drawer card). */
+@keyframes yapiRowFlash {
+  0% { background-color: rgba(245, 158, 11, 0.35); }
+  100% { background-color: transparent; }
+}
+.yapi-row-flash {
+  animation: yapiRowFlash 2.2s ease-out;
+}

@@ -25,6 +25,7 @@ interface DataTableProps<T> {
   minWidth?: number; // CR-004-E: minimum table width before horizontal scroll kicks in
   error?: string | null; // when set (and not loading) shows a retry state, not "empty"
   onRetry?: () => void;
+  highlightId?: string | null; // CR-007-H: scroll to + flash the row whose id matches
 }
 
 // Data Table — sticky navy header, zebra rows, sortable (Section 6.5)
@@ -39,9 +40,18 @@ export function DataTable<T extends Record<string, any>>({
   minWidth = 640,
   error,
   onRetry,
+  highlightId,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = React.useState<string | null>(null);
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+  const highlightRef = React.useRef<HTMLTableRowElement>(null);
+
+  // CR-007-H: bring the cited row into view once it (and the data) are present.
+  React.useEffect(() => {
+    if (highlightId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightId, rows]);
 
   const sorted = React.useMemo(() => {
     if (!sortKey) return rows;
@@ -120,12 +130,16 @@ export function DataTable<T extends Record<string, any>>({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row, i) => (
+          {sorted.map((row, i) => {
+            const isHighlighted = highlightId != null && row.id === highlightId;
+            return (
             <tr
               key={row.id ?? i}
+              ref={isHighlighted ? highlightRef : undefined}
               className={cn(
                 "border-b border-border last:border-0 hover:bg-navy-50",
                 onRowClick && "cursor-pointer",
+                isHighlighted && "yapi-row-flash",
                 rowClassName?.(row)
               )}
               onClick={() => onRowClick?.(row)}
@@ -146,7 +160,8 @@ export function DataTable<T extends Record<string, any>>({
                 </td>
               ))}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

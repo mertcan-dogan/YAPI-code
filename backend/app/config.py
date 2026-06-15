@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     login_lockout_seconds: int = 15 * 60
     import_rate_per_minute: int = 10
     ai_import_rate_per_minute: int = 5
+    # CR-007-E: AI agent safety budget.
+    ai_agent_rate_per_minute: int = 10
+    ai_agent_max_tokens: int = 2000
+    ai_agent_timeout_seconds: int = 60
     # Field encryption (Fernet passphrase). Optional; never exposed to frontend.
     encryption_key: str = ""
     # Require directors to have MFA (enforced via the token AAL claim).

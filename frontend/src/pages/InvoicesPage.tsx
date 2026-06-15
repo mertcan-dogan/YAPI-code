@@ -11,7 +11,7 @@ import type { ClientInvoice } from "@/types";
 import { daysUntil, formatCurrency, formatDate, toNumber } from "@/utils/format";
 import { FileText, Pencil, Plus, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 function Chip({ label, value }: { label: string; value: string }) {
   return (
@@ -30,6 +30,21 @@ export default function InvoicesPage() {
   const [collecting, setCollecting] = useState<ClientInvoice | null>(null);
 
   const rows = data ?? [];
+
+  // CR-007-H: deep-link from an AI citation chip — ?highlight=<invoice id>.
+  // Capture the id once the rows load, scroll/flash it, then clear the URL param
+  // so a refresh/back doesn't re-flash.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    const h = searchParams.get("highlight");
+    if (!h || rows.length === 0) return;
+    setHighlightId(h);
+    searchParams.delete("highlight");
+    setSearchParams(searchParams, { replace: true });
+    const t = setTimeout(() => setHighlightId(null), 2500);
+    return () => clearTimeout(t);
+  }, [searchParams, rows.length, setSearchParams]);
   const sum = (k: keyof ClientInvoice) => rows.reduce((s, r) => s + toNumber(r[k] as string), 0);
 
   const columns: Column<ClientInvoice>[] = [
@@ -94,7 +109,7 @@ export default function InvoicesPage() {
         <Chip label="Bekleyen" value={formatCurrency(sum("outstanding_try"))} />
         <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
       </div>
-      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
+      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} highlightId={highlightId} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
       <InvoiceDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
       {collecting && (
         <CollectModal
