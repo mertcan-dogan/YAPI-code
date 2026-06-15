@@ -40,7 +40,7 @@ import { ROLE_LABELS } from "@/constants";
 const GLOBAL_NAV = [
   { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
   { icon: FolderKanban, label: "Projeler", to: "/projects" },
-  { icon: MessageSquare, label: "AI Asistan", to: "/ai-assistant" },
+  { icon: MessageSquare, label: "Yapı Agent", to: "/ai-assistant" },
   { icon: LayoutGrid, label: "Çalışma Alanım", to: "/workspace" },
 ];
 

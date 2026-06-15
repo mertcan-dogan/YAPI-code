@@ -313,7 +313,7 @@ export default function AIAssistantPage() {
 
   return (
     <div>
-      <PageHeader title="AI Asistan" subtitle="Finansal sorularınızı Türkçe sorun" />
+      <PageHeader title="Yapı Agent" subtitle="Araçlarla analiz yapan yapay zeka ajanı — Türkçe sorun." />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <div className="lg:col-span-3">
           {/* Active conversation header + new chat */}

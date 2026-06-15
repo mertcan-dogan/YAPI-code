@@ -54,7 +54,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     { type: "page", label: "Hatırlatıcılar", to: "/reminders", icon: Bell },
     { type: "page", label: "Raporlar", to: "/reports", icon: FileBarChart },
     { type: "page", label: "Yapay Zeka Uyarıları", to: "/ai-alerts", icon: Sparkles },
-    { type: "page", label: "AI Asistan", to: "/ai-assistant", icon: MessageSquare },
+    { type: "page", label: "Yapı Agent", to: "/ai-assistant", icon: MessageSquare },
     { type: "page", label: "Belge Tara", to: "/document-capture", icon: ScanLine },
     { type: "page", label: "Ayarlar", to: "/settings", icon: Settings },
   ];

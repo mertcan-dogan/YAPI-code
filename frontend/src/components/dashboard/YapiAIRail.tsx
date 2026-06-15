@@ -3,8 +3,9 @@ import { SideDrawer } from "@/components/SideDrawer";
 import { AIDisclaimer } from "@/components/ui";
 import { apiPost } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { CheckCircle2, ChevronRight, Loader2, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
+import { CheckCircle2, ChevronRight, Loader2, RefreshCw, Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const DONE_KEY = "yapi-briefing-done";
 
@@ -21,6 +22,7 @@ interface RailProps {
 }
 
 function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, onGoToTasks }: RailProps & { onClose?: () => void; hideHeader?: boolean }) {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
@@ -72,11 +74,11 @@ function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, 
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-brand-2 text-white">
               <Sparkles className="h-4 w-4" />
             </span>
-            <span className="text-sm font-semibold text-primary">Yapı Agent</span>
+            <span className="text-sm font-semibold text-primary">Yapı AI</span>
             <span className="rounded-full bg-navy-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand">Beta</span>
           </div>
           {onClose && (
-            <button onClick={onClose} className="text-text-secondary hover:text-primary" aria-label="Yapı Agent panelini kapat">
+            <button onClick={onClose} className="text-text-secondary hover:text-primary" aria-label="Yapı AI panelini kapat">
               <ChevronRight className="h-4 w-4" />
             </button>
           )}
@@ -118,7 +120,7 @@ function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, 
             <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-brand-2 text-white shadow-sm">
               <Sparkles className="h-6 w-6" />
             </span>
-            <p className="text-sm font-semibold text-primary">Yapı Agent'a sorun</p>
+            <p className="text-sm font-semibold text-primary">Yapı AI'ya sorun</p>
             <p className="mt-1 max-w-[240px] text-xs text-text-secondary">Projeleriniz, marjlar, hakedişler ve nakit akışı hakkında her şeyi sorun — yanıtlar şirket verilerinize dayanır.</p>
           </div>
         ) : (
@@ -157,7 +159,7 @@ function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, 
           }}
         >
           <div className="flex items-end gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 focus-within:border-brand">
-            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Yapı Agent'a bir şey sorun…" className="flex-1 bg-transparent py-1.5 text-sm outline-none" />
+            <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Yapı AI'ya bir şey sorun…" className="flex-1 bg-transparent py-1.5 text-sm outline-none" />
             <button type="submit" disabled={!input.trim() || asking} className="mb-0.5 flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-white disabled:opacity-40" aria-label="Gönder">
               <Send className="h-3.5 w-3.5" />
             </button>
@@ -168,17 +170,13 @@ function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, 
         </button>
       </div>
 
-      {/* Beceriler — create custom AI skills (functionality coming soon) */}
+      {/* CTA → full tool-using agent (Yapı Agent). */}
       <div className="border-t border-border bg-bg/50 p-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Beceriler</span>
-          <span className="rounded-full bg-bg px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-text-disabled">Yakında</span>
-        </div>
         <button
-          onClick={() => window.alert("Beceri oluşturma yakında eklenecek.")}
+          onClick={() => navigate("/ai-assistant")}
           className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-xs font-medium text-brand transition-colors hover:border-brand hover:bg-navy-50"
         >
-          <Plus className="h-3.5 w-3.5" /> Beceri Oluştur
+          Daha detaylı ve kompleks görevler için Yapı Agent'a gidin →
         </button>
       </div>
     </div>
@@ -200,7 +198,7 @@ export function YapiAIRail(props: RailProps) {
         <button
           onClick={() => setCollapsed(false)}
           className="sticky top-6 hidden h-fit shrink-0 items-center gap-2 self-start rounded-l-xl border border-r-0 border-border bg-surface px-2 py-3 text-brand shadow-sm xl:flex"
-          aria-label="Yapı Agent panelini aç"
+          aria-label="Yapı AI panelini aç"
         >
           <Sparkles className="h-4 w-4" />
         </button>
@@ -213,12 +211,12 @@ export function YapiAIRail(props: RailProps) {
       <button
         onClick={() => setDrawerOpen(true)}
         className="fixed bottom-20 right-4 z-30 flex items-center gap-2 rounded-full bg-gradient-to-br from-brand to-brand-2 px-4 py-3 text-sm font-medium text-white shadow-lg xl:hidden"
-        aria-label="Yapı Agent"
+        aria-label="Yapı AI"
       >
-        <Sparkles className="h-4 w-4" /> Yapı Agent
+        <Sparkles className="h-4 w-4" /> Yapı AI
       </button>
       <div className="xl:hidden">
-        <SideDrawer open={drawerOpen} title="Yapı Agent" onClose={() => setDrawerOpen(false)}>
+        <SideDrawer open={drawerOpen} title="Yapı AI" onClose={() => setDrawerOpen(false)}>
           <RailContent {...props} hideHeader />
         </SideDrawer>
       </div>

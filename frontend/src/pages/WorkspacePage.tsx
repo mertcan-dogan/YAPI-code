@@ -105,7 +105,7 @@ export default function WorkspacePage() {
         <div className="rounded-xl border border-border bg-surface shadow-sm"><LoadError onRetry={refetch} /></div>
       ) : !loading && items.length === 0 ? (
         <div className="rounded-xl border border-border bg-surface shadow-sm">
-          <EmptyState message="Henüz bir şey sabitlemediniz. AI Asistan'da bir grafik veya analiz oluşturup '📌 Sabitle' deyin." />
+          <EmptyState message="Henüz bir şey sabitlemediniz. Yapı Agent'ta bir grafik veya analiz oluşturup '📌 Sabitle' deyin." />
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
