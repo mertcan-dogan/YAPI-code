@@ -2,7 +2,7 @@
 // react-grid-layout is mocked to a controllable stub so we can assert OUR page
 // contract: it renders pinned items, a (desktop) layout change debounce-PUTs to
 // /workspace/layout, and below lg the grid is read-only (no drag, no persist).
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { setMatchMedia } from "@/test/setup";
@@ -17,10 +17,11 @@ vi.mock("@/lib/api", () => ({
   apiPut: vi.fn(() => Promise.resolve({})),
   apiDelete: vi.fn(() => Promise.resolve({})),
 }));
-// Capture the grid props; render children so cards still mount.
+// Capture the grid props; render children so cards still mount. The page uses the
+// base (default) GridLayout export wrapped in WidthProvider.
 vi.mock("react-grid-layout", () => ({
   WidthProvider: (C: any) => C,
-  Responsive: (props: any) => {
+  default: (props: any) => {
     h.grid.props = props;
     return createElement("div", { "data-testid": "grid" }, props.children);
   },
@@ -74,21 +75,40 @@ describe("WorkspacePage (drag-drop board)", () => {
     expect(screen.getByText(/Henüz bir şey sabitlemediniz/)).toBeInTheDocument();
   });
 
-  it("debounce-persists a desktop resize (new width) to /workspace/layout", () => {
-    setMatchMedia(true); // desktop → draggable + persists
+  it("drag-resize is OFF; sizing is via explicit header controls", () => {
+    setMatchMedia(true); // desktop → draggable (reorder) but NOT drag-resizable
     h.fetch.data = [ITEM];
     render(createElement(WorkspacePage));
 
     expect(h.grid.props.isDraggable).toBe(true);
-    expect(h.grid.props.isResizable).toBe(true);
+    expect(h.grid.props.isResizable).toBe(false);
+  });
 
-    // A width resize: RGL fires onResizeStop with the new layout (w changed 6 -> 4).
-    act(() => h.grid.props.onResizeStop([{ i: "i1", x: 6, y: 2, w: 4, h: 4 }]));
+  it("clicking a width preset debounce-PUTs the new w to /workspace/layout", () => {
+    setMatchMedia(true); // desktop → controls visible + persist
+    h.fetch.data = [ITEM]; // starts at w:6
+    render(createElement(WorkspacePage));
+
+    // "Tam" preset = full width (w:12). x clamps to keep the card on-grid.
+    fireEvent.click(screen.getByText("Tam"));
     expect(apiPut).not.toHaveBeenCalled(); // debounced
     act(() => vi.advanceTimersByTime(700));
 
     expect(apiPut).toHaveBeenCalledWith("/workspace/layout", {
-      items: [{ id: "i1", x: 6, y: 2, w: 4, h: 4 }],
+      items: [{ id: "i1", x: 0, y: 0, w: 12, h: 3 }],
+    });
+  });
+
+  it("clicking the height '+' control steps h by 1 and persists", () => {
+    setMatchMedia(true);
+    h.fetch.data = [ITEM]; // starts at h:3
+    render(createElement(WorkspacePage));
+
+    fireEvent.click(screen.getByLabelText("Uzat")); // h 3 -> 4
+    act(() => vi.advanceTimersByTime(700));
+
+    expect(apiPut).toHaveBeenCalledWith("/workspace/layout", {
+      items: [{ id: "i1", x: 0, y: 0, w: 6, h: 4 }],
     });
   });
 
@@ -103,7 +123,7 @@ describe("WorkspacePage (drag-drop board)", () => {
     });
   });
 
-  it("is read-only below lg (no drag/resize, no persist)", () => {
+  it("is read-only below lg (no drag/resize, no size controls, no persist)", () => {
     setMatchMedia(false); // mobile
     h.fetch.data = [ITEM];
     render(createElement(WorkspacePage));
@@ -111,8 +131,12 @@ describe("WorkspacePage (drag-drop board)", () => {
     expect(h.grid.props.isDraggable).toBe(false);
     expect(h.grid.props.isResizable).toBe(false);
 
-    // A resize on mobile must NOT overwrite the saved desktop layout.
-    act(() => h.grid.props.onResizeStop([{ i: "i1", x: 0, y: 0, w: 1, h: 3 }]));
+    // The size controls are desktop-only, so they aren't even rendered here.
+    expect(screen.queryByText("Tam")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Uzat")).not.toBeInTheDocument();
+
+    // A drag on mobile must NOT overwrite the saved desktop layout.
+    act(() => h.grid.props.onDragStop([{ i: "i1", x: 0, y: 0, w: 1, h: 3 }]));
     act(() => vi.advanceTimersByTime(700));
     expect(apiPut).not.toHaveBeenCalled();
   });
