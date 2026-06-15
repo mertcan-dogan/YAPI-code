@@ -95,7 +95,7 @@ export function AgentChart({ spec, height = 280 }: { spec: AgentChartSpec; heigh
       <LineChart {...common}>
         {axes}
         {spec.series.map((s, i) => (
-          <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={colorAt(i, s.color)} strokeWidth={2.5} dot={false} />
+          <Line key={s.key} type="linear" dataKey={s.key} name={s.label} stroke={colorAt(i, s.color)} strokeWidth={2.5} dot={false} />
         ))}
       </LineChart>
     );
