@@ -26,6 +26,11 @@ class Message(BaseModel):
     role: str
     text: str
     at: str | None = None
+    # CR-007 fix: persist agent extras on `ai` messages so charts + citation chips
+    # survive reload (messages is JSONB — no migration). Snapshots, frozen at ask
+    # time (same semantics as pinned workspace items).
+    charts: list | None = None
+    citations: list | None = None
 
     @field_validator("role")
     @classmethod
@@ -33,6 +38,23 @@ class Message(BaseModel):
         if v not in ("user", "ai"):
             raise ValueError("role must be 'user' or 'ai'")
         return v
+
+    @field_validator("charts")
+    @classmethod
+    def _charts(cls, v):
+        """Validate each chart against the CR-007-C ChartSpec (reused) and store the
+        normalised form, so a rehydrated chart re-renders identically."""
+        if v is None:
+            return v
+        from app.schemas.chart import ChartSpec, ValidationError
+
+        cleaned = []
+        for spec in v:
+            try:
+                cleaned.append(ChartSpec(**spec).model_dump())
+            except (ValidationError, TypeError) as exc:
+                raise ValueError("geçersiz grafik tanımı") from exc
+        return cleaned
 
 
 class ConversationUpsert(BaseModel):
