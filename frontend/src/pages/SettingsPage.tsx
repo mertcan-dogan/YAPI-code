@@ -210,6 +210,33 @@ function CompanyTab() {
           </label>
         </div>
 
+        {/* CR-015-C: financing cost (modeled estimate, not an actual cost) */}
+        <div className="mt-2 rounded-md border border-border bg-bg p-3">
+          <h3 className="mb-1 text-sm font-semibold text-primary">Finansman Maliyeti</h3>
+          <p className="mb-2 text-xs text-text-secondary">
+            Nakit açığı olan aylarda finanse edilen tutara faiz işleyen <b>modellenmiş bir tahmindir</b> —
+            gerçek bir maliyet değildir ve gerçekleşen maliyet/marjı değiştirmez. Yalnızca tahmini (forecast) marja yansır.
+          </p>
+          <label className="flex items-center justify-between py-1 text-sm">
+            <span>Finansman maliyeti aktif</span>
+            <input type="checkbox" className="h-4 w-4 accent-[var(--color-primary)]" checked={f.financing_enabled ?? false} onChange={(e) => set("financing_enabled", e.target.checked)} />
+          </label>
+          <div className="grid grid-cols-2 gap-3 py-1">
+            <div>
+              <Label>Yıllık USD Finansman Oranı %</Label>
+              <Input type="number" value={f.financing_annual_rate_pct ?? ""} onChange={(e) => set("financing_annual_rate_pct", e.target.value === "" ? null : Number(e.target.value))} placeholder="örn. 10" />
+            </div>
+            <div>
+              <Label>Hesaplama Bazı</Label>
+              <Select value={f.financing_basis ?? "cumulative"} onChange={(e) => set("financing_basis", e.target.value)}>
+                <option value="cumulative">Kümülatif (önerilen)</option>
+                <option value="net">Aylık net</option>
+              </Select>
+            </div>
+          </div>
+          <p className="text-[11px] text-text-secondary">Kümülatif: projenin gerçekten su altında olduğu (negatif kümülatif) tutara faiz işler. Aylık net: net negatif aylara işler.</p>
+        </div>
+
         <div className="pt-2"><Button onClick={save} loading={saving} disabled={!form}>Kaydet</Button></div>
       </CardBody>
     </Card>

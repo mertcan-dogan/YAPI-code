@@ -31,6 +31,20 @@ interface FAC {
   forecast_final_cost_try: string;
   forecast_final_margin_pct: string;
   over_budget: boolean;
+  // CR-015-B: separable financing overlay (0.00 / equal to base when off).
+  financing_cost_try?: string;
+  forecast_final_cost_with_financing_try?: string;
+  forecast_final_margin_with_financing_pct?: string;
+}
+
+// CR-015-B: modeled financing-cost block (forecast overlay, never an actual cost).
+interface FinancingBlock {
+  enabled: boolean;
+  annual_rate_pct: string | null;
+  basis: string;
+  total_usd: string;
+  total_try: string;
+  months: { month: string; financed_try: string; rate: string; interest_usd: string; interest_try: string }[];
 }
 
 // CR-014-C/D: USD snapshot-sum totals (point-in-time), with missing-snapshot counts.
@@ -60,7 +74,7 @@ export default function ProjectDashboardPage() {
     const t = setTimeout(() => setHighlightCostId(null), 2500);
     return () => clearTimeout(t);
   }, [searchParams, setSearchParams]);
-  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates }>(
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock }>(
     `/projects/${id}/dashboard`
   );
   const showUsd = useShowUsd(); // CR-014-D
@@ -116,6 +130,49 @@ export default function ProjectDashboardPage() {
       setResSaving(false);
     }
   };
+
+  // CR-015-C: modeled financing cost (forecast overlay). Include/exclude toggle
+  // flips the *displayed* forecast margin between base and with-financing; an
+  // expandable per-month breakdown; a director-only project override.
+  const financing = data?.financing;
+  const financingOn = !!financing?.enabled && toNumber(financing?.total_try) > 0;
+  const [includeFinancing, setIncludeFinancing] = useState(true);
+  const [finMonthsOpen, setFinMonthsOpen] = useState(false);
+  const [finEditOpen, setFinEditOpen] = useState(false);
+  const [finSaving, setFinSaving] = useState(false);
+  const [finForm, setFinForm] = useState<{ mode: string; rate: string }>({ mode: "inherit", rate: "" });
+
+  const openFinEdit = () => {
+    const enabledOverride = p?.financing_enabled_override;
+    setFinForm({
+      mode: enabledOverride === null || enabledOverride === undefined ? "inherit" : enabledOverride ? "on" : "off",
+      rate: p?.financing_annual_rate_pct_override ?? "",
+    });
+    setFinEditOpen(true);
+  };
+
+  const saveFinancing = async () => {
+    setFinSaving(true);
+    try {
+      await apiPut(`/projects/${id}`, {
+        financing_enabled_override: finForm.mode === "inherit" ? null : finForm.mode === "on",
+        financing_annual_rate_pct_override: finForm.rate === "" ? null : finForm.rate,
+      });
+      toast.success("Finansman ayarı kaydedildi");
+      setFinEditOpen(false);
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message ?? "Finansman ayarı kaydedilemedi");
+    } finally {
+      setFinSaving(false);
+    }
+  };
+
+  // The forecast margin actually shown: with financing when enabled + included.
+  const shownForecastMargin =
+    financingOn && includeFinancing && fac?.forecast_final_margin_with_financing_pct != null
+      ? fac.forecast_final_margin_with_financing_pct
+      : fac?.forecast_final_margin_pct;
 
   // CR-003-F + CR-005-G: AI narrative, cached per project so it runs once and
   // survives navigation/reload; manual refresh re-runs it.
@@ -319,7 +376,15 @@ export default function ProjectDashboardPage() {
 
       {/* CR-003-F: Forecast-at-Completion */}
       <div className="mt-4">
-        <h2 className="mb-3 text-sm font-semibold text-primary">Tamamlanmada Tahmin</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-primary">Tamamlanmada Tahmin</h2>
+          {financingOn && (
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
+              <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--color-primary)]" checked={includeFinancing} onChange={(e) => setIncludeFinancing(e.target.checked)} />
+              Tahmini finansman maliyetini marja dahil et
+            </label>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           <KPICard loading={loading} label="Orijinal Bütçe" value={formatCurrencyAbbrev(fac?.original_budget_try)} valueTitle={formatCurrency(fac?.original_budget_try)} icon={Target} accentColor="#2563EB"
             onClick={() => setKpiDetail({
@@ -346,13 +411,104 @@ export default function ProjectDashboardPage() {
               title: "Tahmini Final Maliyet", value: formatCurrency(fac?.forecast_final_cost_try), accentColor: "#7C3AED",
               description: "Mevcut gidişata göre projenin tahmini toplam final maliyeti. Revize bütçeyi aşarsa kırmızı uyarı verir.",
             })} />
-          <KPICard loading={loading} label="Tahmini Final Marj" value={formatPct(fac?.forecast_final_margin_pct)} icon={Percent} accentColor="#059669" alert={facMargin < 5 ? "red" : facMargin < 10 ? "amber" : null}
+          <KPICard loading={loading} label={financingOn && includeFinancing ? "Tahmini Final Marj (finansman dahil)" : "Tahmini Final Marj"} value={formatPct(shownForecastMargin)} icon={Percent} accentColor="#059669" alert={toNumber(shownForecastMargin) < 5 ? "red" : toNumber(shownForecastMargin) < 10 ? "amber" : null}
             onClick={() => setKpiDetail({
-              title: "Tahmini Final Marj", value: formatPct(fac?.forecast_final_margin_pct), valueKind: "percent", accentColor: "#059669",
-              description: "Tahmini final maliyete göre beklenen kar marjı. %10 altında izlenmeli, %5 altında riskli.",
+              title: "Tahmini Final Marj", value: formatPct(shownForecastMargin), valueKind: "percent", accentColor: "#059669",
+              description: financingOn && includeFinancing
+                ? "Tahmini finansman maliyeti DAHİL beklenen kar marjı (modellenmiş tahmin — gerçek maliyet değildir). Üstteki kutudan hariç tutabilirsiniz."
+                : "Tahmini final maliyete göre beklenen kar marjı. %10 altında izlenmeli, %5 altında riskli.",
             })} />
         </div>
       </div>
+
+      {/* CR-015-C: modeled financing cost — a forecast overlay, NOT an actual cost.
+          Only rendered when enabled (effective toggle on + a positive accrual). */}
+      {financingOn && financing && (
+        <div className="mt-4 rounded-xl border border-border bg-surface shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+              <Coins className="h-4 w-4 text-accent" /> Tahmini Finansman Maliyeti
+              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-warning">Modellenmiş tahmin — gerçek maliyet değildir</span>
+            </span>
+            {isDirector && (
+              <Button variant="ghost" className="px-2 py-1 text-xs" onClick={openFinEdit}>
+                <Pencil className="h-3.5 w-3.5" /> Ayar
+              </Button>
+            )}
+          </div>
+          <div className="space-y-3 p-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
+              <FinStat label="Toplam (₺)" value={formatCurrency(financing.total_try)} />
+              <FinStat label="Toplam ($)" value={formatUSD(financing.total_usd)} />
+              <FinStat label="Yıllık Oran" value={financing.annual_rate_pct != null ? `%${financing.annual_rate_pct}` : "—"} />
+              <FinStat label="Baz" value={financing.basis === "net" ? "Aylık net" : "Kümülatif"} />
+            </div>
+
+            <p className="text-xs italic text-text-secondary">
+              Tahmini — gelecek aylar planlanan nakit akışına dayanır; gerçekleşmelerle değişir.
+              Forecast (tahmini) marja işlenir; gerçekleşen maliyet ve gerçek marj değişmez.
+            </p>
+
+            {financing.months.length > 0 && (
+              <div>
+                <button className="flex items-center gap-1 text-xs font-medium text-brand" onClick={() => setFinMonthsOpen((v) => !v)}>
+                  <span className="inline-block w-3">{finMonthsOpen ? "▾" : "▸"}</span>
+                  Aylık dağılım ({financing.months.length} ay)
+                </button>
+                {finMonthsOpen && (
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-left text-xs text-text-secondary">
+                          <th className="py-1.5 pr-3 font-medium">Ay</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Finanse Edilen (₺)</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Kur</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Faiz ($)</th>
+                          <th className="py-1.5 text-right font-medium">Faiz (₺)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {financing.months.map((m) => (
+                          <tr key={m.month} className="border-b border-border/60">
+                            <td className="py-1.5 pr-3">{m.month}</td>
+                            <td className="py-1.5 pr-3 text-right tabular">{formatCurrency(m.financed_try)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular">{toNumber(m.rate).toLocaleString("tr-TR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</td>
+                            <td className="py-1.5 pr-3 text-right tabular">{formatUSD(m.interest_usd)}</td>
+                            <td className="py-1.5 text-right tabular">{formatCurrency(m.interest_try)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CR-015-C: project-level financing override (director-only) */}
+      <Modal open={finEditOpen} title="Proje Finansman Ayarı" onClose={() => setFinEditOpen(false)} size="md">
+        <div className="space-y-3">
+          <p className="text-xs text-text-secondary">Bu proje için şirket varsayılanını geçersiz kılabilirsiniz.</p>
+          <div>
+            <label className="text-xs text-text-secondary">Durum</label>
+            <select className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm" value={finForm.mode} onChange={(e) => setFinForm((s) => ({ ...s, mode: e.target.value }))}>
+              <option value="inherit">Şirket ayarını kullan</option>
+              <option value="on">Bu projede aç</option>
+              <option value="off">Bu projede kapat</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-text-secondary">Yıllık USD oran % (boş = şirket oranı)</label>
+            <input type="number" className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm" value={finForm.rate} onChange={(e) => setFinForm((s) => ({ ...s, rate: e.target.value }))} placeholder="örn. 10" />
+          </div>
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <Button variant="ghost" onClick={() => setFinEditOpen(false)}>İptal</Button>
+            <Button loading={finSaving} onClick={saveFinancing}>Kaydet</Button>
+          </div>
+        </div>
+      </Modal>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
         <DashboardSection title="S-Eğrisi (Kümülatif Maliyet)">
@@ -460,6 +616,16 @@ export default function ProjectDashboardPage() {
 }
 
 function ResStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] text-text-secondary">{label}</div>
+      <div className="font-semibold text-primary">{value}</div>
+    </div>
+  );
+}
+
+// CR-015-C: compact stat for the financing card.
+function FinStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[11px] text-text-secondary">{label}</div>

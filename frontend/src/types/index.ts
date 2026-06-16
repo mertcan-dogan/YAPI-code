@@ -73,6 +73,9 @@ export interface Project {
   construction_gross_m2: string | null;
   construction_net_m2: string | null;
   units: ProjectUnit[];
+  // CR-015: per-project financing overrides (null = inherit company default).
+  financing_enabled_override: boolean | null;
+  financing_annual_rate_pct_override: string | null;
   financials?: ProjectFinancials;
 }
 
