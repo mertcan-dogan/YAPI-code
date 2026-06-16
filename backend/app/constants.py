@@ -78,6 +78,129 @@ COST_CATEGORIES = {
 }
 COST_CATEGORY_KEYS = list(COST_CATEGORIES.keys())
 
+# --- Cost subcategory taxonomy (CR-018-A) ---
+# Global preset subcategories under each standard cost category. The single source
+# of truth: maps a COST_CATEGORIES key -> an ordered list of (subkey, Turkish label).
+# Sensible starter set, NOT exhaustive — companies add their own on top (custom
+# subcategories, parent_category on custom_cost_categories). cost_entries.subcategory
+# stays free-text, so any value here, a company custom, or "Diğer" free-text is valid.
+# Keep every key below a valid COST_CATEGORY key (asserted in tests). Empty list =>
+# that category has no presets yet (free-text only).
+_LABOUR_SUBCATEGORIES = [
+    ("kaba_insaat", "Kaba İnşaat"),
+    ("ince_iscilik", "İnce İşçilik"),
+    ("elektrik", "Elektrik"),
+    ("sihhi_tesisat", "Sıhhi Tesisat / Mekanik"),
+    ("boya_badana", "Boya / Badana"),
+    ("kalip", "Kalıp"),
+    ("demir_donati", "Demir / Donatı"),
+    ("siva", "Sıva"),
+    ("seramik_fayans", "Seramik / Fayans"),
+    ("alcipan", "Alçıpan"),
+    ("yalitim", "Yalıtım"),
+    ("cati", "Çatı"),
+    ("dograma", "Doğrama"),
+]
+COST_SUBCATEGORIES: dict[str, list[tuple[str, str]]] = {
+    # Labour — shared trade breakdown for both direct and subcontracted labour.
+    "labour_direct": _LABOUR_SUBCATEGORIES,
+    "labour_sub": _LABOUR_SUBCATEGORIES,
+    # Materials — by material detail relevant to the parent.
+    "material_concrete": [
+        ("hazir_beton", "Hazır Beton"),
+        ("cimento", "Çimento"),
+        ("beton_katki", "Beton Katkı Maddesi"),
+        ("kalip_malzeme", "Kalıp Malzemesi"),
+    ],
+    "material_steel": [
+        ("nervurlu_demir", "Nervürlü İnşaat Demiri"),
+        ("hasir_celik", "Hasır Çelik"),
+        ("celik_profil", "Çelik Profil"),
+        ("baglanti_elemanlari", "Bağlantı Elemanları"),
+    ],
+    "material_pipes": [
+        ("pvc_boru", "PVC Boru"),
+        ("ppr_boru", "PPR Boru"),
+        ("pe_boru", "PE Boru"),
+        ("fitting", "Fitting / Bağlantı"),
+        ("vana_armatur", "Vana / Armatür"),
+    ],
+    "material_aggregate": [
+        ("kum", "Kum"),
+        ("cakil", "Çakıl"),
+        ("micir", "Mıcır"),
+        ("stabilize", "Stabilize / Dolgu"),
+    ],
+    "material_other": [
+        ("tugla_briket", "Tuğla / Briket"),
+        ("yalitim_malzeme", "Yalıtım Malzemesi"),
+        ("alcipan_malzeme", "Alçıpan / Profil"),
+        ("boya_malzeme", "Boya / Vernik"),
+        ("seramik_malzeme", "Seramik / Fayans"),
+        ("cam", "Cam"),
+        ("ahsap", "Ahşap"),
+    ],
+    # Equipment.
+    "equipment_owned": [
+        ("yakit", "Yakıt"),
+        ("bakim_onarim", "Bakım / Onarım"),
+        ("yedek_parca", "Yedek Parça"),
+        ("amortisman", "Amortisman"),
+    ],
+    "equipment_rented": [
+        ("is_makinesi", "İş Makinesi Kiralama"),
+        ("vinc", "Vinç Kiralama"),
+        ("iskele", "İskele / Kalıp Kiralama"),
+        ("jenerator", "Jeneratör"),
+    ],
+    # Subcontractor — by trade package.
+    "subcontractor": [
+        ("kaba_insaat_taseron", "Kaba İnşaat Taşeronu"),
+        ("mekanik_taseron", "Mekanik Tesisat Taşeronu"),
+        ("elektrik_taseron", "Elektrik Taşeronu"),
+        ("cephe_taseron", "Cephe / Mantolama Taşeronu"),
+        ("peyzaj_taseron", "Peyzaj Taşeronu"),
+    ],
+    # Permits & fees.
+    "permits_fees": [
+        ("ruhsat", "İnşaat Ruhsatı"),
+        ("iskan", "İskan / Yapı Kullanma İzni"),
+        ("belediye_harc", "Belediye Harçları"),
+        ("proje_onay", "Proje Onay Bedelleri"),
+    ],
+    # Site overhead.
+    "site_overhead": [
+        ("santiye_kira", "Şantiye Kira"),
+        ("elektrik_su", "Elektrik / Su"),
+        ("guvenlik", "Güvenlik"),
+        ("temizlik", "Temizlik"),
+        ("konaklama", "Personel Konaklama"),
+        ("ulasim", "Ulaşım / Nakliye"),
+    ],
+    # Engineering & design.
+    "engineering_design": [
+        ("mimari_proje", "Mimari Proje"),
+        ("statik_proje", "Statik Proje"),
+        ("mekanik_proje", "Mekanik Proje"),
+        ("elektrik_proje", "Elektrik Proje"),
+        ("zemin_etut", "Zemin Etüdü"),
+        ("danismanlik", "Danışmanlık"),
+    ],
+    # No sensible presets — free-text / company-custom only.
+    "contingency": [],
+    "other": [],
+}
+
+
+def subcategories_for(category_key: str) -> list[tuple[str, str]]:
+    """Ordered preset (subkey, label) subcategories for a cost category.
+
+    Returns [] for an unknown category or one with no presets (free-text only).
+    Company-custom subcategories are merged on top of this at the API layer (CR-018-B).
+    """
+    return COST_SUBCATEGORIES.get(category_key, [])
+
+
 # --- Entry / payment status enums ---
 ENTRY_TYPES = ["actual", "committed", "forecast"]
 COST_PAYMENT_STATUSES = ["unpaid", "paid", "overdue", "partial"]
