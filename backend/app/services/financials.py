@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.calculations import compute_monthly_cashflow, compute_project_financials
+from app.calculations.money import D, money
 from app.models.budget_line_item import BudgetLineItem
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
@@ -97,6 +98,46 @@ def project_financials(
 def project_cashflow(db: Session, project: Project, today: date | None = None) -> list[dict]:
     costs, invoices, _ = load_project_inputs(db, project)
     return compute_monthly_cashflow(costs, invoices, today=today)
+
+
+# --------------------------------------------------------------------------- #
+# CR-014-C — USD aggregates (point-in-time snapshot sums)
+# --------------------------------------------------------------------------- #
+def usd_aggregates(
+    db: Session, *, project_ids: list | None = None, company_id=None
+) -> dict:
+    """USD totals = the SUM of per-row ``amount_usd`` SNAPSHOTS (point-in-time,
+    §0.2) — NOT ``total_try ÷ today's rate``. Each row was valued at the rate of
+    its own relevant date (CR-014-B); we just add those stored snapshots up.
+
+    Summed exactly with Decimal (dialect-agnostic). Rows with a null snapshot
+    (pre-history / fetch failure) are silently ignored by a sum, which would
+    UNDERSTATE the total — so each total is paired with ``usd_missing_count`` so
+    the UI can warn "N kayıt için kur bulunamadı". TRY figures are untouched.
+
+    Cost scope mirrors the dashboard (exclude soft-deleted + pending-approval);
+    invoices exclude soft-deleted.
+    """
+    def _agg(model, extra_filters: list) -> dict:
+        filters = [model.is_deleted.is_(False), *extra_filters]
+        if project_ids is not None:
+            filters.append(model.project_id.in_(project_ids))
+        if company_id is not None:
+            filters.append(model.company_id == company_id)
+        vals = db.execute(select(model.amount_usd).where(*filters)).scalars().all()
+        total = sum((D(v) for v in vals if v is not None), D(0))
+        missing = sum(1 for v in vals if v is None)
+        return {"amount_usd": str(money(total)), "usd_missing_count": missing}
+
+    return {
+        "costs": _agg(CostEntry, [CostEntry.pending_approval.is_(False)]),
+        "invoices": _agg(ClientInvoice, []),
+    }
+
+
+def project_usd_totals(db: Session, project: Project) -> dict:
+    """Per-row USD snapshot sums for a single project (§3.1)."""
+    return usd_aggregates(db, project_ids=[project.id])
 
 
 def cash_need_windows(db: Session, project: Project, today: date | None = None) -> list[dict]:

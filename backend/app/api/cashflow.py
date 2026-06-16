@@ -8,7 +8,12 @@ from app.db import get_db
 from app.deps import CurrentUser
 from app.responses import APIError, success
 from app.services.access import get_company_project
-from app.services.financials import cash_need_windows, cashflow_month_detail, project_cashflow
+from app.services.financials import (
+    cash_need_windows,
+    cashflow_month_detail,
+    project_cashflow,
+    project_usd_totals,
+)
 
 router = APIRouter(tags=["cashflow"])
 
@@ -24,7 +29,9 @@ def _jsonify(rows: list[dict]) -> list[dict]:
 def get_cashflow(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     project = get_company_project(db, project_id, user)
     rows = project_cashflow(db, project)
-    return success(_jsonify(rows))
+    # CR-014-C: USD totals (SUM of per-row amount_usd snapshots) alongside the
+    # TRY monthly rows, with a missing-snapshot count. TRY rows unchanged.
+    return success(_jsonify(rows), meta={"usd": project_usd_totals(db, project)})
 
 
 @router.get("/projects/{project_id}/cashflow/risk")

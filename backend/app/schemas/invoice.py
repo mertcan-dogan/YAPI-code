@@ -77,6 +77,8 @@ class ClientInvoiceOut(ORMModel):
     description: str | None
     amount_try: Decimal
     amount_eur: Decimal | None
+    amount_usd: Decimal | None = None
+    fx_rate_usd: Decimal | None = None
     vat_rate: Decimal
     vat_amount_try: Decimal
     total_with_vat_try: Decimal

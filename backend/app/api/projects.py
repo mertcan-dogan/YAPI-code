@@ -152,6 +152,9 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
             "cashflow": _jsonify_list(cashflow),
             "forecast_at_completion": fac,
             "margin_bridge": bridge,
+            # CR-014-C: USD totals = SUM of per-row amount_usd snapshots (§0.2),
+            # with a count of rows missing a snapshot. TRY figures unchanged.
+            "usd": fin_service.project_usd_totals(db, project),
         }
     )
 
@@ -584,6 +587,10 @@ def company_dashboard(
                 "total_receivables_try": str(money(total_outstanding)),
                 "net_cash_position_try": str(money(total_net_cash)),
             },
+            # CR-014-C: portfolio USD totals = SUM of per-row amount_usd snapshots
+            # over the same filtered project set (§0.2), each with a missing-snapshot
+            # count. NOT total_try ÷ today's rate. TRY figures unchanged.
+            "usd": fin_service.usd_aggregates(db, project_ids=[p.id for p in projects]),
             "ar_aging": ar_aging,
             "margin_fade": margin_fade,
             "cash_forecast": cash_forecast,
