@@ -79,9 +79,11 @@ def create_project(
     user: DirectorUser,
     db: Session = Depends(get_db),
 ):
+    # CR-016-A exposes the `units` schedule on the schema; persisting it (upsert +
+    # unit_count derivation) is wired in CR-016-B, so it is excluded here for now.
     project = Project(
         company_id=user.company_id,
-        **payload.model_dump(),
+        **payload.model_dump(exclude={"units"}),
     )
     db.add(project)
     db.flush()
@@ -117,7 +119,8 @@ def update_project(
     # Only directors may edit project settings; PMs may update completion_pct only.
     from app.constants import ROLE_DIRECTOR
 
-    changes = payload.model_dump(exclude_unset=True)
+    # CR-016-A: `units` is exposed on the schema but persisted in CR-016-B.
+    changes = payload.model_dump(exclude_unset=True, exclude={"units"})
     if user.role != ROLE_DIRECTOR:
         allowed = {"completion_pct"}
         if set(changes) - allowed:

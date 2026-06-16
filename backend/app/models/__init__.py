@@ -3,6 +3,7 @@ from app.models.base import Base
 from app.models.company import Company
 from app.models.user import User
 from app.models.project import Project
+from app.models.project_unit import ProjectUnit
 from app.models.cost_entry import CostEntry
 from app.models.client_invoice import ClientInvoice
 from app.models.subcontractor import Subcontractor
@@ -27,6 +28,7 @@ __all__ = [
     "Company",
     "User",
     "Project",
+    "ProjectUnit",
     "CostEntry",
     "ClientInvoice",
     "Subcontractor",

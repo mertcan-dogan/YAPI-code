@@ -5,8 +5,72 @@ from decimal import Decimal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.constants import PROJECT_STATUSES, PROJECT_TYPES
+from app.constants import PROJECT_STATUSES, PROJECT_TYPES, UNIT_TYPE_KEYS
 from app.schemas.common import ERR_CONTRACT, ERR_RETENTION, ORMModel
+
+ERR_UNIT_TYPE = "Geçersiz daire tipi"
+ERR_UNIT_CUSTOM = "Diğer için açıklama girin"
+ERR_UNIT_COUNT = "Adet en az 1 olmalıdır"
+ERR_UNIT_M2 = "m² 0'dan büyük olmalıdır"
+
+
+class UnitScheduleIn(BaseModel):
+    """A daire dağılımı row on project create/update (CR-016-A)."""
+
+    unit_type: str
+    custom_label: str | None = None
+    count: int = 1
+    gross_m2_each: Decimal
+    net_m2_each: Decimal | None = None
+    sale_price_try: Decimal | None = None
+    notes: str | None = None
+
+    @field_validator("unit_type")
+    @classmethod
+    def _unit_type(cls, v: str) -> str:
+        if v not in UNIT_TYPE_KEYS:
+            raise ValueError(ERR_UNIT_TYPE)
+        return v
+
+    @field_validator("count")
+    @classmethod
+    def _count(cls, v: int) -> int:
+        if v is None or v < 1:
+            raise ValueError(ERR_UNIT_COUNT)
+        return v
+
+    @field_validator("gross_m2_each")
+    @classmethod
+    def _gross(cls, v: Decimal) -> Decimal:
+        if v is None or v <= 0:
+            raise ValueError(ERR_UNIT_M2)
+        return v
+
+    @field_validator("net_m2_each", "sale_price_try")
+    @classmethod
+    def _optional_positive(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError(ERR_UNIT_M2)
+        return v
+
+    @model_validator(mode="after")
+    def _custom_label(self):
+        if self.unit_type == "other" and not (self.custom_label or "").strip():
+            raise ValueError(ERR_UNIT_CUSTOM)
+        return self
+
+
+class UnitScheduleOut(ORMModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    company_id: uuid.UUID
+    unit_type: str
+    custom_label: str | None
+    count: int
+    gross_m2_each: Decimal
+    net_m2_each: Decimal | None
+    sale_price_try: Decimal | None
+    notes: str | None
 
 
 class ProjectCreate(BaseModel):
@@ -37,6 +101,12 @@ class ProjectCreate(BaseModel):
     original_budget_try: Decimal
     target_margin_pct: Decimal | None = None
     project_manager_id: uuid.UUID | None = None
+
+    # CR-016-A: residential details (construction area + daire dağılımı). All
+    # optional — non-residential projects simply omit them. Persistence wired in CR-016-B.
+    construction_gross_m2: Decimal | None = None
+    construction_net_m2: Decimal | None = None
+    units: list[UnitScheduleIn] = []
 
     @field_validator("project_type")
     @classmethod
@@ -102,6 +172,11 @@ class ProjectUpdate(BaseModel):
     completion_pct: Decimal | None = None
     project_manager_id: uuid.UUID | None = None
 
+    # CR-016-A: residential details editable after creation (persistence in CR-016-B).
+    construction_gross_m2: Decimal | None = None
+    construction_net_m2: Decimal | None = None
+    units: list[UnitScheduleIn] | None = None
+
     @field_validator("status")
     @classmethod
     def _status(cls, v):
@@ -152,3 +227,7 @@ class ProjectOut(ORMModel):
     target_margin_pct: Decimal | None
     completion_pct: Decimal
     project_manager_id: uuid.UUID | None
+    # CR-016-A: residential details (empty units for non-residential projects).
+    construction_gross_m2: Decimal | None = None
+    construction_net_m2: Decimal | None = None
+    units: list[UnitScheduleOut] = []

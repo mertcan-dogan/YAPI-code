@@ -61,4 +61,13 @@ class Project(TimestampSoftDeleteMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
 
+    # CR-016-A: residential / kentsel dönüşüm construction area (additive, nullable).
+    # Total construction area may exceed the sum of sellable unit areas (common areas).
+    construction_gross_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    construction_net_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+
     company: Mapped["Company"] = relationship(back_populates="projects")  # noqa: F821
+    # CR-016-A: the daire dağılımı / unit schedule (empty for non-residential projects).
+    units: Mapped[list["ProjectUnit"]] = relationship(  # noqa: F821
+        back_populates="project"
+    )

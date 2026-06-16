@@ -41,6 +41,22 @@ PROJECT_TYPES = {key: label for key, label, _cat in PROJECT_TYPE_DEFS}
 
 PROJECT_STATUSES = ["active", "completed", "suspended", "cancelled"]
 
+# --- Unit-schedule types (CR-016 daire dağılımı) ---
+# Preset keys for the residential unit schedule; "other" requires a custom_label.
+UNIT_TYPES = {
+    "1+1": "1+1",
+    "2+1": "2+1",
+    "3+1": "3+1",
+    "4+1": "4+1",
+    "ticari": "Ticari",
+    "dukkan": "Dükkan",
+    "ofis": "Ofis",
+    "bodrum": "Bodrum",
+    "depo": "Depo",
+    "other": "Diğer",
+}
+UNIT_TYPE_KEYS = list(UNIT_TYPES.keys())
+
 # --- Cost categories (Section 4.3 / Appendix B) ---
 # Order is the canonical display order in the budget tree.
 COST_CATEGORIES = {
