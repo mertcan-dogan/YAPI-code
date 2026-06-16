@@ -164,7 +164,7 @@ def test_project_out_serialises_empty_units(seed):
 # --------------------------------------------------------------------------- #
 # Create endpoint stays green with units present (persistence deferred to CR-016-B)
 # --------------------------------------------------------------------------- #
-def test_create_endpoint_accepts_units_without_regression(client, seed):
+def test_create_endpoint_accepts_units(client, seed):
     client.login(seed["a"]["users"][ROLE_DIRECTOR])
     r = client.post("/api/v1/projects", json=_project_payload(
         construction_gross_m2="5000.00",
@@ -173,8 +173,8 @@ def test_create_endpoint_accepts_units_without_regression(client, seed):
     assert r.status_code == 200, r.text
     data = r.json()["data"]
     assert data["construction_gross_m2"] == "5000.00"
-    # Units are not persisted yet (CR-016-A exposes the field; CR-016-B upserts it).
-    assert data["units"] == []
+    # CR-016-B persists the schedule on create.
+    assert len(data["units"]) == 2
 
 
 def test_non_residential_create_unchanged(client, seed):

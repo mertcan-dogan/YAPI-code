@@ -38,4 +38,5 @@ class ProjectUnit(TimestampSoftDeleteMixin, Base):
     sale_price_try: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    project: Mapped["Project"] = relationship(back_populates="units")  # noqa: F821
+    # Parent project (the Project.units side is view-only; see project.py).
+    project: Mapped["Project"] = relationship("Project")  # noqa: F821

@@ -21,6 +21,7 @@ from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services import financials as fin_service
+from app.services import units as units_service
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 
@@ -79,8 +80,8 @@ def create_project(
     user: DirectorUser,
     db: Session = Depends(get_db),
 ):
-    # CR-016-A exposes the `units` schedule on the schema; persisting it (upsert +
-    # unit_count derivation) is wired in CR-016-B, so it is excluded here for now.
+    # The `units` schedule is persisted separately (CR-016-B upsert + unit_count
+    # derivation), so it is excluded from the column mapping here.
     project = Project(
         company_id=user.company_id,
         **payload.model_dump(exclude={"units"}),
@@ -91,6 +92,9 @@ def create_project(
     for cat in COST_CATEGORY_KEYS:
         db.add(BudgetLineItem(project_id=project.id, company_id=user.company_id, cost_category=cat))
     db.flush()
+    # CR-016-B: persist the daire dağılımı and derive unit_count from it.
+    if payload.units:
+        units_service.sync_schedule(db, project, payload.units, user.company_id)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="projects",
         record_id=project.id, action="INSERT", new_values=snapshot(project),
@@ -119,11 +123,12 @@ def update_project(
     # Only directors may edit project settings; PMs may update completion_pct only.
     from app.constants import ROLE_DIRECTOR
 
-    # CR-016-A: `units` is exposed on the schema but persisted in CR-016-B.
+    # `units` is upserted separately (CR-016-B); the column mapping excludes it.
     changes = payload.model_dump(exclude_unset=True, exclude={"units"})
     if user.role != ROLE_DIRECTOR:
         allowed = {"completion_pct"}
-        if set(changes) - allowed:
+        # The unit schedule is a project setting → directors only.
+        if (set(changes) - allowed) or payload.units is not None:
             raise APIError(403, "FORBIDDEN", "Proje ayarlarını yalnızca yönetici düzenleyebilir")
 
     old = snapshot(project)
@@ -131,6 +136,10 @@ def update_project(
         setattr(project, k, v)
     project.last_modified_by = user.id if hasattr(project, "last_modified_by") else None
     db.flush()
+    # CR-016-B: when the units array is provided (even empty), upsert the schedule
+    # and re-derive unit_count. When omitted (None), the schedule is left untouched.
+    if payload.units is not None:
+        units_service.sync_schedule(db, project, payload.units, user.company_id)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="projects",
         record_id=project.id, action="UPDATE", old_values=old, new_values=snapshot(project),
@@ -158,6 +167,9 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
             # CR-014-C: USD totals = SUM of per-row amount_usd snapshots (§0.2),
             # with a count of rows missing a snapshot. TRY figures unchanged.
             "usd": fin_service.project_usd_totals(db, project),
+            # CR-016-B: computed (not stored) residential aggregates over the
+            # live unit schedule — feeds CR-017 per-m² benchmarks.
+            "residential": _jsonify(units_service.schedule_aggregates(project.units)),
         }
     )
 

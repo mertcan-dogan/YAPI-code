@@ -68,6 +68,13 @@ class Project(TimestampSoftDeleteMixin, Base):
 
     company: Mapped["Company"] = relationship(back_populates="projects")  # noqa: F821
     # CR-016-A: the daire dağılımı / unit schedule (empty for non-residential projects).
+    # View-only + live-rows-only: the schedule is persisted explicitly by the
+    # CR-016-B units service (upsert + soft-delete), not through this collection,
+    # so soft-deleted rows never surface in reads/aggregates.
     units: Mapped[list["ProjectUnit"]] = relationship(  # noqa: F821
-        back_populates="project"
+        "ProjectUnit",
+        primaryjoin="and_(Project.id == ProjectUnit.project_id, "
+        "ProjectUnit.is_deleted == False)",
+        order_by="ProjectUnit.created_at",
+        viewonly=True,
     )

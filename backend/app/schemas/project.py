@@ -15,8 +15,13 @@ ERR_UNIT_M2 = "m² 0'dan büyük olmalıdır"
 
 
 class UnitScheduleIn(BaseModel):
-    """A daire dağılımı row on project create/update (CR-016-A)."""
+    """A daire dağılımı row on project create/update (CR-016-A).
 
+    ``id`` targets an existing row on update (CR-016-B upsert); omit it for new
+    rows. An id that doesn't belong to the caller's company is treated as new.
+    """
+
+    id: uuid.UUID | None = None
     unit_type: str
     custom_label: str | None = None
     count: int = 1
