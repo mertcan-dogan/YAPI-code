@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.calculations.money import D
 from app.constants import (
+    COST_CATEGORIES,
     ROLE_DIRECTOR,
     ROLE_FINANCE,
     ROLE_PROJECT_MANAGER,
@@ -101,6 +102,60 @@ def list_costs(
     ).scalars().all()
     data = [CostEntryOut.model_validate(r).model_dump(mode="json") for r in rows]
     return success(data, meta={"total": total, "page": page, "per_page": per_page})
+
+
+UNSPECIFIED_SUBCATEGORY = "Belirtilmemiş"  # CR-018-B: null/blank subcategory bucket
+
+
+@router.get("/projects/{project_id}/costs/by-subcategory")
+def costs_by_subcategory(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """CR-018-B: SUM(amount_try / total_with_vat_try) per (category, subcategory).
+
+    Exact Decimal, summed in Python so it's dialect-safe (SQLite tests / Postgres
+    prod). Null or blank subcategory rolls up under "Belirtilmemiş". Company-scoped
+    via the project access check.
+    """
+    project = get_company_project(db, project_id, user)
+    rows = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False)
+        )
+    ).scalars().all()
+
+    # category -> subcategory label -> {amount_try, total_with_vat_try}
+    cats: dict[str, dict] = {}
+    for c in rows:
+        sub = (c.subcategory or "").strip() or UNSPECIFIED_SUBCATEGORY
+        cat = cats.setdefault(c.cost_category, {"subs": {}, "amount_try": D(0), "total_with_vat_try": D(0)})
+        bucket = cat["subs"].setdefault(sub, {"amount_try": D(0), "total_with_vat_try": D(0)})
+        bucket["amount_try"] += D(c.amount_try)
+        bucket["total_with_vat_try"] += D(c.total_with_vat_try)
+        cat["amount_try"] += D(c.amount_try)
+        cat["total_with_vat_try"] += D(c.total_with_vat_try)
+
+    from app.calculations.money import money
+
+    out = []
+    for cat_key, cat in cats.items():
+        out.append({
+            "cost_category": cat_key,
+            "label_tr": COST_CATEGORIES.get(cat_key, cat_key),
+            "amount_try": str(money(cat["amount_try"])),
+            "total_with_vat_try": str(money(cat["total_with_vat_try"])),
+            "subcategories": [
+                {
+                    "subcategory": sub,
+                    "amount_try": str(money(v["amount_try"])),
+                    "total_with_vat_try": str(money(v["total_with_vat_try"])),
+                }
+                for sub, v in cat["subs"].items()
+            ],
+        })
+    return success({"categories": out})
 
 
 @router.post("/projects/{project_id}/costs")
