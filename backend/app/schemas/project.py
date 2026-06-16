@@ -113,6 +113,10 @@ class ProjectCreate(BaseModel):
     construction_net_m2: Decimal | None = None
     units: list[UnitScheduleIn] = []
 
+    # CR-015-A: financing overrides (NULL = inherit the company default).
+    financing_enabled_override: bool | None = None
+    financing_annual_rate_pct_override: Decimal | None = None
+
     @field_validator("project_type")
     @classmethod
     def _type(cls, v: str) -> str:
@@ -182,6 +186,10 @@ class ProjectUpdate(BaseModel):
     construction_net_m2: Decimal | None = None
     units: list[UnitScheduleIn] | None = None
 
+    # CR-015-A: financing overrides (NULL = inherit the company default).
+    financing_enabled_override: bool | None = None
+    financing_annual_rate_pct_override: Decimal | None = None
+
     @field_validator("status")
     @classmethod
     def _status(cls, v):
@@ -236,3 +244,6 @@ class ProjectOut(ORMModel):
     construction_gross_m2: Decimal | None = None
     construction_net_m2: Decimal | None = None
     units: list[UnitScheduleOut] = []
+    # CR-015-A: financing overrides (NULL = inherit company default).
+    financing_enabled_override: bool | None = None
+    financing_annual_rate_pct_override: Decimal | None = None

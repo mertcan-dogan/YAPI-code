@@ -66,6 +66,11 @@ class Project(TimestampSoftDeleteMixin, Base):
     construction_gross_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     construction_net_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
 
+    # CR-015-A: per-project financing overrides. NULL = inherit the company default
+    # (see services.financing.effective_financing). Additive; no behavior change off.
+    financing_enabled_override: Mapped[bool | None] = mapped_column(nullable=True)
+    financing_annual_rate_pct_override: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
     company: Mapped["Company"] = relationship(back_populates="projects")  # noqa: F821
     # CR-016-A: the daire dağılımı / unit schedule (empty for non-residential projects).
     # View-only + live-rows-only: the schedule is persisted explicitly by the
