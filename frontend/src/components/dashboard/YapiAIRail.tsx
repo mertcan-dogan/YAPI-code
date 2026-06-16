@@ -1,13 +1,9 @@
-import { InsightItem, briefingKey, type BriefingItem } from "@/components/dashboard/InsightItem";
 import { SideDrawer } from "@/components/SideDrawer";
 import { AIDisclaimer } from "@/components/ui";
 import { apiPost } from "@/lib/api";
-import { cn } from "@/lib/cn";
-import { CheckCircle2, ChevronRight, Loader2, RefreshCw, Send, Sparkles } from "lucide-react";
+import { ChevronRight, Loader2, Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-
-const DONE_KEY = "yapi-briefing-done";
 
 interface ChatMsg {
   role: "user" | "ai";
@@ -15,24 +11,14 @@ interface ChatMsg {
 }
 
 interface RailProps {
-  briefing: BriefingItem[];
-  briefingState: "loading" | "ready" | "error";
-  onRefresh: () => void;
   onGoToTasks: () => void;
 }
 
-function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, onGoToTasks }: RailProps & { onClose?: () => void; hideHeader?: boolean }) {
+function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose?: () => void; hideHeader?: boolean }) {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
-  const [done, setDone] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(DONE_KEY) || "[]");
-    } catch {
-      return [];
-    }
-  });
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -55,17 +41,6 @@ function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, 
     }
   };
 
-  const completeItem = (key: string) => {
-    if (!window.confirm("Bu işi tamamlandı olarak işaretleyip listeden kaldırmak istediğinize emin misiniz?")) return;
-    setDone((d) => {
-      const next = Array.from(new Set([...d, key]));
-      localStorage.setItem(DONE_KEY, JSON.stringify(next));
-      return next;
-    });
-  };
-
-  const visible = briefing.filter((b) => !done.includes(briefingKey(b)));
-
   return (
     <div className="flex h-full flex-col">
       {!hideHeader && (
@@ -75,41 +50,12 @@ function RailContent({ onClose, hideHeader, briefing, briefingState, onRefresh, 
               <Sparkles className="h-4 w-4" />
             </span>
             <span className="text-sm font-semibold text-primary">Yapı AI</span>
-            <span className="rounded-full bg-navy-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand">Beta</span>
           </div>
           {onClose && (
             <button onClick={onClose} className="text-text-secondary hover:text-primary" aria-label="Yapı AI panelini kapat">
               <ChevronRight className="h-4 w-4" />
             </button>
           )}
-        </div>
-      )}
-
-      {/* Short, actionable priority list with done-checkboxes */}
-      {(briefingState !== "ready" || visible.length > 0) && (
-        <div className="border-b border-border px-4 py-2.5">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Öncelikli İşler</span>
-            <button onClick={onRefresh} disabled={briefingState === "loading"} title="Yenile" className="text-text-secondary hover:text-primary disabled:opacity-50" aria-label="Yenile">
-              <RefreshCw className={cn("h-3.5 w-3.5", briefingState === "loading" && "animate-spin")} />
-            </button>
-          </div>
-          {briefingState === "loading" ? (
-            <p className="py-1 text-xs text-text-secondary">Analiz ediliyor…</p>
-          ) : briefingState === "error" ? (
-            <p className="py-1 text-xs text-text-secondary">Yapay zeka şu an kullanılamıyor.</p>
-          ) : (
-            <div className="max-h-44 divide-y divide-border overflow-y-auto">
-              {visible.slice(0, 6).map((item) => (
-                <InsightItem key={briefingKey(item)} item={item} onComplete={() => completeItem(briefingKey(item))} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {briefingState === "ready" && visible.length === 0 && (
-        <div className="flex items-center gap-2 border-b border-border bg-green-50 px-4 py-2 text-xs text-success">
-          <CheckCircle2 className="h-3.5 w-3.5" /> Öncelikli iş kalmadı.
         </div>
       )}
 

@@ -211,7 +211,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               <Sparkles className="h-3.5 w-3.5" />
             </span>
             <span className="text-[13px] font-semibold text-white">Yapı AI</span>
-            <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-brand-2">Beta</span>
           </div>
           <div className="flex items-center gap-1.5 rounded-lg bg-primary px-2 ring-1 ring-white/10 focus-within:ring-brand-2">
             <input

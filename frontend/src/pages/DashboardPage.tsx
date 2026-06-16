@@ -185,6 +185,9 @@ export default function DashboardPage() {
         overdueCount={overdueCount}
         onOverdueClick={() => setOverdueOpen(true)}
         onAddDocument={() => navigate("/document-capture")}
+        briefing={briefing}
+        briefingState={briefingState}
+        onRefreshBriefing={handleRefreshBriefing}
       />
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
@@ -449,12 +452,7 @@ export default function DashboardPage() {
       )}
         </div>
 
-        <YapiAIRail
-          briefing={briefing}
-          briefingState={briefingState}
-          onRefresh={handleRefreshBriefing}
-          onGoToTasks={() => navigate("/reminders")}
-        />
+        <YapiAIRail onGoToTasks={() => navigate("/reminders")} />
       </div>
     </div>
   );
