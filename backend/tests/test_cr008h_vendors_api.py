@@ -161,6 +161,46 @@ def test_unlinked_and_link(client, seed, db):
     assert client.get("/api/v1/vendors/unlinked").json()["data"]["suppliers"] == []
 
 
+# --------------------------------------------------------------------------- #
+# Detail drill-down
+# --------------------------------------------------------------------------- #
+def test_vendor_detail_breakdowns(client, seed, db):
+    cid = _seed_and_backfill(db, seed, [("Akçansa", "1000"), ("Akçansa A.Ş.", "2500")])
+    vendor = db.execute(
+        select(Vendor).where(Vendor.company_id == cid, Vendor.is_deleted.is_(False))
+    ).scalars().first()
+
+    _login(client, seed)
+    r = client.get(f"/api/v1/vendors/{vendor.id}")
+    assert r.status_code == 200, r.text
+    d = r.json()["data"]
+    assert d["canonical_name"] == vendor.canonical_name
+    assert d["total_try"] == "3500.00"
+    assert d["cost_entry_count"] == 2
+    assert d["project_count"] == 1
+    # The non-canonical spelling is recorded as an alias during backfill.
+    assert isinstance(d["aliases"], list)
+    assert len(d["aliases"]) >= 1
+    # Both rows are material_concrete in one project.
+    assert len(d["by_category"]) == 1
+    assert d["by_category"][0]["category"] == "material_concrete"
+    assert d["by_category"][0]["total_try"] == "3500.00"
+    assert len(d["by_project"]) == 1
+    assert d["by_project"][0]["total_try"] == "3500.00"
+
+
+def test_vendor_detail_404_for_foreign(client, seed, db):
+    _seed_and_backfill(db, seed, [("Akçansa", "1000")])
+    b = seed["b"]
+    _cost(db, b["project"], b["company"].id, b["users"][ROLE_DIRECTOR].id, "Beta Firma")
+    db.commit()
+    bf.backfill_company(db, b["company"].id)
+    b_vendor = db.execute(select(Vendor).where(Vendor.company_id == b["company"].id)).scalars().first()
+
+    _login(client, seed)  # company A
+    assert client.get(f"/api/v1/vendors/{b_vendor.id}").status_code == 404
+
+
 def test_vendors_require_auth(client):
     assert client.get("/api/v1/vendors").status_code == 401
     assert client.get("/api/v1/vendors/unlinked").status_code == 401

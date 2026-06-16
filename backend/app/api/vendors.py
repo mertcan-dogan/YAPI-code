@@ -16,10 +16,12 @@ from sqlalchemy.orm import Session
 
 from app.calculations.money import D, money
 from app.config import settings
+from app.constants import COST_CATEGORIES
 from app.db import get_db
 from app.deps import CurrentUser
 from app.middleware.limits import enforce_user_limit
 from app.models.cost_entry import CostEntry
+from app.models.project import Project
 from app.models.subcontractor import Subcontractor
 from app.models.vendor import Vendor, VendorAlias
 from app.responses import APIError, success
@@ -318,3 +320,88 @@ def link_rows(vendor_id: uuid.UUID, payload: LinkRequest, request: Request, user
     )
     db.commit()
     return success({"linked_cost_entries": linked_cost, "linked_subcontractors": linked_sub})
+
+
+# --------------------------------------------------------------------------- #
+# Vendor detail (drill-down) — declared last so static routes above win.
+# --------------------------------------------------------------------------- #
+@router.get("/{vendor_id}")
+def vendor_detail(vendor_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    """Single-vendor drill-down: canonical name, aliases, total spend and
+    by-project / by-category breakdowns, plus linked row counts. Spend mirrors
+    the list endpoint — approved cost entries linked to this canonical vendor."""
+    cid = user.company_id
+    vendor = _get_vendor(db, cid, vendor_id)
+
+    base = [
+        CostEntry.company_id == cid,
+        CostEntry.is_deleted.is_(False),
+        CostEntry.pending_approval.is_(False),
+        CostEntry.vendor_id == vendor.id,
+    ]
+
+    totals = db.execute(
+        select(
+            func.coalesce(func.sum(CostEntry.amount_try), 0),
+            func.count(CostEntry.id),
+            func.count(func.distinct(CostEntry.project_id)),
+        ).where(*base)
+    ).one()
+
+    project_names = {
+        r[0]: r[1] for r in db.execute(
+            select(Project.id, Project.name).where(Project.company_id == cid)
+        ).all()
+    }
+    by_project = [
+        {
+            "project_id": str(r[0]),
+            "project_name": project_names.get(r[0], str(r[0])),
+            "total_try": str(money(r[1])),
+        }
+        for r in db.execute(
+            select(CostEntry.project_id, func.coalesce(func.sum(CostEntry.amount_try), 0))
+            .where(*base).group_by(CostEntry.project_id)
+        ).all()
+    ]
+    by_project.sort(key=lambda r: D(r["total_try"]), reverse=True)
+
+    by_category = [
+        {
+            "category": r[0],
+            "category_label": COST_CATEGORIES.get(r[0], r[0]),
+            "total_try": str(money(r[1])),
+        }
+        for r in db.execute(
+            select(CostEntry.cost_category, func.coalesce(func.sum(CostEntry.amount_try), 0))
+            .where(*base).group_by(CostEntry.cost_category)
+        ).all()
+    ]
+    by_category.sort(key=lambda r: D(r["total_try"]), reverse=True)
+
+    aliases = db.execute(
+        select(VendorAlias.alias_name).where(
+            VendorAlias.vendor_id == vendor.id, VendorAlias.company_id == cid,
+            VendorAlias.is_deleted.is_(False),
+        ).order_by(VendorAlias.alias_name)
+    ).scalars().all()
+
+    subcontractor_count = db.execute(
+        select(func.count(Subcontractor.id)).where(
+            Subcontractor.company_id == cid, Subcontractor.is_deleted.is_(False),
+            Subcontractor.vendor_id == vendor.id,
+        )
+    ).scalar_one()
+
+    return success({
+        "id": str(vendor.id),
+        "canonical_name": vendor.canonical_name,
+        "tax_id": vendor.tax_id,
+        "aliases": list(aliases),
+        "total_try": str(money(totals[0])),
+        "cost_entry_count": int(totals[1]),
+        "project_count": int(totals[2]),
+        "subcontractor_count": int(subcontractor_count),
+        "by_project": by_project,
+        "by_category": by_category,
+    })

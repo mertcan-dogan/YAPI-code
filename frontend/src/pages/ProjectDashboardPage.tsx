@@ -2,6 +2,7 @@ import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/char
 import { AIDisclaimer, Button, Modal } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
+import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailModal";
 import { EmptyState, LoadError } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -30,6 +31,7 @@ export default function ProjectDashboardPage() {
   const navigate = useNavigate();
   const [costDrawer, setCostDrawer] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [kpiDetail, setKpiDetail] = useState<KpiInfo | null>(null);
 
   // CR-007-H: an AI cost-entry citation deep-links here as ?highlight=<id>. Open
   // the cost drawer to that entry, then clear the param so back/refresh is clean.
@@ -175,31 +177,94 @@ export default function ProjectDashboardPage() {
       </Modal>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrencyAbbrev(f?.contract_value_try)} valueTitle={formatCurrency(f?.contract_value_try)} icon={Wallet} accentColor="#2563EB" />
-        <KPICard loading={loading} label="Gerçekleşen Maliyet" value={formatCurrencyAbbrev(f?.total_actual_with_vat_try)} valueTitle={formatCurrency(f?.total_actual_with_vat_try)} icon={Hammer} accentColor="#F59E0B" alert={actualVsBudget > 0.8 ? "amber" : null} onClick={() => setCostDrawer(true)} />
-        <KPICard loading={loading} label="Kalan Bütçe" value={formatCurrencyAbbrev(f?.remaining_budget_try)} valueTitle={formatCurrency(f?.remaining_budget_try)} icon={Coins} accentColor="#06B6D4" alert={remaining < 0 ? "red" : null} onClick={() => navigate(`/projects/${id}/budget`)} />
-        <KPICard loading={loading} label="Güncel Kar Marjı" value={formatPct(f?.margin_pct)} icon={Percent} accentColor="#059669" alert={margin < 5 ? "red" : margin < 10 ? "amber" : null} />
+        <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrencyAbbrev(f?.contract_value_try)} valueTitle={formatCurrency(f?.contract_value_try)} icon={Wallet} accentColor="#2563EB"
+          onClick={() => setKpiDetail({
+            title: "Sözleşme Değeri", value: formatCurrency(f?.contract_value_try), accentColor: "#2563EB",
+            description: "Proje sözleşme bedeli — işverenle anlaşılan toplam gelir (KDV hariç).",
+          })} />
+        <KPICard loading={loading} label="Gerçekleşen Maliyet" value={formatCurrencyAbbrev(f?.total_actual_with_vat_try)} valueTitle={formatCurrency(f?.total_actual_with_vat_try)} icon={Hammer} accentColor="#F59E0B" alert={actualVsBudget > 0.8 ? "amber" : null}
+          onClick={() => setKpiDetail({
+            title: "Gerçekleşen Maliyet", value: formatCurrency(f?.total_actual_with_vat_try), accentColor: "#F59E0B",
+            description: "Bu projede bugüne kadar gerçekleşen toplam maliyet (KDV dahil). Revize bütçenin %80'ini aşınca uyarı verir.",
+            action: { label: "Maliyet kayıtlarını gör", onClick: () => setCostDrawer(true) },
+          })} />
+        <KPICard loading={loading} label="Kalan Bütçe" value={formatCurrencyAbbrev(f?.remaining_budget_try)} valueTitle={formatCurrency(f?.remaining_budget_try)} icon={Coins} accentColor="#06B6D4" alert={remaining < 0 ? "red" : null}
+          onClick={() => setKpiDetail({
+            title: "Kalan Bütçe", value: formatCurrency(f?.remaining_budget_try), accentColor: "#06B6D4",
+            description: "Revize bütçeden bugüne kadar harcanan tutar düşüldükten sonra kalan bakiye. Negatif değer bütçe aşımını gösterir.",
+            action: { label: "Bütçeye git", onClick: () => navigate(`/projects/${id}/budget`) },
+          })} />
+        <KPICard loading={loading} label="Güncel Kar Marjı" value={formatPct(f?.margin_pct)} icon={Percent} accentColor="#059669" alert={margin < 5 ? "red" : margin < 10 ? "amber" : null}
+          onClick={() => setKpiDetail({
+            title: "Güncel Kar Marjı", value: formatPct(f?.margin_pct), valueKind: "percent", accentColor: "#059669",
+            description: "Sözleşme bedeline göre güncel (gerçekleşen) kar marjı. %10 altında izlenmeli, %5 altında riskli kabul edilir.",
+          })} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="İşverene Faturalanan" value={formatCurrencyAbbrev(f?.total_invoiced_try)} valueTitle={formatCurrency(f?.total_invoiced_try)} icon={FileText} accentColor="#2563EB" onClick={() => navigate(`/projects/${id}/invoices`)} />
-        <KPICard loading={loading} label="Tahsil Edilen" value={formatCurrencyAbbrev(f?.total_collected_try)} valueTitle={formatCurrency(f?.total_collected_try)} icon={Banknote} accentColor="#059669" onClick={() => navigate(`/projects/${id}/invoices`)} />
-        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrencyAbbrev(f?.total_outstanding_try)} valueTitle={formatCurrency(f?.total_outstanding_try)} icon={Clock} accentColor="#D97706" onClick={() => navigate(`/projects/${id}/invoices`)} />
-        <KPICard loading={loading} label="Hakediş Kesintisi" value={formatCurrencyAbbrev(f?.total_retention_try)} valueTitle={formatCurrency(f?.total_retention_try)} icon={Layers} accentColor="#0E1525" onClick={() => navigate(`/projects/${id}/invoices`)} />
+        <KPICard loading={loading} label="İşverene Faturalanan" value={formatCurrencyAbbrev(f?.total_invoiced_try)} valueTitle={formatCurrency(f?.total_invoiced_try)} icon={FileText} accentColor="#2563EB"
+          onClick={() => setKpiDetail({
+            title: "İşverene Faturalanan", value: formatCurrency(f?.total_invoiced_try), accentColor: "#2563EB",
+            description: "İşverene kesilen hakediş ve faturaların toplam tutarı.",
+            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
+          })} />
+        <KPICard loading={loading} label="Tahsil Edilen" value={formatCurrencyAbbrev(f?.total_collected_try)} valueTitle={formatCurrency(f?.total_collected_try)} icon={Banknote} accentColor="#059669"
+          onClick={() => setKpiDetail({
+            title: "Tahsil Edilen", value: formatCurrency(f?.total_collected_try), accentColor: "#059669",
+            description: "İşverenden bugüne kadar tahsil edilen toplam tutar.",
+            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
+          })} />
+        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrencyAbbrev(f?.total_outstanding_try)} valueTitle={formatCurrency(f?.total_outstanding_try)} icon={Clock} accentColor="#D97706"
+          onClick={() => setKpiDetail({
+            title: "Bekleyen Tahsilat", value: formatCurrency(f?.total_outstanding_try), accentColor: "#D97706",
+            description: "Faturalanan ancak henüz tahsil edilmemiş tutar — açık alacaklar.",
+            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
+          })} />
+        <KPICard loading={loading} label="Hakediş Kesintisi" value={formatCurrencyAbbrev(f?.total_retention_try)} valueTitle={formatCurrency(f?.total_retention_try)} icon={Layers} accentColor="#0E1525"
+          onClick={() => setKpiDetail({
+            title: "Hakediş Kesintisi", value: formatCurrency(f?.total_retention_try), accentColor: "#0E1525",
+            description: "Hakedişlerden kesilen teminat (stopaj/teminat) toplamı.",
+            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
+          })} />
       </div>
 
       {id && <CostEntriesDrawer open={costDrawer} onClose={() => setCostDrawer(false)} projectId={id} highlightId={highlightCostId} />}
+      <KpiDetailModal open={!!kpiDetail} onClose={() => setKpiDetail(null)} kpi={kpiDetail} />
 
       {/* CR-003-F: Forecast-at-Completion */}
       <div className="mt-4">
         <h2 className="mb-3 text-sm font-semibold text-primary">Tamamlanmada Tahmin</h2>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-          <KPICard loading={loading} label="Orijinal Bütçe" value={formatCurrencyAbbrev(fac?.original_budget_try)} valueTitle={formatCurrency(fac?.original_budget_try)} icon={Target} accentColor="#2563EB" />
-          <KPICard loading={loading} label="Revize Bütçe" value={formatCurrencyAbbrev(fac?.revised_budget_try)} valueTitle={formatCurrency(fac?.revised_budget_try)} icon={Layers} accentColor="#06B6D4" />
-          <KPICard loading={loading} label="Bugüne Kadar Maliyet" value={formatCurrencyAbbrev(fac?.cost_to_date_try)} valueTitle={formatCurrency(fac?.cost_to_date_try)} icon={Hammer} accentColor="#F59E0B" />
-          <KPICard loading={loading} label="Tamamlamaya Kalan Maliyet" value={formatCurrencyAbbrev(fac?.cost_to_complete_try)} valueTitle={formatCurrency(fac?.cost_to_complete_try)} icon={Hammer} accentColor="#D97706" alert={toNumber(fac?.cost_to_complete_try) > toNumber(fac?.revised_budget_try) ? "amber" : null} />
-          <KPICard loading={loading} label="Tahmini Final Maliyet" value={formatCurrencyAbbrev(fac?.forecast_final_cost_try)} valueTitle={formatCurrency(fac?.forecast_final_cost_try)} icon={Target} accentColor="#7C3AED" alert={fac?.over_budget ? "red" : null} />
-          <KPICard loading={loading} label="Tahmini Final Marj" value={formatPct(fac?.forecast_final_margin_pct)} icon={Percent} accentColor="#059669" alert={facMargin < 5 ? "red" : facMargin < 10 ? "amber" : null} />
+          <KPICard loading={loading} label="Orijinal Bütçe" value={formatCurrencyAbbrev(fac?.original_budget_try)} valueTitle={formatCurrency(fac?.original_budget_try)} icon={Target} accentColor="#2563EB"
+            onClick={() => setKpiDetail({
+              title: "Orijinal Bütçe", value: formatCurrency(fac?.original_budget_try), accentColor: "#2563EB",
+              description: "Projenin başlangıçtaki onaylı bütçesi (ek işler hariç).",
+            })} />
+          <KPICard loading={loading} label="Revize Bütçe" value={formatCurrencyAbbrev(fac?.revised_budget_try)} valueTitle={formatCurrency(fac?.revised_budget_try)} icon={Layers} accentColor="#06B6D4"
+            onClick={() => setKpiDetail({
+              title: "Revize Bütçe", value: formatCurrency(fac?.revised_budget_try), accentColor: "#06B6D4",
+              description: "Onaylı ek işler eklendikten sonraki güncel bütçe.",
+            })} />
+          <KPICard loading={loading} label="Bugüne Kadar Maliyet" value={formatCurrencyAbbrev(fac?.cost_to_date_try)} valueTitle={formatCurrency(fac?.cost_to_date_try)} icon={Hammer} accentColor="#F59E0B"
+            onClick={() => setKpiDetail({
+              title: "Bugüne Kadar Maliyet", value: formatCurrency(fac?.cost_to_date_try), accentColor: "#F59E0B",
+              description: "Bugüne kadar bu projede gerçekleşen toplam maliyet.",
+            })} />
+          <KPICard loading={loading} label="Tamamlamaya Kalan Maliyet" value={formatCurrencyAbbrev(fac?.cost_to_complete_try)} valueTitle={formatCurrency(fac?.cost_to_complete_try)} icon={Hammer} accentColor="#D97706" alert={toNumber(fac?.cost_to_complete_try) > toNumber(fac?.revised_budget_try) ? "amber" : null}
+            onClick={() => setKpiDetail({
+              title: "Tamamlamaya Kalan Maliyet", value: formatCurrency(fac?.cost_to_complete_try), accentColor: "#D97706",
+              description: "İşi tamamlamak için gereken tahmini kalan maliyet (tahmini final maliyet eksi bugüne kadar gerçekleşen).",
+            })} />
+          <KPICard loading={loading} label="Tahmini Final Maliyet" value={formatCurrencyAbbrev(fac?.forecast_final_cost_try)} valueTitle={formatCurrency(fac?.forecast_final_cost_try)} icon={Target} accentColor="#7C3AED" alert={fac?.over_budget ? "red" : null}
+            onClick={() => setKpiDetail({
+              title: "Tahmini Final Maliyet", value: formatCurrency(fac?.forecast_final_cost_try), accentColor: "#7C3AED",
+              description: "Mevcut gidişata göre projenin tahmini toplam final maliyeti. Revize bütçeyi aşarsa kırmızı uyarı verir.",
+            })} />
+          <KPICard loading={loading} label="Tahmini Final Marj" value={formatPct(fac?.forecast_final_margin_pct)} icon={Percent} accentColor="#059669" alert={facMargin < 5 ? "red" : facMargin < 10 ? "amber" : null}
+            onClick={() => setKpiDetail({
+              title: "Tahmini Final Marj", value: formatPct(fac?.forecast_final_margin_pct), valueKind: "percent", accentColor: "#059669",
+              description: "Tahmini final maliyete göre beklenen kar marjı. %10 altında izlenmeli, %5 altında riskli.",
+            })} />
         </div>
       </div>
 

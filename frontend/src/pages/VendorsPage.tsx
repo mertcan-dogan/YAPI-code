@@ -33,6 +33,7 @@ export default function VendorsPage() {
 
   const [mergeCluster, setMergeCluster] = useState<ClusterMember[] | null>(null);
   const [aliasVendor, setAliasVendor] = useState<VendorRow | null>(null);
+  const [detailVendor, setDetailVendor] = useState<VendorRow | null>(null);
   const [linkSupplier, setLinkSupplier] = useState<string | null>(null);
 
   const refetchAll = () => {
@@ -49,7 +50,7 @@ export default function VendorsPage() {
     {
       key: "alias_count", header: "Takma Adlar", align: "right",
       render: (v) => (
-        <Button variant="outline" className="px-2 py-1 text-xs" onClick={() => setAliasVendor(v)}>
+        <Button variant="outline" className="px-2 py-1 text-xs" onClick={(e) => { e.stopPropagation(); setAliasVendor(v); }}>
           <Tags className="h-3.5 w-3.5" /> {v.alias_count}
         </Button>
       ),
@@ -85,6 +86,7 @@ export default function VendorsPage() {
         loading={vendorsQ.loading}
         error={vendorsQ.error}
         onRetry={vendorsQ.refetch}
+        onRowClick={(v) => setDetailVendor(v)}
         emptyMessage="Henüz tedarikçi yok. Tedarikçi tablosunu doldurmak için backfill çalıştırın."
       />
 
@@ -110,10 +112,116 @@ export default function VendorsPage() {
       {aliasVendor && (
         <AliasModal vendor={aliasVendor} onClose={() => setAliasVendor(null)} onChanged={() => vendorsQ.refetch()} />
       )}
+      {detailVendor && (
+        <VendorDetailModal vendor={detailVendor} onClose={() => setDetailVendor(null)} />
+      )}
       {linkSupplier && (
         <LinkModal supplierName={linkSupplier} vendors={vendors} onClose={() => setLinkSupplier(null)} onDone={() => { setLinkSupplier(null); refetchAll(); }} />
       )}
     </div>
+  );
+}
+
+interface VendorDetail {
+  id: string;
+  canonical_name: string;
+  tax_id: string | null;
+  aliases: string[];
+  total_try: string;
+  cost_entry_count: number;
+  project_count: number;
+  subcontractor_count: number;
+  by_project: { project_id: string; project_name: string; total_try: string }[];
+  by_category: { category: string; category_label: string; total_try: string }[];
+}
+
+function VendorDetailModal({ vendor, onClose }: { vendor: VendorRow; onClose: () => void }) {
+  const [detail, setDetail] = useState<VendorDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    apiGet<VendorDetail>(`/vendors/${vendor.id}`)
+      .then((r) => setDetail(r.data))
+      .catch(() => setDetail(null))
+      .finally(() => setLoading(false));
+  }, [vendor.id]);
+
+  const Breakdown = ({ title, rows }: { title: string; rows: { label: string; total_try: string }[] }) => {
+    const max = Math.max(...rows.map((r) => Number(r.total_try)), 1);
+    return (
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">{title}</h3>
+        {rows.length === 0 ? (
+          <p className="text-sm text-text-secondary">Kayıt yok.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {rows.map((r, i) => (
+              <div key={i}>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate text-text-primary" title={r.label}>{r.label}</span>
+                  <span className="tabular shrink-0 font-medium text-primary">{formatCurrency(r.total_try)}</span>
+                </div>
+                <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-bg">
+                  <div className="h-full rounded-full bg-brand" style={{ width: `${(Number(r.total_try) / max) * 100}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <Modal open title={vendor.canonical_name} onClose={onClose} size="lg" footer={<Button onClick={onClose}>Kapat</Button>}>
+      {loading ? (
+        <p className="py-6 text-center text-sm text-text-secondary">Yükleniyor…</p>
+      ) : !detail ? (
+        <p className="py-6 text-center text-sm text-text-secondary">Tedarikçi detayları yüklenemedi.</p>
+      ) : (
+        <div className="space-y-5">
+          {/* Headline figures */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg border border-border p-3">
+              <div className="text-xs text-text-secondary">Toplam Harcama</div>
+              <div className="tabular mt-1 text-lg font-bold text-primary">{formatCurrency(detail.total_try)}</div>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <div className="text-xs text-text-secondary">Proje</div>
+              <div className="tabular mt-1 text-lg font-bold text-primary">{detail.project_count}</div>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <div className="text-xs text-text-secondary">Maliyet Kaydı</div>
+              <div className="tabular mt-1 text-lg font-bold text-primary">{detail.cost_entry_count}</div>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <div className="text-xs text-text-secondary">Alt Yüklenici</div>
+              <div className="tabular mt-1 text-lg font-bold text-primary">{detail.subcontractor_count}</div>
+            </div>
+          </div>
+
+          {/* Aliases */}
+          <div>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">Takma Adlar</h3>
+            {detail.aliases.length === 0 ? (
+              <p className="text-sm text-text-secondary">Takma ad yok.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {detail.aliases.map((a) => (
+                  <span key={a} className="rounded-full bg-navy-50 px-2.5 py-0.5 text-xs text-brand">{a}</span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Breakdown title="Projeye Göre" rows={detail.by_project.map((p) => ({ label: p.project_name, total_try: p.total_try }))} />
+            <Breakdown title="Kategoriye Göre" rows={detail.by_category.map((c) => ({ label: c.category_label, total_try: c.total_try }))} />
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
