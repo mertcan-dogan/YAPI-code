@@ -14,10 +14,21 @@ from app.config import settings
 logger = logging.getLogger("yapi.ai")
 
 AI_UNAVAILABLE_MESSAGE = "AI şu an kullanılamıyor"
+# Distinct from an outage: the API answered but its output couldn't be parsed
+# (truncated/JSON malformed/empty extraction) — usually a too-large or oddly
+# shaped file, NOT a missing key. Surfaced to the user as a real reason.
+AI_RESPONSE_MESSAGE = (
+    "AI dosyayı işleyemedi — yanıt beklenen biçimde değildi. Dosya çok büyük veya "
+    "düzensiz olabilir; standart içe aktarmayı ya da şablonu deneyin."
+)
 
 
 class AIUnavailable(Exception):
-    pass
+    """The model is unreachable: missing key, SDK missing, or a transport error."""
+
+
+class AIResponseError(Exception):
+    """The model answered but the response could not be parsed/used."""
 
 
 def _client():
@@ -40,8 +51,10 @@ def _decimal_default(o: Any):
     return str(o)
 
 
-def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
-    """Single-shot prompt expecting a JSON response. Raises AIUnavailable on failure."""
+def _call_raw_text(prompt: str, max_tokens: int = 1024) -> str:
+    """Run a prompt and return the model's raw text. Raises AIUnavailable ONLY for
+    a true outage (missing key / SDK / transport error) — JSON parsing is the
+    caller's job, so a parse failure is never masked as 'AI unavailable'."""
     client = _client()
     try:
         msg = client.messages.create(
@@ -49,28 +62,74 @@ def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
-        return _extract_json(text)
+        return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
     except AIUnavailable:
         raise
-    except Exception as exc:  # network, TLS, rate limit, etc.
+    except Exception as exc:  # network, TLS, rate limit, auth, etc.
         # Log the exception type + message so SSL/cert, auth, and rate-limit
-        # failures are distinguishable in the logs (the user only ever sees the
-        # generic AI_UNAVAILABLE message).
+        # failures are distinguishable in the logs.
         logger.warning("Claude API call failed: %s: %s", type(exc).__name__, exc)
         raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
 
 
+def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
+    """Single-shot prompt expecting JSON. A transport failure raises AIUnavailable;
+    a JSON parse failure is also folded into AIUnavailable here for the legacy
+    callers (alerts/narrative) that only handle that. The import path uses
+    _call_raw_text directly so it can tell the two apart (CR-015-fix)."""
+    text = _call_raw_text(prompt, max_tokens=max_tokens)
+    try:
+        return _extract_json(text)
+    except Exception as exc:
+        logger.warning("Claude JSON parse failed: %s: %s", type(exc).__name__, exc)
+        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
+
+
 def _extract_json(text: str):
+    """Pull the first complete JSON object/array out of a model response.
+
+    Balances braces/brackets (string-aware) so nested JSON is extracted intact and
+    a truncated response is detected rather than silently mis-parsed. Raises
+    ValueError on no-JSON / incomplete-JSON; callers decide how to surface it.
+    """
     text = text.strip()
     if text.startswith("```"):
-        text = text.split("```", 2)[1]
-        if text.startswith("json"):
+        # Strip a leading ```json fence (and the trailing fence if present).
+        text = text.split("```", 2)[1] if text.count("```") >= 2 else text.lstrip("`")
+        if text.lower().startswith("json"):
             text = text[4:]
+        text = text.strip()
     start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
     if start == -1:
-        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
-    return json.loads(text[start:].rsplit("}", 1)[0] + "}" if text[start] == "{" else text[start:])
+        raise ValueError("Yanıtta JSON bulunamadı")
+    open_ch = text[start]
+    close_ch = "}" if open_ch == "{" else "]"
+    depth = 0
+    in_str = False
+    esc = False
+    end = -1
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == open_ch:
+            depth += 1
+        elif c == close_ch:
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == -1:
+        raise ValueError("JSON tamamlanmamış — yanıt kesilmiş olabilir")
+    return json.loads(text[start:end])
 
 
 # --- Alert Engine (Section 5.2) ---
@@ -301,21 +360,20 @@ def analyze_excel_import(excel_text: str) -> dict:
     Retries JSON parsing up to 2 times; raises AIUnavailable on failure.
     """
     prompt = build_import_prompt(excel_text)
-    last_err: Exception | None = None
-    for _ in range(2):  # retry JSON parsing up to 2 times
-        try:
-            result = _call_json(prompt, max_tokens=4000)
-            if isinstance(result, dict):
-                # Ensure all expected keys exist.
-                for key in ("maliyet_girisleri", "faturalar", "alt_yukleniciler", "ekipman", "tanimsiz"):
-                    result.setdefault(key, [])
-                return result
-        except AIUnavailable as exc:
-            raise
-        except Exception as exc:  # JSON parse error -> retry
-            last_err = exc
-    logger.warning("AI import JSON parse failed: %s", last_err)
-    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+    # Transport/outage -> AIUnavailable (propagates). Parse/format -> AIResponseError
+    # so the endpoint surfaces a REAL reason instead of "AI unavailable" (CR-015-fix).
+    text = _call_raw_text(prompt, max_tokens=8000)
+    try:
+        result = _extract_json(text)
+    except Exception as exc:
+        logger.warning("AI import JSON parse failed: %s: %s", type(exc).__name__, exc)
+        raise AIResponseError(AI_RESPONSE_MESSAGE) from exc
+    if not isinstance(result, dict):
+        logger.warning("AI import returned non-object JSON: %s", type(result).__name__)
+        raise AIResponseError(AI_RESPONSE_MESSAGE)
+    for key in ("maliyet_girisleri", "faturalar", "alt_yukleniciler", "ekipman", "tanimsiz"):
+        result.setdefault(key, [])
+    return result
 
 
 def extract_invoice(pdf_bytes: bytes) -> dict:

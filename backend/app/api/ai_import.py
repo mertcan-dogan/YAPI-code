@@ -70,10 +70,18 @@ async def ai_import(project_id: uuid.UUID, user: CurrentUser, db: Session = Depe
         if is_legacy_xls(file.filename, exc):
             raise APIError(422, "VALIDATION_ERROR", LEGACY_XLS_MESSAGE, field="file")
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
+    # No rows extracted -> say so plainly rather than letting the AI choke on it.
+    if rows == 0 or not text.strip():
+        raise APIError(422, "VALIDATION_ERROR", "Dosyada veri bulunamadı — sayfa boş olabilir.", field="file")
     try:
         extracted = ai_service.analyze_excel_import(text)
     except ai_service.AIUnavailable:
+        # True outage (missing key / transport). The standard import still works.
         raise APIError(503, "AI_UNAVAILABLE", "AI şu an kullanılamıyor. Standart içe aktarma kullanın.")
+    except ai_service.AIResponseError as exc:
+        # The model answered but the output was unusable — a parse/format problem,
+        # NOT an outage. Surface the real reason (CR-015-fix).
+        raise APIError(422, "AI_RESPONSE_ERROR", str(exc), field="file")
 
     analysis = {
         "maliyet_girisleri": len(extracted.get("maliyet_girisleri", [])),

@@ -100,6 +100,9 @@ async def preview_import(
             "skipped": skipped,
             "header_detected": result["header_detected"],
             "header_row": result["header_row"],
+            # CR-015-fix: column mapping + an honest reason when nothing imports.
+            "column_map": result.get("column_map", {}),
+            "message": result.get("message"),
         },
     )
 
