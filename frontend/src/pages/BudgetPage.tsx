@@ -45,9 +45,11 @@ export default function BudgetPage() {
   const budgetFailed = !!budget.error && !budget.loading;
   const showUsd = useShowUsd(); // CR-014-D
 
+  const [rollupKey, setRollupKey] = useState(0);
   const refetchAll = () => {
     costs.refetch();
     budget.refetch();
+    setRollupKey((k) => k + 1); // CR-018-C: refresh the subcategory breakdown
   };
 
   const openEdit = (c: CostEntry) => {
@@ -157,6 +159,8 @@ export default function BudgetPage() {
   const costColumns: Column<CostEntry>[] = [
     { key: "entry_date", header: "Tarih", render: (r) => formatDate(r.entry_date), sortable: true },
     { key: "cost_category", header: "Kategori", render: (r) => COST_CATEGORIES[r.cost_category] ?? r.cost_category },
+    // CR-018-C: subcategory column; null/blank rolls up as "Belirtilmemiş".
+    { key: "subcategory", header: "Alt Kategori", render: (r) => (r.subcategory && r.subcategory.trim()) ? r.subcategory : "Belirtilmemiş" },
     { key: "supplier_name", header: "Tedarikçi", render: (r) => r.supplier_name ?? "—" },
     { key: "description", header: "Açıklama", render: (r) => r.description ?? "—" },
     { key: "amount_try", header: "Tutar", align: "right", render: (r) => formatCurrency(r.amount_try), sortable: true, sortValue: (r) => toNumber(r.amount_try) },
@@ -311,6 +315,9 @@ export default function BudgetPage() {
         <DataTable columns={costColumns} rows={costs.data ?? []} loading={costs.loading} error={costs.error} onRetry={costs.refetch} emptyMessage="Bu proje için henüz maliyet girişi yapılmamış." emptyAction={{ label: "Maliyet Ekle", onClick: () => setDrawerOpen(true) }} rowClassName={(r) => (r.payment_status === "overdue" ? "!bg-red-50" : "")} />
       </div>
 
+      {/* CR-018-C: costs grouped by (category → subcategory) */}
+      <SubcategoryBreakdown projectId={id!} refreshKey={rollupKey} />
+
       <CostDrawer
         open={drawerOpen}
         projectId={id!}
@@ -382,6 +389,140 @@ function EditableMoneyCell({ value, onSave }: { value: string; onSave: (v: strin
     >
       {formatCurrency(value)}
     </button>
+  );
+}
+
+// CR-018-C: cascading Alt Kategori selector. For a STANDARD category it loads
+// presets + company customs from GET /cost-subcategories and offers "+ Yeni alt
+// kategori" (creates a custom under the current category) and "Diğer" (free text).
+// For a company custom category (no standard parent) it falls back to free text.
+// The chosen value is stored as the subcategory label text (legacy/free-text safe).
+const SUB_OTHER = "__other__";
+const SUB_ADD = "__add__";
+type SubOption = { key: string; label: string; custom: boolean };
+
+function SubcategorySelect({ category, value, onChange }: { category: string; value: string; onChange: (v: string) => void }) {
+  const isStandard = !!category && category in COST_CATEGORIES;
+  const [options, setOptions] = useState<SubOption[]>([]);
+  const [free, setFree] = useState(false);
+
+  const loadOptions = (cat: string) =>
+    apiGet<SubOption[]>("/cost-subcategories", { category: cat })
+      .then(({ data }) => setOptions(data ?? []))
+      .catch(() => setOptions([]));
+
+  useEffect(() => {
+    if (!isStandard) { setOptions([]); return; }
+    loadOptions(category);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, isStandard]);
+
+  // An existing value not in the preset/custom list is legacy free text -> free mode.
+  useEffect(() => {
+    if (isStandard && value) setFree(!options.some((o) => o.label === value));
+    else if (!value) setFree(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options, value, isStandard]);
+
+  if (!isStandard) {
+    return <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="Alt kategori (opsiyonel)" />;
+  }
+
+  const addCustom = async () => {
+    const name = window.prompt("Yeni alt kategori adı:");
+    if (!name || !name.trim()) return;
+    try {
+      await apiPost("/custom-categories", { name: name.trim(), parent_category: category });
+      await loadOptions(category);
+      setFree(false);
+      onChange(name.trim());
+      toast.success("Alt kategori eklendi");
+    } catch (e: any) {
+      toast.error(e.message ?? "Alt kategori eklenemedi");
+    }
+  };
+
+  const handle = (v: string) => {
+    if (v === SUB_ADD) return void addCustom();
+    if (v === SUB_OTHER) { setFree(true); onChange(""); return; }
+    setFree(false);
+    onChange(v);
+  };
+
+  const selectValue = free ? SUB_OTHER : (options.some((o) => o.label === value) ? value : "");
+
+  return (
+    <>
+      <Select value={selectValue} onChange={(e) => handle(e.target.value)}>
+        <option value="">Belirtilmemiş</option>
+        {options.map((o) => (
+          <option key={(o.custom ? "c:" : "p:") + o.key} value={o.label}>
+            {o.label}{o.custom ? " (özel)" : ""}
+          </option>
+        ))}
+        <option value={SUB_OTHER}>Diğer (serbest metin)…</option>
+        <option value={SUB_ADD}>+ Yeni alt kategori…</option>
+      </Select>
+      {free && (
+        <Input className="mt-2" autoFocus value={value} onChange={(e) => onChange(e.target.value)} placeholder="Alt kategori girin" />
+      )}
+    </>
+  );
+}
+
+// CR-018-C: a dedicated "costs by subcategory" breakdown panel (the simpler option
+// from §3.1 — not full budget-tree nesting). Each category expands to its
+// (category → subcategory) SUMs from GET /projects/{id}/costs/by-subcategory.
+type SubRollup = { subcategory: string; amount_try: string; total_with_vat_try: string };
+type CatRollup = { cost_category: string; label_tr: string; amount_try: string; total_with_vat_try: string; subcategories: SubRollup[] };
+
+function SubcategoryBreakdown({ projectId, refreshKey }: { projectId: string; refreshKey: number }) {
+  const [cats, setCats] = useState<CatRollup[]>([]);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    apiGet<{ categories: CatRollup[] }>(`/projects/${projectId}/costs/by-subcategory`)
+      .then(({ data }) => setCats(data?.categories ?? []))
+      .catch(() => setCats([]));
+  }, [projectId, refreshKey]);
+
+  if (cats.length === 0) return null;
+
+  return (
+    <div className="mt-6">
+      <h2 className="mb-2 text-lg font-semibold text-primary">Alt Kategori Dağılımı</h2>
+      <Card>
+        <CardBody className="space-y-1">
+          {cats.map((c) => {
+            const expanded = open[c.cost_category] ?? false;
+            return (
+              <div key={c.cost_category} className="border-b border-border last:border-0">
+                <button
+                  className="flex w-full items-center justify-between py-2 text-left"
+                  onClick={() => setOpen((o) => ({ ...o, [c.cost_category]: !expanded }))}
+                >
+                  <span className="font-medium text-primary">
+                    <span className="mr-1 inline-block w-3 text-text-secondary">{expanded ? "▾" : "▸"}</span>
+                    {c.label_tr}
+                  </span>
+                  <span className="tabular text-sm">{formatCurrency(c.total_with_vat_try)}</span>
+                </button>
+                {expanded && (
+                  <div className="pb-2 pl-4">
+                    {c.subcategories.map((s) => (
+                      <div key={s.subcategory} className="flex items-center justify-between py-1 text-sm text-text-secondary">
+                        <span>{s.subcategory}</span>
+                        <span className="tabular">{formatCurrency(s.total_with_vat_try)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 
@@ -514,7 +655,7 @@ function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: bool
             </optgroup>
           )}
         </Select></div>
-        <div><Label>Alt Kategori</Label><Input value={form.subcategory} onChange={(e) => set("subcategory", e.target.value)} /></div>
+        <div><Label>Alt Kategori</Label><SubcategorySelect category={form.cost_category} value={form.subcategory} onChange={(v) => set("subcategory", v)} /></div>
         <div><Label>Tedarikçi / Alt Yüklenici</Label><Input className={aiClass("supplier_name")} value={form.supplier_name} onChange={(e) => set("supplier_name", e.target.value)} /></div>
         <div><Label>Açıklama</Label><Textarea className={aiClass("description")} value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
         <div><Label>Fatura No</Label><Input className={aiClass("invoice_number")} value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
