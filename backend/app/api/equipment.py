@@ -25,7 +25,7 @@ router = APIRouter(tags=["equipment"])
 
 logger = logging.getLogger(__name__)
 
-# CR-010: equipment photo upload — mirrors the company-logo path (api/settings.py):
+# Equipment photos: upload — mirrors the company-logo path (api/settings.py):
 # Supabase Storage public bucket + magic-byte validation.
 PHOTO_BUCKET = "equipment-photos"
 PHOTO_MAX_BYTES = 5 * 1024 * 1024  # ~5MB
@@ -170,7 +170,7 @@ def update_equipment(
 
 
 # --------------------------------------------------------------------------- #
-# CR-010: Equipment photos (Supabase Storage public bucket)
+# Equipment photos (Supabase Storage public bucket)
 # --------------------------------------------------------------------------- #
 class PhotoDelete(BaseModel):
     url: str

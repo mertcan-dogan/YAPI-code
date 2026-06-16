@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Checkbox, Input, Label, Modal, Select } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
@@ -6,7 +7,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { api, apiPost, apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
 import type { Equipment } from "@/types";
-import { formatCurrency, formatDate } from "@/utils/format";
+import { formatCurrency, formatDate, toNumber } from "@/utils/format";
 import { ImagePlus, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -40,12 +41,29 @@ export default function EquipmentPage() {
     },
   ];
 
+  const exportColumns: ExportColumn<Equipment>[] = [
+    { header: "Ekipman", value: (r) => r.equipment_name },
+    { header: "Sahiplik", value: (r) => (r.ownership_type === "owned" ? "Şirkete Ait" : "Kiralık") },
+    { header: "Tedarikçi", value: (r) => r.supplier_name ?? "" },
+    { header: "Birim Ücret", value: (r) => (r.rate_try ? toNumber(r.rate_try) : "") },
+    { header: "Birim", value: (r) => (r.rate_unit ? (r.rate_unit === "month" ? "Ay" : "Gün") : "") },
+    { header: "Başlangıç", value: (r) => (r.deployment_start ? formatDate(r.deployment_start) : "") },
+    { header: "Bitiş", value: (r) => (r.deployment_end ? formatDate(r.deployment_end) : "") },
+    { header: "Süre (gün)", value: (r) => r.duration_days ?? "" },
+    { header: "Toplam Maliyet", value: (r) => toNumber(r.total_cost_try) },
+  ];
+
   return (
     <div>
       <PageHeader
         title="Ekipman"
         subtitle={meta ? `Toplam Ekipman Maliyeti: ${formatCurrency(meta.total_cost_try)} · Bütçenin %${meta.pct_of_budget}'i` : undefined}
-        action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Ekipman Ekle</Button>}
+        action={
+          <div className="flex items-center gap-2">
+            <ExportMenu rows={data ?? []} columns={exportColumns} filename="ekipman" />
+            <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Ekipman Ekle</Button>
+          </div>
+        }
       />
       <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} onRowClick={(r) => setDetail(r)} emptyMessage="Bu proje için henüz ekipman kaydı yok." emptyAction={{ label: "Ekipman Ekle", onClick: () => setOpen(true) }} />
       <EquipDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} onPhotosChanged={refetch} />
@@ -60,7 +78,7 @@ export default function EquipmentPage() {
   );
 }
 
-// CR-010: reusable equipment photo gallery — view, upload (PNG/JPEG ≤5MB) and
+// Reusable equipment photo gallery — view, upload (PNG/JPEG ≤5MB) and
 // remove. Mirrors the company-logo upload path. `equipmentId` is null while a
 // new record is still unsaved (photos become available after the first save).
 function PhotoGallery({ projectId, equipmentId, photos, onChange }: { projectId: string; equipmentId: string | null; photos: string[]; onChange: (eq: Equipment) => void }) {
@@ -270,7 +288,7 @@ function EquipDrawer({ open, projectId, editing, onClose, onSaved, onPhotosChang
         <div><Label>Yakıt / Bakım (TRY)</Label><Input type="number" value={form.fuel_maintenance_try} onChange={(e) => set("fuel_maintenance_try", e.target.value)} /></div>
         <div><Label>Notlar</Label><Input value={form.notes} onChange={(e) => set("notes", e.target.value)} /></div>
 
-        {/* CR-010: photo control. New records upload after the first save. */}
+        {/* Photo control. New records upload after the first save. */}
         <div className="border-t border-border pt-3">
           <PhotoGallery
             projectId={projectId}

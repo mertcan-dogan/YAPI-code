@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
@@ -46,9 +47,28 @@ export default function VariationsPage() {
 
   const nextNumber = `EK-${String(rows.length + 1).padStart(3, "0")}`;
 
+  const exportColumns: ExportColumn<Variation>[] = [
+    { header: "EK İş No", value: (r) => r.variation_number },
+    { header: "Başlık", value: (r) => r.title },
+    { header: "Sunulma", value: (r) => (r.submitted_date ? formatDate(r.submitted_date) : "") },
+    { header: "Talep Edilen", value: (r) => toNumber(r.value_try) },
+    { header: "Onaylanan", value: (r) => (r.approved_value_try ? toNumber(r.approved_value_try) : "") },
+    { header: "Maliyet Etkisi", value: (r) => toNumber(r.cost_impact_try) },
+    { header: "Marj Etkisi", value: (r) => toNumber(r.margin_impact_try) },
+    { header: "Durum", value: (r) => STATUS_LABELS[r.status] ?? r.status },
+  ];
+
   return (
     <div>
-      <PageHeader title="Ek İşler" action={<Button onClick={() => { setEditing(null); setOpen(true); }}><Plus className="h-4 w-4" /> Ek İş Ekle</Button>} />
+      <PageHeader
+        title="Ek İşler"
+        action={
+          <div className="flex items-center gap-2">
+            <ExportMenu rows={rows} columns={exportColumns} filename="ek-isler" />
+            <Button onClick={() => { setEditing(null); setOpen(true); }}><Plus className="h-4 w-4" /> Ek İş Ekle</Button>
+          </div>
+        }
+      />
       {meta && (
         <div className="mb-4 flex flex-wrap gap-3">
           <Chip label="Toplam Talep Edilen" value={formatCurrency(meta.total_requested)} />

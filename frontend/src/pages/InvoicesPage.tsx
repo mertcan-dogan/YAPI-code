@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
@@ -100,9 +101,32 @@ export default function InvoicesPage() {
     },
   ];
 
+  const exportColumns: ExportColumn<ClientInvoice>[] = [
+    { header: "Fatura No", value: (r) => r.invoice_number },
+    { header: "Tarih", value: (r) => (r.invoice_date ? formatDate(r.invoice_date) : "") },
+    { header: "Dönem", value: (r) => r.hakkedis_period ?? r.description ?? "" },
+    { header: "Tür", value: (r) => INVOICE_TYPE_LABELS[r.invoice_type] ?? r.invoice_type },
+    { header: "Tutar", value: (r) => toNumber(r.amount_try) },
+    { header: "KDV", value: (r) => toNumber(r.vat_amount_try) },
+    { header: "Kesinti", value: (r) => toNumber(r.retention_amount_try) },
+    { header: "Net Tahsil", value: (r) => toNumber(r.net_due_try) },
+    { header: "Vade", value: (r) => (r.due_date ? formatDate(r.due_date) : "") },
+    { header: "Durum", value: (r) => STATUS_LABELS[r.payment_status] ?? r.payment_status },
+    { header: "Bakiye", value: (r) => toNumber(r.outstanding_try) },
+    { header: "Gecikme (gün)", value: (r) => (r.payment_status !== "paid" && daysUntil(r.due_date) < 0 ? Math.abs(daysUntil(r.due_date)) : "") },
+  ];
+
   return (
     <div>
-      <PageHeader title="Faturalar & Hakediş" action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Fatura Ekle</Button>} />
+      <PageHeader
+        title="Faturalar & Hakediş"
+        action={
+          <div className="flex items-center gap-2">
+            <ExportMenu rows={rows} columns={exportColumns} filename="faturalar-hakedis" />
+            <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Fatura Ekle</Button>
+          </div>
+        }
+      />
       <div className="mb-4 flex flex-wrap gap-3">
         <Chip label="Toplam Faturalanan" value={formatCurrency(sum("amount_try"))} />
         <Chip label="Tahsil Edilen" value={formatCurrency(sum("amount_received_try"))} />

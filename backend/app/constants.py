@@ -96,6 +96,6 @@ AUDITED_TABLES = {
     "budget_line_items",
     # CR-008-H/I: vendor merges & legacy relinks change financial groupings.
     "vendors",
-    # CR-010: equipment photo add/remove.
+    # Equipment photos: photo add/remove.
     "equipment_log",
 }

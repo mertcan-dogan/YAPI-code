@@ -1,6 +1,7 @@
 // CR-008-H — "Tedarikçiler": canonical vendor list with spend, merge-suggestion
 // confirmation, alias editing, and linking of legacy (vendor_id NULL) rows.
 import { DataTable, type Column } from "@/components/DataTable";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Input, Label, Modal, Select } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
@@ -57,12 +58,24 @@ export default function VendorsPage() {
     },
   ];
 
+  const exportColumns: ExportColumn<VendorRow>[] = [
+    { header: "Tedarikçi", value: (v) => v.canonical_name },
+    { header: "Toplam Harcama", value: (v) => Number(v.total_try) },
+    { header: "Proje", value: (v) => v.project_count },
+    { header: "Kayıt", value: (v) => v.cost_entry_count },
+    { header: "Takma Adlar", value: (v) => v.alias_count },
+  ];
+
   const clusters = suggestionsQ.data ?? [];
   const unlinked = unlinkedQ.data ?? { suppliers: [], subcontractors: [] };
 
   return (
     <div>
-      <PageHeader title="Tedarikçiler" subtitle="Kanonik tedarikçiler, harcama ve birleştirme" />
+      <PageHeader
+        title="Tedarikçiler"
+        subtitle="Kanonik tedarikçiler, harcama ve birleştirme"
+        action={<ExportMenu rows={vendors} columns={exportColumns} filename="tedarikciler" />}
+      />
 
       {/* Merge suggestions */}
       {clusters.length > 0 && (

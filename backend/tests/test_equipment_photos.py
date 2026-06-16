@@ -1,4 +1,4 @@
-"""CR-010: equipment photo upload/delete (Supabase Storage public bucket).
+"""Equipment photos: upload/delete (Supabase Storage public bucket).
 
 Mirrors the company-logo path (test_cr006d_logo.py): magic-byte validation,
 storage mocked via httpx, photo_urls persistence + audit.

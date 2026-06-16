@@ -1,5 +1,6 @@
 import { CashFlowChart } from "@/components/charts";
 import { Card, CardBody } from "@/components/ui";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { LoadError } from "@/components/EmptyState";
 import { CashFlowMonthDrawer } from "@/components/cashflow/CashFlowMonthDrawer";
@@ -47,17 +48,29 @@ export default function CashFlowPage() {
   const showOut = (r: Row) => (view === "planned" ? r.planned_out_try : view === "actual" ? r.actual_out_try : r.is_past || r.is_current ? r.actual_out_try : r.planned_out_try);
   const showIn = (r: Row) => (view === "planned" ? r.planned_in_try : view === "actual" ? r.actual_in_try : r.is_past || r.is_current ? r.actual_in_try : r.planned_in_try);
 
+  // Export respects the active Planlanan/Gerçekleşen/İkisi de view.
+  const exportColumns: ExportColumn<Row>[] = [
+    { header: "Ay", value: (r) => r.month },
+    { header: "Gider", value: (r) => toNumber(showOut(r)) },
+    { header: "Gelir", value: (r) => toNumber(showIn(r)) },
+    { header: "Net Aylık", value: (r) => toNumber(r.net_try) },
+    { header: "Kümülatif", value: (r) => toNumber(r.cumulative_try) },
+  ];
+
   return (
     <div>
       <PageHeader
         title="Nakit Akışı"
         action={
-          <div className="flex gap-1 rounded-md border border-border p-0.5">
-            {(["both", "planned", "actual"] as const).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={cn("rounded px-3 py-1 text-sm", view === v ? "bg-primary text-white" : "text-text-secondary")}>
-                {v === "both" ? "İkisi de" : v === "planned" ? "Planlanan" : "Gerçekleşen"}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 rounded-md border border-border p-0.5">
+              {(["both", "planned", "actual"] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)} className={cn("rounded px-3 py-1 text-sm", view === v ? "bg-primary text-white" : "text-text-secondary")}>
+                  {v === "both" ? "İkisi de" : v === "planned" ? "Planlanan" : "Gerçekleşen"}
+                </button>
+              ))}
+            </div>
+            <ExportMenu rows={rows} columns={exportColumns} filename="nakit-akisi" />
           </div>
         }
       />
