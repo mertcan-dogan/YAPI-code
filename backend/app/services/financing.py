@@ -1,11 +1,96 @@
-"""Financing-cost settings + (later) computation (CR-015).
+"""Financing-cost settings + computation (CR-015).
 
-CR-015-A provides only the effective-settings resolver: a project override wins
-over the company default; basis is company-level. The modeled accrual itself
-(``compute_financing_cost``) lands in CR-015-B and reads these effective values.
-Financing is a MODELED forecast overlay — never an actual cost (§0.2).
+CR-015-A: the effective-settings resolver (project override → company default;
+basis is company-level). CR-015-B: ``compute_financing_cost`` — a MODELED accrual
+on the months a project is underwater, computed in USD via CR-014 rates.
+
+THE GOVERNING RULE (§0.2): financing is a forecast OVERLAY, never an actual cost.
+This module never creates cost_entries, never touches actual totals/margin or the
+budget tree. Its total feeds ONLY the separable forecast-with-financing figures.
 """
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal
+
+from sqlalchemy.orm import Session
+
+from app.calculations.money import D, money
+from app.models.company import Company
+from app.models.project import Project
+
+
+def _month_end(year: int, month: int) -> date:
+    """Last calendar day of the month (CR-014 walk-back maps it to the last
+    business-day rate)."""
+    return date(year, month, monthrange(year, month)[1])
+
+
+def _zeroed_result(eff: dict) -> dict:
+    rate = eff["annual_rate_pct"]
+    return {
+        "enabled": eff["enabled"],
+        "annual_rate_pct": str(rate) if rate is not None else None,
+        "basis": eff["basis"],
+        "total_usd": "0.00",
+        "total_try": "0.00",
+        "months": [],
+    }
+
+
+def compute_financing_cost(db: Session, project: Project, today: date | None = None) -> dict:
+    """Modeled financing cost (§0.3). For each cashflow month the project is
+    underwater, accrue simple monthly interest on the financed amount, in USD via
+    ``fx.rate_as_of`` then back to TRY. Disabled (effective toggle off / no rate)
+    returns a zeroed result — never raises.
+
+    Basis (company-level): ``cumulative`` (default, financially correct — finance
+    the negative cumulative position) or ``net`` (per-month negative net). Simple
+    accrual: the financing cost is NOT compounded on itself.
+    """
+    # Lazy import avoids a circular dependency (financials imports this module).
+    from app.services import fx
+    from app.services.financials import project_cashflow
+
+    company = db.get(Company, project.company_id)
+    eff = effective_financing(company, project)
+    result = _zeroed_result(eff)
+
+    rate_pct = eff["annual_rate_pct"]
+    if not eff["enabled"] or rate_pct is None:
+        return result
+
+    monthly_factor = D(rate_pct) / D(100) / D(12)  # simple monthly accrual
+    rows = project_cashflow(db, project, today=today)
+
+    total_usd = D(0)
+    total_try = D(0)
+    months: list[dict] = []
+    for row in rows:
+        base = D(row["net_try"]) if eff["basis"] == "net" else D(row["cumulative_try"])
+        if base >= 0:
+            continue  # not underwater this month → finances nothing
+        financed_try = -base
+        rate = fx.rate_as_of(db, _month_end(row["year"], row["month_num"]), today=today)
+        if rate is None or rate <= 0:
+            continue  # no rate available at all → can't model this month (never error)
+        financed_usd = financed_try / rate
+        interest_usd = money(financed_usd * monthly_factor)
+        # TRY interest at this month's rate == financed_try × factor (rate cancels).
+        interest_try = money(financed_try * monthly_factor)
+        total_usd += interest_usd
+        total_try += interest_try
+        months.append({
+            "month": row["month"],
+            "financed_try": str(money(financed_try)),
+            "rate": str(rate),
+            "interest_usd": str(interest_usd),
+            "interest_try": str(interest_try),
+        })
+
+    result["total_usd"] = str(money(total_usd))
+    result["total_try"] = str(money(total_try))
+    result["months"] = months
+    return result
 
 
 def effective_financing_enabled(company, project=None) -> bool:

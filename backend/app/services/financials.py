@@ -311,6 +311,18 @@ def forecast_at_completion(db: Session, project: Project) -> dict:
     cost_to_complete = money(forecast_final_cost - cost_to_date)
     margin_pct = pct(safe_div(contract - forecast_final_cost, contract) * 100)
 
+    # CR-015-B: modeled financing cost is a SEPARABLE forecast overlay (§0.2).
+    # It is added ONLY to the *_with_financing figures below — the base forecast
+    # (and all actual totals/margin elsewhere) stay byte-identical whether
+    # financing is on or off. When off, the total is 0.00 and the variants equal
+    # the base, so existing consumers are unaffected.
+    from app.services import financing as financing_service
+
+    fin = financing_service.compute_financing_cost(db, project)
+    fin_try = D(fin["total_try"])
+    forecast_with_financing = money(forecast_final_cost + fin_try)
+    margin_with_financing = pct(safe_div(contract - forecast_with_financing, contract) * 100)
+
     return {
         "original_budget_try": str(original_budget),
         "revised_budget_try": str(revised_budget),
@@ -319,6 +331,10 @@ def forecast_at_completion(db: Session, project: Project) -> dict:
         "forecast_final_cost_try": str(forecast_final_cost),
         "forecast_final_margin_pct": str(margin_pct),
         "over_budget": forecast_final_cost > revised_budget,
+        # Separable financing overlay (0.00 / identical to base when disabled).
+        "financing_cost_try": fin["total_try"],
+        "forecast_final_cost_with_financing_try": str(forecast_with_financing),
+        "forecast_final_margin_with_financing_pct": str(margin_with_financing),
     }
 
 

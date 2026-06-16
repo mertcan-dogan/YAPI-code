@@ -21,6 +21,7 @@ from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services import financials as fin_service
+from app.services import financing as financing_service
 from app.services import units as units_service
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
@@ -170,6 +171,9 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
             # CR-016-B: computed (not stored) residential aggregates over the
             # live unit schedule — feeds CR-017 per-m² benchmarks.
             "residential": _jsonify(units_service.schedule_aggregates(project.units)),
+            # CR-015-B: modeled financing cost as a SEPARATE forecast overlay
+            # (never an actual cost). Zeroed/empty when the effective toggle is off.
+            "financing": financing_service.compute_financing_cost(db, project),
         }
     )
 
