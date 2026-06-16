@@ -20,6 +20,7 @@ from app.models.ai_conversation import AIConversation
 from app.models.ai_query_log import AIQueryLog
 from app.models.vendor import Vendor, VendorAlias
 from app.models.workspace_item import WorkspaceItem
+from app.models.fx_rate import FxRate
 
 __all__ = [
     "Base",
@@ -44,4 +45,5 @@ __all__ = [
     "Vendor",
     "VendorAlias",
     "WorkspaceItem",
+    "FxRate",
 ]
