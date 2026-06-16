@@ -108,16 +108,21 @@ def test_run_agent_degrades_on_claude_error(db, seed, monkeypatch):
 
 
 def test_run_agent_degrades_on_timeout_budget(db, seed, monkeypatch):
-    # Force the 60s budget to 0 so the first iteration trips it.
-    monkeypatch.setattr(settings, "ai_agent_timeout_seconds", 0)
+    # Force the budget below zero so the first iteration's elapsed-time check
+    # always trips — deterministic even where time.monotonic() has coarse
+    # resolution (Windows) and reports a 0.0 delta on the first iteration.
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "ai_agent_timeout_seconds", -1)
     _patch(monkeypatch, lambda call, kw: _Resp("end_turn", [_text("never reached")]))
     import pytest
     with pytest.raises(ai_service.AIUnavailable):
         agent_service.run_agent(db, seed["a"]["company"].id, [{"role": "user", "content": "x"}])
 
 
-def test_endpoint_degrades_and_writes_no_log(client, seed, session_factory):
-    # No API key configured -> _client raises -> endpoint returns degraded 200.
+def test_endpoint_degrades_and_writes_no_log(client, seed, session_factory, monkeypatch):
+    # Force "no API key" so _client raises -> endpoint returns degraded 200,
+    # deterministically regardless of any ambient ANTHROPIC_API_KEY.
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
     client.login(seed["a"]["users"][ROLE_DIRECTOR])
     r = client.post("/api/v1/ai/agent", json={"messages": [{"role": "user", "content": "merhaba"}]})
     assert r.status_code == 200
@@ -132,7 +137,10 @@ def test_endpoint_degrades_and_writes_no_log(client, seed, session_factory):
 # --------------------------------------------------------------------------- #
 # Rate limit (§11.4)
 # --------------------------------------------------------------------------- #
-def test_rate_limit_429_after_10_requests(client, seed):
+def test_rate_limit_429_after_10_requests(client, seed, monkeypatch):
+    # Clear the key so each call degrades to a fast 200 (no real API call),
+    # making the rate-limit boundary deterministic regardless of ambient env.
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
     client.login(seed["a"]["users"][ROLE_DIRECTOR])
     body = {"messages": [{"role": "user", "content": "soru"}]}
     for _ in range(settings.ai_agent_rate_per_minute):  # 10 allowed

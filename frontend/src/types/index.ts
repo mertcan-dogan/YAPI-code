@@ -160,6 +160,8 @@ export interface Equipment {
   deployment_start: string;
   deployment_end: string | null;
   fuel_maintenance_try: string;
+  notes?: string | null;
+  photo_urls?: string[];
   duration_days: number | null;
   total_cost_try: string | null;
 }

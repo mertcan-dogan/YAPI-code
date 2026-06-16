@@ -234,8 +234,11 @@ def test_agent_endpoint_empty_messages_422(client, seed):
     assert r.status_code == 422
 
 
-def test_agent_endpoint_degrades_without_api_key(client, seed):
-    # No anthropic_api_key configured in tests -> graceful Turkish degradation.
+def test_agent_endpoint_degrades_without_api_key(client, seed, monkeypatch):
+    # Force "no key" -> graceful Turkish degradation, regardless of ambient env.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
     client.login(seed["a"]["users"][ROLE_DIRECTOR])
     r = client.post("/api/v1/ai/agent", json={"messages": [{"role": "user", "content": "merhaba"}]})
     assert r.status_code == 200, r.text

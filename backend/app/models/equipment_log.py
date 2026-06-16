@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import Date, ForeignKey, Numeric, String, Text
-from app.models.types import GUID as PGUUID
+from app.models.types import GUID as PGUUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampSoftDeleteMixin
@@ -25,3 +25,5 @@ class EquipmentLog(TimestampSoftDeleteMixin, Base):
     deployment_end: Mapped[date | None] = mapped_column(Date, nullable=True)
     fuel_maintenance_try: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), server_default="0")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # CR-010: public Supabase Storage URLs for uploaded equipment photos.
+    photo_urls: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
