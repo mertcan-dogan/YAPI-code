@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # CR-008-I: write-endpoint limits (workspace pin/reorder, vendor merge/link).
     workspace_write_rate_per_minute: int = 120
     vendor_write_rate_per_minute: int = 30
+    # CR-014: when true, the FX service may lazily fetch live TCMB rates over the
+    # network (prod default). Tests disable this so no test hits the network — the
+    # cache-based walk-back over seeded fx_rates still works with it off.
+    fx_live_fetch: bool = True
     # Field encryption (Fernet passphrase). Optional; never exposed to frontend.
     encryption_key: str = ""
     # Require directors to have MFA (enforced via the token AAL claim).

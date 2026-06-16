@@ -9,8 +9,19 @@ from decimal import Decimal
 
 import pytest
 
+from app.config import settings
 from app.models.fx_rate import FxRate
 from app.services import fx
+
+
+@pytest.fixture(autouse=True)
+def _enable_fx_live_fetch():
+    """These tests drive the fetch path directly (mocked), so re-enable the live
+    fetch the global conftest fixture disables."""
+    prev = settings.fx_live_fetch
+    settings.fx_live_fetch = True
+    yield
+    settings.fx_live_fetch = prev
 
 
 # TCMB-style daily XML (period decimal separator, as the real feed uses).

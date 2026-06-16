@@ -18,6 +18,7 @@ from app.deps import CurrentUser
 from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
 from app.schemas.cost import CostEntryCreate, CostEntryOut, CostEntryUpdate
+from app.services import fx
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
@@ -132,6 +133,9 @@ def create_cost(
     _refresh_payment_status(cost)
     db.add(cost)
     db.flush()
+    # CR-014-B: snapshot the USD value at this row's relevant date (provisional
+    # until paid). Never blocks the save if no rate is available.
+    fx.snapshot_cost_usd(db, cost)
     _bump_custom_category(db, user.company_id, cost.cost_category)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
@@ -194,6 +198,8 @@ def update_cost(
     if "date_paid" in changes and cost.date_paid and not cost.amount_paid_try:
         cost.amount_paid_try = cost.total_with_vat_try
     _refresh_payment_status(cost)
+    # CR-014-B: re-snapshot USD — locks at the payment-date rate once paid.
+    fx.snapshot_cost_usd(db, cost)
     db.flush()
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",

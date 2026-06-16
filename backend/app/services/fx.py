@@ -31,6 +31,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.calculations.money import D, money
+from app.config import settings
 from app.models.fx_rate import FxRate
 
 logger = logging.getLogger(__name__)
@@ -131,17 +133,20 @@ def rate_as_of(db: Session, d: date, *, today: date | None = None) -> Decimal | 
         cached = _get_cached(db, cur)
         if cached is not None:
             return cached
-        try:
-            fetched = _fetch_tcmb_rate(cur, today)
-        except Exception as exc:  # noqa: BLE001 — degrade on ANY transport/parse error
-            fallback = _last_known(db, on_or_before=d)
-            logger.warning(
-                "TCMB rate fetch failed for %s (%s); falling back to last known rate %s",
-                cur, exc, fallback,
-            )
-            return fallback
-        if fetched is not None:
-            return _cache(db, cur, fetched)
+        # Live fetch is gated so tests never hit the network; the cache-based
+        # walk-back above still resolves seeded rates with it off.
+        if settings.fx_live_fetch:
+            try:
+                fetched = _fetch_tcmb_rate(cur, today)
+            except Exception as exc:  # noqa: BLE001 — degrade on ANY transport/parse error
+                fallback = _last_known(db, on_or_before=d)
+                logger.warning(
+                    "TCMB rate fetch failed for %s (%s); falling back to last known rate %s",
+                    cur, exc, fallback,
+                )
+                return fallback
+            if fetched is not None:
+                return _cache(db, cur, fetched)
         cur -= timedelta(days=1)  # empty day (weekend/holiday) — keep walking back
 
     # Walked the whole window with no published rate — use the last known cache.
@@ -149,3 +154,48 @@ def rate_as_of(db: Session, d: date, *, today: date | None = None) -> Decimal | 
     logger.warning("No TCMB rate within %s days of %s; using last known %s",
                    MAX_WALK_BACK_DAYS, d, fallback)
     return fallback
+
+
+# --------------------------------------------------------------------------- #
+# CR-014-B — per-row USD snapshots (the relevant-date rule)
+# --------------------------------------------------------------------------- #
+def relevant_date_for_cost(cost) -> date:
+    """Cost relevant date: the payment date once paid (LOCK), else entry_date
+    (PROVISIONAL) (CR-014 §2.2)."""
+    if cost.payment_status == "paid" and cost.date_paid is not None:
+        return cost.date_paid
+    return cost.entry_date
+
+
+def relevant_date_for_invoice(inv) -> date:
+    """Hakediş relevant date: the receipt date once paid (LOCK), else invoice_date
+    (PROVISIONAL) (CR-014 §2.2)."""
+    if inv.payment_status == "paid" and inv.date_received is not None:
+        return inv.date_received
+    return inv.invoice_date
+
+
+def _apply_usd_snapshot(db: Session, obj, relevant: date) -> bool:
+    """Set ``fx_rate_usd`` (the rate used) + ``amount_usd`` (= amount_try / rate,
+    exact to the cent) from the rate at ``relevant``. If no rate is available
+    (pre-history / total fetch failure), leave the USD fields untouched (null on a
+    fresh row) and DO NOT raise — a save is never blocked (§2.2). Returns True when
+    a snapshot was applied."""
+    rate = rate_as_of(db, relevant)
+    if rate is None or rate == 0:
+        return False
+    obj.fx_rate_usd = _q4(rate)
+    obj.amount_usd = money(D(obj.amount_try) / rate)
+    return True
+
+
+def snapshot_cost_usd(db: Session, cost) -> bool:
+    """(Re)compute a cost entry's USD snapshot at its relevant date. Provisional
+    until paid; re-snapshots at the payment-date rate once paid (the lock)."""
+    return _apply_usd_snapshot(db, cost, relevant_date_for_cost(cost))
+
+
+def snapshot_invoice_usd(db: Session, inv) -> bool:
+    """(Re)compute a hakediş's USD snapshot at its relevant date. Provisional until
+    paid; re-snapshots at the receipt-date rate once paid (the lock)."""
+    return _apply_usd_snapshot(db, inv, relevant_date_for_invoice(inv))
