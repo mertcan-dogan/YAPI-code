@@ -99,6 +99,8 @@ export interface CostEntry {
   description: string | null;
   invoice_number: string | null;
   amount_try: string;
+  amount_usd?: string | null;
+  fx_rate_usd?: string | null;
   vat_rate: string;
   vat_amount_try: string;
   total_with_vat_try: string;
@@ -119,6 +121,8 @@ export interface ClientInvoice {
   invoice_type: string;
   description: string | null;
   amount_try: string;
+  amount_usd?: string | null;
+  fx_rate_usd?: string | null;
   vat_rate: string;
   vat_amount_try: string;
   total_with_vat_try: string;

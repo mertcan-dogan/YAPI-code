@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { CurrencyToggle, UsdAmountCell, useShowUsd } from "@/components/currency";
 import { EmptyState } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, Input, Label, Select, Textarea } from "@/components/ui";
@@ -42,6 +43,7 @@ export default function BudgetPage() {
   const { user } = useAuth();
   const canDelete = user?.role === "director" || user?.role === "project_manager";
   const budgetFailed = !!budget.error && !budget.loading;
+  const showUsd = useShowUsd(); // CR-014-D
 
   const refetchAll = () => {
     costs.refetch();
@@ -159,6 +161,20 @@ export default function BudgetPage() {
     { key: "description", header: "Açıklama", render: (r) => r.description ?? "—" },
     { key: "amount_try", header: "Tutar", align: "right", render: (r) => formatCurrency(r.amount_try), sortable: true, sortValue: (r) => toNumber(r.amount_try) },
     { key: "total_with_vat_try", header: "KDV Dahil", align: "right", render: (r) => formatCurrency(r.total_with_vat_try) },
+    // CR-014-D: USD snapshot (point-in-time). "—" while null (pre-backfill).
+    ...(showUsd ? [{
+      key: "amount_usd",
+      header: "USD (Anlık)",
+      align: "right" as const,
+      render: (r: CostEntry) => (
+        <UsdAmountCell
+          amountUsd={r.amount_usd}
+          rate={r.fx_rate_usd}
+          paid={r.payment_status === "paid"}
+          relevantDate={r.payment_status === "paid" ? r.date_paid : r.entry_date}
+        />
+      ),
+    }] : []),
     { key: "payment_due_date", header: "Vade", align: "right", render: (r) => formatDate(r.payment_due_date) },
     { key: "payment_status", header: "Durum", render: (r) => <StatusBadge status={r.payment_status} /> },
     {
@@ -207,7 +223,8 @@ export default function BudgetPage() {
       <PageHeader
         title="Bütçe & Maliyetler"
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <CurrencyToggle />
             <Button variant="outline" onClick={downloadTemplate}>
               <Download className="h-4 w-4" /> Şablon
             </Button>

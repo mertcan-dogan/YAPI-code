@@ -34,6 +34,30 @@ export function formatCurrencyAbbrev(value: string | number | null | undefined, 
   return `${trInt.format(n)} ${symbol}`;
 }
 
+// CR-014-D: USD figures use $ + en-US grouping (e.g. $1,234,567.00). A null/empty
+// value renders "—" (USD snapshot is genuinely MISSING — never show $0 or 0).
+const usdNumber = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usdInt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+export function formatUSD(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = typeof value === "number" ? value : parseFloat(value);
+  if (!Number.isFinite(n)) return "—";
+  return `$${usdNumber.format(n)}`;
+}
+
+// Abbreviated USD for KPI cards (Mn = milyon, Mr = milyar) — mirrors the TRY abbrev.
+export function formatUSDAbbrev(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = typeof value === "number" ? value : parseFloat(value);
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  const f1 = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (abs >= 1_000_000_000) return `$${f1(n / 1_000_000_000)} Mr`;
+  if (abs >= 1_000_000) return `$${f1(n / 1_000_000)} Mn`;
+  return `$${usdInt.format(n)}`;
+}
+
 export function formatPct(value: string | number | null | undefined, decimals = 1): string {
   const n = toNumber(value);
   return `%${n.toLocaleString("tr-TR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;

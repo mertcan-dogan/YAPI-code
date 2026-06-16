@@ -3,6 +3,7 @@ import { AIDisclaimer, Button, Modal } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailModal";
+import { CurrencyToggle, UsdMissingNote, useShowUsd } from "@/components/currency";
 import { EmptyState, LoadError } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -11,7 +12,7 @@ import { useFetch } from "@/hooks/useFetch";
 import { apiPost } from "@/lib/api";
 import { useAISummaryStore } from "@/store/aiSummary";
 import type { ProjectFinancials, Project } from "@/types";
-import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, toNumber } from "@/utils/format";
+import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, formatUSD, toNumber } from "@/utils/format";
 import { Banknote, Clock, Coins, FileText, Hammer, Layers, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -24,6 +25,12 @@ interface FAC {
   forecast_final_cost_try: string;
   forecast_final_margin_pct: string;
   over_budget: boolean;
+}
+
+// CR-014-C/D: USD snapshot-sum totals (point-in-time), with missing-snapshot counts.
+interface UsdBlock {
+  costs: { amount_usd: string; usd_missing_count: number };
+  invoices: { amount_usd: string; usd_missing_count: number };
 }
 
 export default function ProjectDashboardPage() {
@@ -47,9 +54,10 @@ export default function ProjectDashboardPage() {
     const t = setTimeout(() => setHighlightCostId(null), 2500);
     return () => clearTimeout(t);
   }, [searchParams, setSearchParams]);
-  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string> }>(
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock }>(
     `/projects/${id}/dashboard`
   );
+  const showUsd = useShowUsd(); // CR-014-D
   const p = data?.project;
   const f = data?.financials;
   const fac = data?.forecast_at_completion;
@@ -175,6 +183,29 @@ export default function ProjectDashboardPage() {
           {!narrLoading && narrative?.narrative && <AIDisclaimer />}
         </div>
       </Modal>
+
+      {/* CR-014-D: USD snapshot totals (point-in-time) + ₺/$/İkisi de toggle.
+          USD is a derived snapshot sum, NOT a live conversion. "—"/warning when
+          rates are missing (e.g. before the USD backfill runs). */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {showUsd && (
+            <>
+              <span className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-1.5">
+                <span className="text-text-secondary">Maliyet (USD):&nbsp;</span>
+                <span className="tabular font-semibold text-primary">{formatUSD(data?.usd?.costs.amount_usd)}</span>
+                <UsdMissingNote count={data?.usd?.costs.usd_missing_count} />
+              </span>
+              <span className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-1.5">
+                <span className="text-text-secondary">Faturalanan (USD):&nbsp;</span>
+                <span className="tabular font-semibold text-primary">{formatUSD(data?.usd?.invoices.amount_usd)}</span>
+                <UsdMissingNote count={data?.usd?.invoices.usd_missing_count} />
+              </span>
+            </>
+          )}
+        </div>
+        <CurrencyToggle />
+      </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrencyAbbrev(f?.contract_value_try)} valueTitle={formatCurrency(f?.contract_value_try)} icon={Wallet} accentColor="#2563EB"

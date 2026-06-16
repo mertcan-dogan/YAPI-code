@@ -9,11 +9,12 @@ import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailMo
 import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
+import { CurrencyToggle, UsdMissingNote, useShowUsd } from "@/components/currency";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
-import { formatCurrency, formatCurrencyAbbrev, formatPct, toNumber } from "@/utils/format";
+import { formatCurrency, formatCurrencyAbbrev, formatPct, formatUSD, toNumber } from "@/utils/format";
 import { Banknote, Hammer, Percent, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -53,6 +54,8 @@ interface DashboardData {
   ar_aging?: { not_due_try: string; d1_30_try: string; d31_60_try: string; d60_plus_try: string; total_outstanding_try: string; dso_days: number | null };
   cash_forecast?: { starting_cash_try: string; months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
   margin_fade?: { has_targets: boolean; weighted_target_pct: string; weighted_current_pct: string; projects: { name: string; target_pct: string; current_pct: string }[] };
+  // CR-014-C/D: portfolio USD snapshot-sum totals + missing-snapshot counts.
+  usd?: { costs: { amount_usd: string; usd_missing_count: number }; invoices: { amount_usd: string; usd_missing_count: number } };
 }
 
 export default function DashboardPage() {
@@ -175,6 +178,7 @@ export default function DashboardPage() {
   }));
 
   const overdueCount = k?.overdue_payment_count ?? 0;
+  const showUsd = useShowUsd(); // CR-014-D
 
   return (
     <div>
@@ -192,6 +196,27 @@ export default function DashboardPage() {
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
+      {/* CR-014-D: portfolio USD snapshot totals (point-in-time, not a live
+          conversion) + ₺/$/İkisi de toggle. "—"/warning while rates are missing. */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {showUsd && (
+            <>
+              <span className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-1.5">
+                <span className="text-text-secondary">Maliyet (USD):&nbsp;</span>
+                <span className="tabular font-semibold text-primary">{formatUSD(data?.usd?.costs.amount_usd)}</span>
+                <UsdMissingNote count={data?.usd?.costs.usd_missing_count} />
+              </span>
+              <span className="inline-flex items-center rounded-lg border border-border bg-surface px-3 py-1.5">
+                <span className="text-text-secondary">Faturalanan (USD):&nbsp;</span>
+                <span className="tabular font-semibold text-primary">{formatUSD(data?.usd?.invoices.amount_usd)}</span>
+                <UsdMissingNote count={data?.usd?.invoices.usd_missing_count} />
+              </span>
+            </>
+          )}
+        </div>
+        <CurrencyToggle />
+      </div>
       {/* --- KPI strip: hero row (4) --- */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KPICard

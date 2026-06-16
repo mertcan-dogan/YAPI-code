@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { CurrencyToggle, UsdAmountCell, useShowUsd } from "@/components/currency";
 import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
@@ -29,6 +30,7 @@ export default function InvoicesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ClientInvoice | null>(null);
   const [collecting, setCollecting] = useState<ClientInvoice | null>(null);
+  const showUsd = useShowUsd(); // CR-014-D
 
   const rows = data ?? [];
 
@@ -57,6 +59,20 @@ export default function InvoicesPage() {
     { key: "vat_amount_try", header: "KDV", align: "right", render: (r) => formatCurrency(r.vat_amount_try) },
     { key: "retention_amount_try", header: "Kesinti", align: "right", render: (r) => formatCurrency(r.retention_amount_try) },
     { key: "net_due_try", header: "Net Tahsil", align: "right", render: (r) => formatCurrency(r.net_due_try) },
+    // CR-014-D: USD snapshot (point-in-time). "—" while null (pre-backfill).
+    ...(showUsd ? [{
+      key: "amount_usd",
+      header: "USD (Anlık)",
+      align: "right" as const,
+      render: (r: ClientInvoice) => (
+        <UsdAmountCell
+          amountUsd={r.amount_usd}
+          rate={r.fx_rate_usd}
+          paid={r.payment_status === "paid"}
+          relevantDate={r.payment_status === "paid" ? r.date_received : r.invoice_date}
+        />
+      ),
+    }] : []),
     { key: "due_date", header: "Vade", align: "right", render: (r) => <span className={daysUntil(r.due_date) < 0 && r.payment_status !== "paid" ? "text-danger" : ""}>{formatDate(r.due_date)}</span> },
     { key: "payment_status", header: "Durum", render: (r) => <StatusBadge status={r.payment_status} /> },
     { key: "outstanding_try", header: "Bakiye", align: "right", render: (r) => formatCurrency(r.outstanding_try) },
@@ -114,6 +130,9 @@ export default function InvoicesPage() {
     { header: "Durum", value: (r) => STATUS_LABELS[r.payment_status] ?? r.payment_status },
     { header: "Bakiye", value: (r) => toNumber(r.outstanding_try) },
     { header: "Gecikme (gün)", value: (r) => (r.payment_status !== "paid" && daysUntil(r.due_date) < 0 ? Math.abs(daysUntil(r.due_date)) : "") },
+    // CR-014-D: USD snapshot + the rate applied (blank when no snapshot yet).
+    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : "") },
+    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : "") },
   ];
 
   return (
@@ -122,6 +141,7 @@ export default function InvoicesPage() {
         title="Faturalar & Hakediş"
         action={
           <div className="flex items-center gap-2">
+            <CurrencyToggle />
             <ExportMenu rows={rows} columns={exportColumns} filename="faturalar-hakedis" />
             <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Fatura Ekle</Button>
           </div>
