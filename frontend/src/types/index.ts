@@ -69,7 +69,33 @@ export interface Project {
   target_margin_pct: string | null;
   completion_pct: string;
   project_manager_id: string | null;
+  // CR-016: residential / kentsel dönüşüm details (empty for other projects).
+  construction_gross_m2: string | null;
+  construction_net_m2: string | null;
+  units: ProjectUnit[];
   financials?: ProjectFinancials;
+}
+
+// CR-016: a daire dağılımı row as returned by the API.
+export interface ProjectUnit {
+  id: string;
+  project_id: string;
+  company_id: string;
+  unit_type: string;
+  custom_label: string | null;
+  count: number;
+  gross_m2_each: string;
+  net_m2_each: string | null;
+  sale_price_try: string | null;
+  notes: string | null;
+}
+
+// CR-016-B: computed residential aggregates on the dashboard payload.
+export interface ResidentialAggregates {
+  total_units: number;
+  total_sellable_gross_m2: string;
+  total_sellable_net_m2: string;
+  total_estimated_sales_try: string | null;
 }
 
 export interface BudgetCategoryRow {

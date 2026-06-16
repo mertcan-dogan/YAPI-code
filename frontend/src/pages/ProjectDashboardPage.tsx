@@ -8,14 +8,20 @@ import { EmptyState, LoadError } from "@/components/EmptyState";
 import { KPICard } from "@/components/KPICard";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
+import { ResidentialDetailsEditor, unitsForPayload, type UnitRow } from "@/components/UnitScheduleEditor";
+import { UNIT_TYPES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
-import { apiPost } from "@/lib/api";
+import { apiPost, apiPut } from "@/lib/api";
+import { useAuth } from "@/store/auth";
+import { toast } from "@/store/toast";
 import { useAISummaryStore } from "@/store/aiSummary";
-import type { ProjectFinancials, Project } from "@/types";
+import type { ProjectFinancials, Project, ResidentialAggregates } from "@/types";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, formatUSD, toNumber } from "@/utils/format";
-import { Banknote, Clock, Coins, FileText, Hammer, Layers, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
+import { Banknote, Building2, Clock, Coins, FileText, Hammer, Layers, Pencil, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+
+const RESIDENTIAL_TYPES = new Set(["building_residential", "urban_transformation"]);
 
 interface FAC {
   original_budget_try: string;
@@ -54,13 +60,62 @@ export default function ProjectDashboardPage() {
     const t = setTimeout(() => setHighlightCostId(null), 2500);
     return () => clearTimeout(t);
   }, [searchParams, setSearchParams]);
-  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock }>(
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates }>(
     `/projects/${id}/dashboard`
   );
   const showUsd = useShowUsd(); // CR-014-D
   const p = data?.project;
   const f = data?.financials;
   const fac = data?.forecast_at_completion;
+
+  // CR-016-C: residential details (m² + daire dağılımı). Visible for residential
+  // project types or any project that already carries a schedule / construction m².
+  const isDirector = useAuth((s) => s.user?.role === "director");
+  const isResidential =
+    (p?.units?.length ?? 0) > 0 ||
+    !!(p?.construction_gross_m2) ||
+    (p ? RESIDENTIAL_TYPES.has(p.project_type) : false);
+  const [resEdit, setResEdit] = useState(false);
+  const [resSaving, setResSaving] = useState(false);
+  const [resGross, setResGross] = useState("");
+  const [resNet, setResNet] = useState("");
+  const [resUnits, setResUnits] = useState<UnitRow[]>([]);
+
+  const openResEdit = () => {
+    setResGross(p?.construction_gross_m2 ?? "");
+    setResNet(p?.construction_net_m2 ?? "");
+    setResUnits(
+      (p?.units ?? []).map((u) => ({
+        id: u.id,
+        unit_type: u.unit_type,
+        custom_label: u.custom_label ?? "",
+        count: String(u.count),
+        gross_m2_each: u.gross_m2_each,
+        net_m2_each: u.net_m2_each ?? "",
+        sale_price_try: u.sale_price_try ?? "",
+        notes: u.notes ?? "",
+      }))
+    );
+    setResEdit(true);
+  };
+
+  const saveResidential = async () => {
+    setResSaving(true);
+    try {
+      await apiPut(`/projects/${id}`, {
+        construction_gross_m2: resGross || null,
+        construction_net_m2: resNet || null,
+        units: unitsForPayload(resUnits),
+      });
+      toast.success("Konut detayları kaydedildi");
+      setResEdit(false);
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message ?? "Konut detayları kaydedilemedi");
+    } finally {
+      setResSaving(false);
+    }
+  };
 
   // CR-003-F + CR-005-G: AI narrative, cached per project so it runs once and
   // survives navigation/reload; manual refresh re-runs it.
@@ -318,6 +373,97 @@ export default function ProjectDashboardPage() {
           Mevcut harcama hızına göre tahmini bitiş: <b>{formatDate(f.estimated_finish_date)}</b> (planlanan: {formatDate(p?.planned_end_date)})
         </div>
       )}
+
+      {/* CR-016-C: residential details (İnşaat m² + daire dağılımı) */}
+      {isResidential && (
+        <div className="mt-4 rounded-xl border border-border bg-surface shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+            <span className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+              <Building2 className="h-4 w-4 text-brand" /> Konut Detayları
+            </span>
+            {isDirector && (
+              <Button variant="ghost" className="px-2 py-1 text-xs" onClick={openResEdit}>
+                <Pencil className="h-3.5 w-3.5" /> Düzenle
+              </Button>
+            )}
+          </div>
+          <div className="space-y-4 p-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
+              <ResStat label="İnşaat Brüt m²" value={p?.construction_gross_m2 ? `${toNumber(p.construction_gross_m2).toLocaleString("tr-TR")} m²` : "—"} />
+              <ResStat label="İnşaat Net m²" value={p?.construction_net_m2 ? `${toNumber(p.construction_net_m2).toLocaleString("tr-TR")} m²` : "—"} />
+              <ResStat label="Toplam Daire" value={String(data?.residential?.total_units ?? 0)} />
+              <ResStat label="Tahmini Toplam Satış" value={data?.residential?.total_estimated_sales_try ? formatCurrency(data.residential.total_estimated_sales_try) : "—"} />
+            </div>
+
+            {(p?.units?.length ?? 0) > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-text-secondary">
+                      <th className="py-1.5 pr-3 font-medium">Daire Tipi</th>
+                      <th className="py-1.5 pr-3 text-right font-medium">Adet</th>
+                      <th className="py-1.5 pr-3 text-right font-medium">Brüt m²/adet</th>
+                      <th className="py-1.5 pr-3 text-right font-medium">Net m²/adet</th>
+                      <th className="py-1.5 text-right font-medium">Satış Fiyatı</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {p!.units.map((u) => (
+                      <tr key={u.id} className="border-b border-border/60">
+                        <td className="py-1.5 pr-3">{u.unit_type === "other" ? (u.custom_label || "Diğer") : (UNIT_TYPES[u.unit_type] ?? u.unit_type)}</td>
+                        <td className="py-1.5 pr-3 text-right tabular">{u.count}</td>
+                        <td className="py-1.5 pr-3 text-right tabular">{toNumber(u.gross_m2_each).toLocaleString("tr-TR")}</td>
+                        <td className="py-1.5 pr-3 text-right tabular">{u.net_m2_each ? toNumber(u.net_m2_each).toLocaleString("tr-TR") : "—"}</td>
+                        <td className="py-1.5 text-right tabular">{u.sale_price_try ? formatCurrency(u.sale_price_try) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="text-xs font-semibold text-primary">
+                      <td className="py-1.5 pr-3">Toplam Satılabilir</td>
+                      <td className="py-1.5 pr-3 text-right tabular">{data?.residential?.total_units ?? 0}</td>
+                      <td className="py-1.5 pr-3 text-right tabular" colSpan={2}>
+                        Brüt {toNumber(data?.residential?.total_sellable_gross_m2).toLocaleString("tr-TR")} m² · Net {toNumber(data?.residential?.total_sellable_net_m2).toLocaleString("tr-TR")} m²
+                      </td>
+                      <td className="py-1.5 text-right tabular">{data?.residential?.total_estimated_sales_try ? formatCurrency(data.residential.total_estimated_sales_try) : "—"}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-text-secondary">
+                Henüz daire dağılımı girilmemiş.{isDirector ? " “Düzenle” ile ekleyebilirsiniz." : ""}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <Modal open={resEdit} title="Konut Detaylarını Düzenle" onClose={() => setResEdit(false)} size="lg">
+        <div className="space-y-4">
+          <ResidentialDetailsEditor
+            grossM2={resGross}
+            netM2={resNet}
+            units={resUnits}
+            onGrossChange={setResGross}
+            onNetChange={setResNet}
+            onUnitsChange={setResUnits}
+          />
+          <div className="flex justify-end gap-2 border-t border-border pt-3">
+            <Button variant="ghost" onClick={() => setResEdit(false)}>İptal</Button>
+            <Button loading={resSaving} onClick={saveResidential}>Kaydet</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function ResStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] text-text-secondary">{label}</div>
+      <div className="font-semibold text-primary">{value}</div>
     </div>
   );
 }

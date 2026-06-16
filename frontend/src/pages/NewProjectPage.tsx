@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/AppLayout";
-import { Button, Card, CardBody, FieldError, Input, Label, Select, Textarea } from "@/components/ui";
+import { Button, Card, CardBody, FieldError, Input, Label, Select } from "@/components/ui";
 import { InfoTooltip } from "@/components/ui/tooltip";
+import { ResidentialDetailsEditor, emptyUnitRow, unitsForPayload, type UnitRow } from "@/components/UnitScheduleEditor";
 import { COST_CATEGORY_OPTIONS, PROJECT_TYPE_GROUPS } from "@/constants";
 import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
@@ -10,8 +11,6 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const STEPS = ["Proje Bilgileri", "Finansal Bilgiler", "Zaman Planı", "Bütçe Dağılımı"];
-
 // Revenue/billing models — Turkish construction. Sales-based models (kat karşılığı,
 // yap-sat, hasılat) have no hakediş/retention; revenue comes from unit sales.
 const REVENUE_MODELS: { value: string; label: string; employerLabel: string; contractLabel: string; showRetention: boolean; showShare: boolean; showUnits: boolean }[] = [
@@ -19,7 +18,7 @@ const REVENUE_MODELS: { value: string; label: string; employerLabel: string; con
   { value: "maliyet_kar", label: "Maliyet + Kâr (Cost-Plus)", employerLabel: "İşveren Adı", contractLabel: "Tahmini Sözleşme Bedeli (TRY)", showRetention: true, showShare: false, showUnits: false },
   { value: "kat_karsiligi", label: "Kat Karşılığı / Kentsel Dönüşüm", employerLabel: "Arsa / Mülk Sahibi", contractLabel: "Tahmini Toplam Satış Geliri (TRY)", showRetention: false, showShare: true, showUnits: true },
   { value: "yap_sat", label: "Yap-Sat (Kendi Hesabına)", employerLabel: "Geliştirici / Mülk Sahibi", contractLabel: "Tahmini Toplam Satış Geliri (TRY)", showRetention: false, showShare: false, showUnits: true },
-  { value: "hasilat_paylasimi", label: "Hasılat Paylaşımı", employerLabel: "Arsa / Mülk Sahibi", contractLabel: "Tahmini Toplam Hasılat (TRY)", showRetention: false, showShare: true, showUnits: false },
+  { value: "hasilat_paylasimi", label: "Hasılat Paylaşımı", employerLabel: "Arsa / Mülk Sahibi", contractLabel: "Tahmini Toplam Hasılat (TRY)", showRetention: false, showShare: true, showUnits: true },
 ];
 const suggestModel = (t: string) => (t === "urban_transformation" ? "kat_karsiligi" : "hakedis");
 
@@ -49,6 +48,8 @@ export default function NewProjectPage() {
     target_margin_pct: "",
     contractor_share_pct: "",
     unit_count: "",
+    construction_gross_m2: "",
+    construction_net_m2: "",
     original_budget_try: "",
     start_date: "",
     planned_end_date: "",
@@ -56,7 +57,20 @@ export default function NewProjectPage() {
   const [budgets, setBudgets] = useState<Record<string, string>>({});
   // CR-001-D: ad-hoc custom categories added in the wizard.
   const [customCats, setCustomCats] = useState<{ name: string; amount: string }[]>([]);
+  // CR-016-C: residential daire dağılımı (shown only for sales-based models).
+  const [units, setUnits] = useState<UnitRow[]>([]);
   const model = REVENUE_MODELS.find((m) => m.value === form.revenue_model) ?? REVENUE_MODELS[0];
+
+  // CR-016-C: a "Konut Detayları" step is inserted for residential (showUnits)
+  // models; the wizard stays short for everything else.
+  const steps: { key: string; label: string }[] = [
+    { key: "info", label: "Proje Bilgileri" },
+    { key: "financial", label: "Finansal Bilgiler" },
+    ...(model.showUnits ? [{ key: "residential", label: "Konut Detayları" }] : []),
+    { key: "schedule", label: "Zaman Planı" },
+    { key: "budget", label: "Bütçe Dağılımı" },
+  ];
+  const curKey = steps[Math.min(step, steps.length - 1)]?.key;
 
   const set = (k: string, v: string) => {
     setForm((f: any) => ({ ...f, [k]: v }));
@@ -127,7 +141,12 @@ export default function NewProjectPage() {
         revenue_model: form.revenue_model,
         retention_pct: model.showRetention ? form.retention_pct : "0",
         contractor_share_pct: model.showShare && form.contractor_share_pct ? form.contractor_share_pct : null,
-        unit_count: model.showUnits && form.unit_count ? parseInt(form.unit_count, 10) : null,
+        // CR-016: for residential models unit_count is derived server-side from the
+        // schedule; keep it null here. Non-residential models have no units.
+        unit_count: null,
+        construction_gross_m2: model.showUnits && form.construction_gross_m2 ? form.construction_gross_m2 : null,
+        construction_net_m2: model.showUnits && form.construction_net_m2 ? form.construction_net_m2 : null,
+        units: model.showUnits ? unitsForPayload(units) : [],
       };
       const project = await apiPost<{ id: string }>("/projects", payload);
       // Save any per-category budgets entered in step 4.
@@ -153,33 +172,33 @@ export default function NewProjectPage() {
   };
 
   const canNext = () => {
-    if (step === 0)
+    if (curKey === "info")
       return (
         form.name &&
         form.project_code &&
         form.client_name &&
         (form.project_type !== "other" || form.custom_project_type.trim())
       );
-    if (step === 1) return toNumber(form.contract_value_try) > 0;
-    if (step === 2) return form.start_date && form.planned_end_date;
-    return true;
+    if (curKey === "financial") return toNumber(form.contract_value_try) > 0;
+    if (curKey === "schedule") return form.start_date && form.planned_end_date;
+    return true; // residential + budget are optional/non-blocking
   };
 
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Yeni Proje" />
       <div className="mb-4 flex gap-2">
-        {STEPS.map((s, i) => (
-          <div key={s} className="flex-1">
+        {steps.map((s, i) => (
+          <div key={s.key} className="flex-1">
             <div className={cn("h-1 rounded-full", i <= step ? "bg-primary" : "bg-border")} />
-            <span className={cn("mt-1 block text-xs", i === step ? "font-semibold text-primary" : "text-text-secondary")}>{s}</span>
+            <span className={cn("mt-1 block text-xs", i === step ? "font-semibold text-primary" : "text-text-secondary")}>{s.label}</span>
           </div>
         ))}
       </div>
 
       <Card>
         <CardBody className="space-y-4">
-          {step === 0 && (
+          {curKey === "info" && (
             <>
               <Field label="Proje Adı" required>
                 <Input value={form.name} onChange={(e) => set("name", e.target.value)} />
@@ -239,7 +258,7 @@ export default function NewProjectPage() {
             </>
           )}
 
-          {step === 1 && (
+          {curKey === "financial" && (
             <>
               <Field label={model.contractLabel} required>
                 <Input type="number" value={form.contract_value_try} onChange={(e) => set("contract_value_try", e.target.value)} />
@@ -266,11 +285,7 @@ export default function NewProjectPage() {
                     <Input type="number" value={form.contractor_share_pct} onChange={(e) => set("contractor_share_pct", e.target.value)} placeholder="örn. 50" />
                   </Field>
                 )}
-                {model.showUnits && (
-                  <Field label="Bağımsız Bölüm / Daire Sayısı">
-                    <Input type="number" value={form.unit_count} onChange={(e) => set("unit_count", e.target.value)} placeholder="örn. 24" />
-                  </Field>
-                )}
+                {/* CR-016-C: daire sayısı artık "Konut Detayları" adımındaki dağılımdan türetilir. */}
                 <div>
                   <Label className="flex items-center gap-1">
                     Öngörülemeyen Giderler %
@@ -285,7 +300,24 @@ export default function NewProjectPage() {
             </>
           )}
 
-          {step === 2 && (
+          {curKey === "residential" && (
+            <>
+              <p className="text-sm text-text-secondary">
+                Konut / kentsel dönüşüm detayları (opsiyonel — boş bırakıp sonra doldurabilirsiniz).
+                Daire dağılımı girilirse toplam daire sayısı buradan hesaplanır.
+              </p>
+              <ResidentialDetailsEditor
+                grossM2={form.construction_gross_m2}
+                netM2={form.construction_net_m2}
+                units={units}
+                onGrossChange={(v) => set("construction_gross_m2", v)}
+                onNetChange={(v) => set("construction_net_m2", v)}
+                onUnitsChange={setUnits}
+              />
+            </>
+          )}
+
+          {curKey === "schedule" && (
             <>
               <Field label="Başlangıç Tarihi" required>
                 <Input type="date" value={form.start_date} onChange={(e) => set("start_date", e.target.value)} />
@@ -296,7 +328,7 @@ export default function NewProjectPage() {
             </>
           )}
 
-          {step === 3 && (
+          {curKey === "budget" && (
             <>
               {templates.length > 0 && (
                 <div className="flex items-end gap-2 rounded-md border border-border bg-bg p-3">
@@ -374,7 +406,7 @@ export default function NewProjectPage() {
             <Button variant="ghost" onClick={() => (step === 0 ? navigate("/projects") : setStep(step - 1))}>
               {step === 0 ? "İptal" : "Geri"}
             </Button>
-            {step < STEPS.length - 1 ? (
+            {step < steps.length - 1 ? (
               <Button onClick={() => setStep(step + 1)} disabled={!canNext()}>İleri</Button>
             ) : (
               <Button onClick={submit} loading={saving}>Projeyi Oluştur</Button>
