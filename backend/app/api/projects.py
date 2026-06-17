@@ -22,6 +22,7 @@ from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services import financials as fin_service
 from app.services import financing as financing_service
+from app.services import milestones as milestones_service
 from app.services import units as units_service
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
@@ -174,6 +175,10 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
             # CR-015-B: modeled financing cost as a SEPARATE forecast overlay
             # (never an actual cost). Zeroed/empty when the effective toggle is off.
             "financing": financing_service.compute_financing_cost(db, project),
+            # CR-019-B: SCHEDULE-lane milestones block (weighted progress, next
+            # deadline, overdue count, per-stage). Display + informs Proje
+            # Sağlığı's "% Tamamlandı" ONLY — never feeds any money figure (§0.2).
+            "milestones": milestones_service.compute_schedule_block(db, project.id, project.company_id),
         }
     )
 

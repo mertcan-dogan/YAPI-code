@@ -13,6 +13,7 @@ Unset/zero weights count as 1; a divide-by-zero (no milestones) yields ``None``.
 progress %, weights and counts only.
 """
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import case, func, select
@@ -81,5 +82,84 @@ def compute_schedule_rollup(db: Session, project_id: uuid.UUID, company_id: uuid
         "done": int(row[2] or 0),
         "total_weight": str(money(tW)),
         "done_weight": str(money(dW)),
+        "by_stage": by_stage,
+    }
+
+
+def _as_date(v) -> date | None:
+    """Coerce a SQL min()/column result to a ``date`` (SQLite may hand back a str)."""
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def _iso(d: date | None) -> str | None:
+    return d.isoformat() if d else None
+
+
+def compute_schedule_block(
+    db: Session,
+    project_id: uuid.UUID,
+    company_id: uuid.UUID,
+    today: date | None = None,
+) -> dict:
+    """CR-019-B: the SCHEDULE-lane dashboard block.
+
+    ``{ schedule_progress_pct, total, done, next_deadline, overdue_count,
+        by_stage:[{stage, progress_pct, done, total, deadline}] }``
+
+    overdue = ``status != 'done' AND planned_date < today``;
+    next_deadline = earliest FUTURE (``>= today``) planned_date among not-done.
+    Per-stage ``deadline`` = earliest not-done planned_date in that stage (may be
+    past if the stage is overdue). Date comparisons are dialect-safe: ISO ``Date``
+    columns compare chronologically on both SQLite and Postgres.
+
+    **SCHEDULE lane only — this block feeds display + Proje Sağlığı's "%
+    Tamamlandı"; it MUST NOT enter any money calculation (§0.2).**
+    """
+    today = today or date.today()
+    rollup = compute_schedule_rollup(db, project_id, company_id)
+    conds = _conds(project_id, company_id)
+    not_done = ProjectMilestone.status != MILESTONE_STATUS_DONE
+    has_date = ProjectMilestone.planned_date.is_not(None)
+
+    overdue_count = db.execute(
+        select(func.count(ProjectMilestone.id)).where(
+            *conds, not_done, has_date, ProjectMilestone.planned_date < today
+        )
+    ).scalar() or 0
+
+    next_deadline = db.execute(
+        select(func.min(ProjectMilestone.planned_date)).where(
+            *conds, not_done, has_date, ProjectMilestone.planned_date >= today
+        )
+    ).scalar()
+
+    # Per-stage nearest pending deadline (earliest not-done planned_date).
+    stage_deadlines = {
+        s[0]: _as_date(s[1])
+        for s in db.execute(
+            select(ProjectMilestone.stage, func.min(ProjectMilestone.planned_date))
+            .where(*conds, not_done, has_date)
+            .group_by(ProjectMilestone.stage)
+        ).all()
+    }
+
+    by_stage = [
+        {**st, "deadline": _iso(stage_deadlines.get(st["stage"]))}
+        for st in rollup["by_stage"]
+    ]
+
+    return {
+        "schedule_progress_pct": rollup["schedule_progress_pct"],
+        "total": rollup["total"],
+        "done": rollup["done"],
+        "next_deadline": _iso(_as_date(next_deadline)),
+        "overdue_count": int(overdue_count),
         "by_stage": by_stage,
     }
