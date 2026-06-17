@@ -8,8 +8,9 @@ import { BudgetCategoryDrawer } from "@/components/budget/BudgetCategoryDrawer";
 import { BudgetSummaryCharts } from "@/components/budget/BudgetSummaryCharts";
 import { ImportPreview } from "@/components/ImportPreview";
 import { AIImportPreview } from "@/components/AIImportPreview";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { StatusBadge } from "@/components/StatusBadge";
-import { COST_CATEGORIES, COST_CATEGORY_OPTIONS, VAT_RATES } from "@/constants";
+import { COST_CATEGORIES, COST_CATEGORY_OPTIONS, STATUS_LABELS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { apiDelete, apiGet, apiPost, apiPut, api } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -199,6 +200,49 @@ export default function BudgetPage() {
     },
   ];
 
+  // CR-009: export the cost rows. Columns mirror the table — including the CR-014
+  // USD snapshot (amount_usd, fx_rate_usd) and the CR-018 subcategory — and are
+  // always present regardless of the ₺/$ toggle so the file is self-contained.
+  const ENTRY_TYPE_LABELS: Record<string, string> = { actual: "Gerçekleşen", committed: "Taahhüt", forecast: "Tahmin" };
+  const exportColumns: ExportColumn<CostEntry>[] = [
+    { header: "Tarih", value: (r) => (r.entry_date ? formatDate(r.entry_date) : "") },
+    { header: "Giriş Tipi", value: (r) => ENTRY_TYPE_LABELS[r.entry_type] ?? r.entry_type },
+    { header: "Kategori", value: (r) => COST_CATEGORIES[r.cost_category] ?? r.cost_category },
+    { header: "Alt Kategori", value: (r) => (r.subcategory && r.subcategory.trim() ? r.subcategory : "Belirtilmemiş") },
+    { header: "Tedarikçi", value: (r) => r.supplier_name ?? "" },
+    { header: "Açıklama", value: (r) => r.description ?? "" },
+    { header: "Fatura No", value: (r) => r.invoice_number ?? "" },
+    { header: "Tutar (TRY)", value: (r) => toNumber(r.amount_try) },
+    { header: "KDV Oranı (%)", value: (r) => toNumber(r.vat_rate) },
+    { header: "KDV Dahil (TRY)", value: (r) => toNumber(r.total_with_vat_try) },
+    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : "") },
+    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : "") },
+    { header: "Vade", value: (r) => (r.payment_due_date ? formatDate(r.payment_due_date) : "") },
+    { header: "Durum", value: (r) => STATUS_LABELS[r.payment_status] ?? r.payment_status },
+  ];
+
+  // The costs endpoint caps per_page at 100, so the visible table is just one
+  // page. Export the FULL filtered set by walking every page — a silently
+  // truncated financial export is worse than none.
+  const fetchAllCosts = async (): Promise<CostEntry[]> => {
+    const params = {
+      category: filters.category || undefined,
+      payment_status: filters.payment_status || undefined,
+      entry_type: filters.entry_type || undefined,
+      per_page: 100,
+    };
+    const first = await apiGet<CostEntry[]>(`/projects/${id}/costs`, { ...params, page: 1 });
+    const all = [...(first.data ?? [])];
+    const total = first.meta?.total ?? all.length;
+    const perPage = first.meta?.per_page ?? 100;
+    const pages = Math.ceil(total / perPage);
+    for (let p = 2; p <= pages; p++) {
+      const r = await apiGet<CostEntry[]>(`/projects/${id}/costs`, { ...params, page: p });
+      all.push(...(r.data ?? []));
+    }
+    return all;
+  };
+
   const onImport = async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -229,6 +273,8 @@ export default function BudgetPage() {
         action={
           <div className="flex flex-wrap items-center gap-2">
             <CurrencyToggle />
+            {/* CR-009: export the cost rows (full filtered set, all pages). */}
+            <ExportMenu rows={costs.data ?? []} columns={exportColumns} filename="maliyetler" fetchRows={fetchAllCosts} />
             <Button variant="outline" onClick={downloadTemplate}>
               <Download className="h-4 w-4" /> Şablon
             </Button>

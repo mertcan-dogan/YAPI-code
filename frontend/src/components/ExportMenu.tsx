@@ -53,25 +53,42 @@ function download(blob: Blob, filename: string) {
  * Reusable export dropdown — exports the CURRENT (already-filtered) `rows` to
  * Excel (.xlsx, via SheetJS, lazy-loaded) or CSV (native, no dependency).
  * Place next to a page's primary header action.
+ *
+ * `fetchRows` (optional): when the visible `rows` are only one paginated page of
+ * a larger set, supply an async resolver that returns the FULL filtered set. It
+ * is awaited on click so the export is never silently truncated; `rows` is used
+ * only to gate the disabled/empty state.
  */
-export function ExportMenu<T>({ rows, columns, filename, disabled }: { rows: T[]; columns: ExportColumn<T>[]; filename: string; disabled?: boolean }) {
+export function ExportMenu<T>({ rows, columns, filename, disabled, fetchRows }: { rows: T[]; columns: ExportColumn<T>[]; filename: string; disabled?: boolean; fetchRows?: () => Promise<T[]> }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const empty = !rows || rows.length === 0;
 
-  const exportCSV = () => {
-    const { headers, data } = buildMatrix(rows, columns);
-    // Prepend a UTF-8 BOM so Excel renders Turkish characters correctly.
-    const blob = new Blob(["﻿" + toCSV(headers, data)], { type: "text/csv;charset=utf-8;" });
-    download(blob, `${filename}-${dateStamp()}.csv`);
-    setOpen(false);
+  // Resolve the full set to export — all pages when `fetchRows` is given.
+  const resolveRows = async (): Promise<T[]> => (fetchRows ? await fetchRows() : rows);
+
+  const exportCSV = async () => {
+    setBusy(true);
+    try {
+      const all = await resolveRows();
+      const { headers, data } = buildMatrix(all, columns);
+      // Prepend a UTF-8 BOM so Excel renders Turkish characters correctly.
+      const blob = new Blob(["﻿" + toCSV(headers, data)], { type: "text/csv;charset=utf-8;" });
+      download(blob, `${filename}-${dateStamp()}.csv`);
+    } catch {
+      toast.error("Dışa aktarma başarısız oldu");
+    } finally {
+      setBusy(false);
+      setOpen(false);
+    }
   };
 
   const exportXLSX = async () => {
     setBusy(true);
     try {
+      const all = await resolveRows();
       const XLSX = await import("xlsx");
-      const { headers, data } = buildMatrix(rows, columns);
+      const { headers, data } = buildMatrix(all, columns);
       const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Veri");
