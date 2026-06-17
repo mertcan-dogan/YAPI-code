@@ -118,17 +118,23 @@ export default function RemindersPage() {
   return (
     <div>
       <PageHeader title="Hatırlatıcılar" subtitle="Tüm projelerdeki vadesi yaklaşan ve geçmiş ödemeler" />
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiChip label="Vadesi Geçmiş Toplam" value={formatCurrency(overdueTotal)} bg="#FEF2F2" border="#EF4444" />
-        <KpiChip label="Bugün Vadesi Dolan" value={todayItems.length === 0 ? "Bugün vade yok" : formatCurrency(todaySum)} bg="#FFFBEB" border="#F59E0B" />
-        <KpiChip label="Bu Hafta (7 Gün)" value={formatCurrency(weekSum)} bg="#FEFCE8" border="#EAB308" />
-        <KpiChip label="Bu Ay (30 Gün)" value={formatCurrency(monthSum)} bg="#EFF6FF" border="#93C5FD" />
-      </div>
-      {/* CR-004-G: summary line above the filter bar — updates with the filters. */}
-      <div className="mb-2 text-sm text-text-secondary">
-        <span className="font-semibold text-text-primary">{items.length}</span> {filterSummaryLabel(tab, time)} ·{" "}
-        Toplam: <span className="tabular font-semibold text-text-primary">{formatCurrency(filteredTotal)}</span>
-      </div>
+      {/* KPI band + summary line are hidden on load failure so ₺0 totals aren't
+          read as "nothing due". */}
+      {!error && (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <KpiChip label="Vadesi Geçmiş Toplam" value={formatCurrency(overdueTotal)} bg="#FEF2F2" border="#EF4444" />
+            <KpiChip label="Bugün Vadesi Dolan" value={todayItems.length === 0 ? "Bugün vade yok" : formatCurrency(todaySum)} bg="#FFFBEB" border="#F59E0B" />
+            <KpiChip label="Bu Hafta (7 Gün)" value={formatCurrency(weekSum)} bg="#FEFCE8" border="#EAB308" />
+            <KpiChip label="Bu Ay (30 Gün)" value={formatCurrency(monthSum)} bg="#EFF6FF" border="#93C5FD" />
+          </div>
+          {/* CR-004-G: summary line above the filter bar — updates with the filters. */}
+          <div className="mb-2 text-sm text-text-secondary">
+            <span className="font-semibold text-text-primary">{items.length}</span> {filterSummaryLabel(tab, time)} ·{" "}
+            Toplam: <span className="tabular font-semibold text-text-primary">{formatCurrency(filteredTotal)}</span>
+          </div>
+        </>
+      )}
 
       {/* CR-004-G: two labelled filter rows — Tür (type) and Zaman (time), independent. */}
       <div className="mb-3 space-y-2">

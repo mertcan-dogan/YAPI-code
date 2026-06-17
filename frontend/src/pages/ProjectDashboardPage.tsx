@@ -381,12 +381,16 @@ export default function ProjectDashboardPage() {
           <span className="text-sm font-semibold text-primary">Dönem Özeti — {rangeLabel}</span>
           {ps && (ps.usd_missing_count ?? 0) > 0 && <UsdMissingNote count={ps.usd_missing_count} />}
         </div>
-        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
-          <PeriodStat label="Maliyet (dönem)" try_={ps?.cost_incurred_try} usd={ps?.cost_incurred_usd} showUsd={showUsd} count={ps?.cost_count} loading={period.loading} />
-          <PeriodStat label="Faturalanan (dönem)" try_={ps?.invoiced_try} usd={ps?.invoiced_usd} showUsd={showUsd} count={ps?.invoice_count} loading={period.loading} />
-          <PeriodStat label="Tahsil Edilen (dönem)" try_={ps?.collected_try} usd={ps?.collected_usd} showUsd={showUsd} count={ps?.collected_count} loading={period.loading} />
-          <PeriodStat label="Net (Tahsilat − Maliyet)" try_={ps?.net_try} showUsd={false} loading={period.loading} negative={toNumber(ps?.net_try) < 0} />
-        </div>
+        {period.error && !period.loading ? (
+          <LoadError message="Dönem özeti yüklenemedi." onRetry={period.refetch} />
+        ) : (
+          <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+            <PeriodStat label="Maliyet (dönem)" try_={ps?.cost_incurred_try} usd={ps?.cost_incurred_usd} showUsd={showUsd} count={ps?.cost_count} loading={period.loading} />
+            <PeriodStat label="Faturalanan (dönem)" try_={ps?.invoiced_try} usd={ps?.invoiced_usd} showUsd={showUsd} count={ps?.invoice_count} loading={period.loading} />
+            <PeriodStat label="Tahsil Edilen (dönem)" try_={ps?.collected_try} usd={ps?.collected_usd} showUsd={showUsd} count={ps?.collected_count} loading={period.loading} />
+            <PeriodStat label="Net (Tahsilat − Maliyet)" try_={ps?.net_try} showUsd={false} loading={period.loading} negative={toNumber(ps?.net_try) < 0} />
+          </div>
+        )}
       </div>
 
       {/* CR-014-D: USD snapshot totals (point-in-time) + ₺/$/İkisi de toggle.

@@ -1,3 +1,4 @@
+import { LoadError } from "@/components/EmptyState";
 import { Skeleton } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { formatCurrencyAbbrev } from "@/utils/format";
@@ -35,7 +36,7 @@ function timeAgo(iso: string): string {
  * on the dashboard. The parent gates rendering on the director role.
  */
 export function ApprovalsPanel({ onGoToApprovals }: { onGoToApprovals: () => void }) {
-  const { data, loading } = useFetch<ApprovalItem[]>("/approvals");
+  const { data, loading, error, refetch } = useFetch<ApprovalItem[]>("/approvals");
   const items = data ?? [];
 
   return (
@@ -46,6 +47,8 @@ export function ApprovalsPanel({ onGoToApprovals }: { onGoToApprovals: () => voi
               <Skeleton key={i} className="h-10 w-full" />
             ))}
           </div>
+        ) : error ? (
+          <LoadError message="Onaylar yüklenemedi." onRetry={refetch} />
         ) : items.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-50">

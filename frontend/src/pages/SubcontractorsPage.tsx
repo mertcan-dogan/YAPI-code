@@ -31,11 +31,14 @@ export default function SubcontractorsPage() {
   return (
     <div>
       <PageHeader title="Alt Yükleniciler" action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Alt Yüklenici Ekle</Button>} />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Chip label="Toplam Sözleşme Değeri" value={formatCurrency(subs.reduce((s, x) => s + toNumber(x.revised_contract_try), 0))} />
-        <Chip label="Toplam Ödenen" value={formatCurrency(subs.reduce((s, x) => s + toNumber(x.total_paid_try), 0))} />
-        <Chip label="Toplam Kesinti" value={formatCurrency(subs.reduce((s, x) => s + toNumber(x.retention_held_try), 0))} />
-      </div>
+      {/* Hide the summary band on load failure so ₺0 totals aren't read as real. */}
+      {!error && (
+        <div className="mb-4 flex flex-wrap gap-3">
+          <Chip label="Toplam Sözleşme Değeri" value={formatCurrency(subs.reduce((s, x) => s + toNumber(x.revised_contract_try), 0))} />
+          <Chip label="Toplam Ödenen" value={formatCurrency(subs.reduce((s, x) => s + toNumber(x.total_paid_try), 0))} />
+          <Chip label="Toplam Kesinti" value={formatCurrency(subs.reduce((s, x) => s + toNumber(x.retention_held_try), 0))} />
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>

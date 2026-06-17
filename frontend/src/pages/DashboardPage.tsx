@@ -10,6 +10,7 @@ import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCar
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
 import { CurrencyToggle, UsdMissingNote, useShowUsd } from "@/components/currency";
+import { LoadError } from "@/components/EmptyState";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
@@ -66,7 +67,7 @@ export default function DashboardPage() {
   // and tables re-query when they change.
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_FILTERS);
   const dashboardParams = useMemo(() => filtersToParams(filters), [filters]);
-  const { data, loading, refetch } = useFetch<DashboardData>("/dashboard", dashboardParams);
+  const { data, loading, error, refetch } = useFetch<DashboardData>("/dashboard", dashboardParams);
   const [briefing, setBriefing] = useState<BriefingItem[]>([]);
   const [briefingState, setBriefingState] = useState<"loading" | "ready" | "error">("loading");
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
@@ -196,6 +197,13 @@ export default function DashboardPage() {
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
         <div className="min-w-0 flex-1">
+      {/* Load failure must read as an error, not as an empty/zeroed dashboard. */}
+      {error && !loading ? (
+        <div className="rounded-xl border border-border bg-surface shadow-sm">
+          <LoadError message="Gösterge paneli verileri yüklenemedi. Lütfen tekrar deneyin." onRetry={refetch} />
+        </div>
+      ) : (
+      <>
       {/* CR-014-D: portfolio USD snapshot totals (point-in-time, not a live
           conversion) + ₺/$/İkisi de toggle. "—"/warning while rates are missing. */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -474,6 +482,8 @@ export default function DashboardPage() {
               })}
           </div>
         </DashboardSection>
+      )}
+      </>
       )}
         </div>
 

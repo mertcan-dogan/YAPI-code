@@ -68,12 +68,15 @@ export default function AIAlertsPage() {
         action={<Button variant="outline" loading={refreshing} onClick={refreshAll}><RefreshCw className="h-4 w-4" /> Tüm Uyarıları Yenile</Button>}
       />
 
-      {/* CR-003-M: severity summary */}
-      <div className="mb-4 flex flex-wrap gap-3">
-        <SummaryChip label="Kritik" value={count("high")} color="#EF4444" />
-        <SummaryChip label="Yüksek" value={count("medium")} color="#F59E0B" />
-        <SummaryChip label="Orta" value={count("low")} color="#64748B" />
-      </div>
+      {/* CR-003-M: severity summary — hidden on load failure so the zero counts
+          aren't mistaken for "no alerts". */}
+      {!error && (
+        <div className="mb-4 flex flex-wrap gap-3">
+          <SummaryChip label="Kritik" value={count("high")} color="#EF4444" />
+          <SummaryChip label="Yüksek" value={count("medium")} color="#F59E0B" />
+          <SummaryChip label="Orta" value={count("low")} color="#64748B" />
+        </div>
+      )}
 
       {loading ? (
         <p className="text-sm text-text-secondary">Yükleniyor...</p>

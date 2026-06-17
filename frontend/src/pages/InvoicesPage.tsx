@@ -147,12 +147,15 @@ export default function InvoicesPage() {
           </div>
         }
       />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Chip label="Toplam Faturalanan" value={formatCurrency(sum("amount_try"))} />
-        <Chip label="Tahsil Edilen" value={formatCurrency(sum("amount_received_try"))} />
-        <Chip label="Bekleyen" value={formatCurrency(sum("outstanding_try"))} />
-        <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
-      </div>
+      {/* Hide the summary band on load failure so ₺0 totals aren't read as real. */}
+      {!error && (
+        <div className="mb-4 flex flex-wrap gap-3">
+          <Chip label="Toplam Faturalanan" value={formatCurrency(sum("amount_try"))} />
+          <Chip label="Tahsil Edilen" value={formatCurrency(sum("amount_received_try"))} />
+          <Chip label="Bekleyen" value={formatCurrency(sum("outstanding_try"))} />
+          <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
+        </div>
+      )}
       <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} highlightId={highlightId} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
       <InvoiceDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
       {collecting && (

@@ -70,7 +70,7 @@ export default function CashFlowPage() {
   }
 
   const { data, meta, loading, error, refetch } = useFetch<Row[]>(`/projects/${id}/cashflow`, { from_month, to_month });
-  const { data: risk } = useFetch<RiskWindow[]>(`/projects/${id}/cashflow/risk`);
+  const { data: risk, error: riskError, refetch: refetchRisk } = useFetch<RiskWindow[]>(`/projects/${id}/cashflow/risk`);
   const [view, setView] = useState<"both" | "planned" | "actual">("both");
   const [monthDetail, setMonthDetail] = useState<string | null>(null);
   const rows = data ?? [];
@@ -141,6 +141,9 @@ export default function CashFlowPage() {
       </div>
 
       {/* CR-004-M: 30/60/90-day cash-need cards */}
+      {riskError ? (
+        <Card className="mb-4"><CardBody><LoadError message="Nakit ihtiyacı kartları yüklenemedi." onRetry={refetchRisk} /></CardBody></Card>
+      ) : (
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {(risk ?? []).map((w) => {
           const need = toNumber(w.net_need_try);
@@ -158,6 +161,7 @@ export default function CashFlowPage() {
           );
         })}
       </div>
+      )}
 
       {error && !loading ? (
         <Card className="mb-4"><CardBody><LoadError onRetry={refetch} /></CardBody></Card>

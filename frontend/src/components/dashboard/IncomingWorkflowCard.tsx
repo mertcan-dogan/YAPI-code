@@ -1,3 +1,4 @@
+import { LoadError } from "@/components/EmptyState";
 import { Skeleton } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { cn } from "@/lib/cn";
@@ -54,7 +55,7 @@ function statusPill(status: string): { label: string; cls: string } {
  * /dashboard/document-feed endpoint. Real records & statuses only.
  */
 export function IncomingWorkflowCard() {
-  const { data, loading } = useFetch<DocumentFeed>("/dashboard/document-feed");
+  const { data, loading, error, refetch } = useFetch<DocumentFeed>("/dashboard/document-feed");
   const [tab, setTab] = useState<keyof DocumentFeed>("faturalar");
   const items = data?.[tab] ?? [];
 
@@ -87,6 +88,8 @@ export function IncomingWorkflowCard() {
                 <Skeleton className="h-4 w-16" />
               </div>
             ))
+          ) : error ? (
+            <LoadError message="Gelen belgeler yüklenemedi." onRetry={refetch} />
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-bg">
