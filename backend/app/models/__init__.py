@@ -4,6 +4,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.models.project import Project
 from app.models.project_unit import ProjectUnit
+from app.models.project_milestone import ProjectMilestone
 from app.models.cost_entry import CostEntry
 from app.models.client_invoice import ClientInvoice
 from app.models.subcontractor import Subcontractor
@@ -29,6 +30,7 @@ __all__ = [
     "User",
     "Project",
     "ProjectUnit",
+    "ProjectMilestone",
     "CostEntry",
     "ClientInvoice",
     "Subcontractor",

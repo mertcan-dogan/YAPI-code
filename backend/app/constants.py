@@ -210,6 +210,10 @@ SUBCONTRACTOR_STATUSES = ["active", "completed", "disputed", "terminated"]
 OWNERSHIP_TYPES = ["owned", "rented"]
 RATE_UNITS = ["day", "month"]
 
+# CR-019-A: milestone status enum (SCHEDULE lane only — never billing/money).
+MILESTONE_STATUSES = ["pending", "in_progress", "done"]
+MILESTONE_STATUS_DONE = "done"
+
 # --- AI alert enums (Section 2.3 ai_alerts) ---
 ALERT_TYPES = [
     "margin_warning",
