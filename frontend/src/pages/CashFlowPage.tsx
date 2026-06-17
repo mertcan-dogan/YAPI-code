@@ -31,13 +31,52 @@ type Row = {
   is_current: boolean;
 };
 
+type Preset = "all" | "3m" | "6m" | "12m" | "year" | "custom";
+
+const PRESETS: { key: Preset; label: string }[] = [
+  { key: "3m", label: "Son 3 Ay" },
+  { key: "6m", label: "Son 6 Ay" },
+  { key: "12m", label: "Son 12 Ay" },
+  { key: "year", label: "Bu Yıl" },
+  { key: "all", label: "Tümü" },
+  { key: "custom", label: "Özel" },
+];
+
+const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
 export default function CashFlowPage() {
   const { id } = useParams();
-  const { data, loading, error, refetch } = useFetch<Row[]>(`/projects/${id}/cashflow`);
+  // CR: date-range filter. "Tümü" = the default rolling window (no params, no
+  // regression); presets/custom send from_month/to_month (YYYY-MM).
+  const [preset, setPreset] = useState<Preset>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  const now = new Date();
+  const back = (n: number) => monthKey(new Date(now.getFullYear(), now.getMonth() - n, 1));
+  const thisMonth = monthKey(now);
+  let from_month: string | undefined;
+  let to_month: string | undefined;
+  if (preset === "3m") [from_month, to_month] = [back(2), thisMonth];
+  else if (preset === "6m") [from_month, to_month] = [back(5), thisMonth];
+  else if (preset === "12m") [from_month, to_month] = [back(11), thisMonth];
+  else if (preset === "year") [from_month, to_month] = [`${now.getFullYear()}-01`, thisMonth];
+  else if (preset === "custom") [from_month, to_month] = [customFrom || undefined, customTo || undefined];
+  // Custom range incomplete or inverted -> don't fetch an invalid window.
+  const customInvalid = preset === "custom" && !!from_month && !!to_month && from_month > to_month;
+  if (preset === "custom" && (!from_month || !to_month || customInvalid)) {
+    from_month = undefined;
+    to_month = undefined;
+  }
+
+  const { data, meta, loading, error, refetch } = useFetch<Row[]>(`/projects/${id}/cashflow`, { from_month, to_month });
   const { data: risk } = useFetch<RiskWindow[]>(`/projects/${id}/cashflow/risk`);
   const [view, setView] = useState<"both" | "planned" | "actual">("both");
   const [monthDetail, setMonthDetail] = useState<string | null>(null);
   const rows = data ?? [];
+  const opening = meta?.opening_balance_try;
+  const ranged = !!meta?.from_month && !!meta?.to_month;
+  const showOpening = ranged && opening != null && toNumber(opening) !== 0;
 
   const chart = rows.map((r) => {
     const inV = r.is_past || r.is_current ? toNumber(r.actual_in_try) : toNumber(r.planned_in_try);
@@ -74,6 +113,33 @@ export default function CashFlowPage() {
           </div>
         }
       />
+
+      {/* CR: date-range filter (presets + custom month picker). The 30/60/90-day
+          risk cards below stay anchored to today, not the range. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1 rounded-md border border-border p-0.5">
+          {PRESETS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => setPreset(p.key)}
+              className={cn("rounded px-3 py-1 text-sm", preset === p.key ? "bg-primary text-white" : "text-text-secondary")}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {preset === "custom" && (
+          <div className="flex items-center gap-2 text-sm">
+            <input type="month" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+              className="rounded-md border border-border bg-surface px-2 py-1" aria-label="Başlangıç ayı" />
+            <span className="text-text-secondary">→</span>
+            <input type="month" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+              className="rounded-md border border-border bg-surface px-2 py-1" aria-label="Bitiş ayı" />
+            {customInvalid && <span className="text-xs text-danger">Başlangıç bitişten sonra olamaz</span>}
+          </div>
+        )}
+      </div>
+
       {/* CR-004-M: 30/60/90-day cash-need cards */}
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {(risk ?? []).map((w) => {
@@ -114,6 +180,14 @@ export default function CashFlowPage() {
             </tr>
           </thead>
           <tbody>
+            {/* CR: carried-in opening balance so the period's cumulative isn't read as starting at zero. */}
+            {!loading && showOpening && (
+              <tr className="border-b border-border bg-bg italic text-text-secondary">
+                <td className="px-3 py-2">Devreden bakiye (dönem başı)</td>
+                <td className="px-3 py-2" /><td className="px-3 py-2" /><td className="px-3 py-2" />
+                <td className={cn("px-3 py-2 text-right tabular", toNumber(opening) < 0 && "text-danger")}>{formatCurrency(opening)}</td>
+              </tr>
+            )}
             {loading ? (
               <tr><td colSpan={5} className="px-3 py-6 text-center text-text-secondary">Yükleniyor...</td></tr>
             ) : (

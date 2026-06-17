@@ -37,23 +37,20 @@ def build_month_window(window: int = 18, anchor: date | None = None, back: int =
     return [_add_months(start_y, start_m, i) for i in range(window)]
 
 
-def compute_monthly_cashflow(
-    cost_entries: list[dict],
-    client_invoices: list[dict],
-    today: date | None = None,
-    window: int = 18,
-    back: int = 6,
-) -> list[dict]:
-    today = today or date.today()
-    current_key = _month_key(today)
-    months = build_month_window(window=window, anchor=today, back=back)
+def _month_range(from_month: str, to_month: str) -> list[tuple[int, int]]:
+    """Inclusive list of (year, month) from from_month..to_month (both YYYY-MM)."""
+    fy, fm = (int(x) for x in from_month.split("-"))
+    ty, tm = (int(x) for x in to_month.split("-"))
+    start, end = fy * 12 + (fm - 1), ty * 12 + (tm - 1)
+    return [(idx // 12, idx % 12 + 1) for idx in range(start, end + 1)]
 
-    # Bucket sums by month key (CR-002-B).
+
+def _build_buckets(cost_entries: list[dict], client_invoices: list[dict]):
+    """Sum flows into per-month buckets (CR-002-B). Returns the 4 dicts."""
     planned_out: dict[str, Decimal] = {}
     actual_out: dict[str, Decimal] = {}
     planned_in: dict[str, Decimal] = {}
     actual_in: dict[str, Decimal] = {}
-
     for e in cost_entries:
         # Actual outflow: a cost is realised when the invoice is dated (entry_date),
         # regardless of whether it has been paid yet — uses total incl. VAT.
@@ -64,7 +61,6 @@ def compute_monthly_cashflow(
         if e.get("payment_due_date") and e.get("payment_status") == "unpaid":
             k = _month_key(e["payment_due_date"])
             planned_out[k] = planned_out.get(k, ZERO) + D(e.get("total_with_vat_try"))
-
     for inv in client_invoices:
         # Actual inflow: money actually collected, in its date_received month.
         if inv.get("date_received"):
@@ -74,43 +70,96 @@ def compute_monthly_cashflow(
         if inv.get("due_date") and inv.get("payment_status") == "unpaid":
             k = _month_key(inv["due_date"])
             planned_in[k] = planned_in.get(k, ZERO) + D(inv.get("net_due_try"))
+    return planned_out, actual_out, planned_in, actual_in
+
+
+def _eff_month(buckets, k: str, current_key: str) -> dict:
+    """Effective figures for month key ``k``: actuals for past/current, planned
+    for future (relative to current_key)."""
+    planned_out, actual_out, planned_in, actual_in = buckets
+    p_out = money(planned_out.get(k, ZERO))
+    a_out = money(actual_out.get(k, ZERO))
+    p_in = money(planned_in.get(k, ZERO))
+    a_in = money(actual_in.get(k, ZERO))
+    is_past = k < current_key
+    is_current = k == current_key
+    if is_past or is_current:
+        eff_out, eff_in = a_out, a_in
+    else:
+        eff_out, eff_in = p_out, p_in
+    return {
+        "planned_out_try": p_out, "actual_out_try": a_out,
+        "planned_in_try": p_in, "actual_in_try": a_in,
+        "net_try": money(eff_in - eff_out), "is_past": is_past, "is_current": is_current,
+    }
+
+
+def opening_balance(
+    cost_entries: list[dict], client_invoices: list[dict], before_month: str, today: date | None = None
+) -> Decimal:
+    """Carried-in cumulative position: the net of ALL flows dated BEFORE
+    ``before_month`` (YYYY-MM), using the same actuals/planned rule as the table.
+
+    This seeds the cumulative line for a custom range so it does not misleadingly
+    restart at zero mid-history. Exact Decimal; pure Python (dialect-safe).
+    """
+    today = today or date.today()
+    current_key = _month_key(today)
+    buckets = _build_buckets(cost_entries, client_invoices)
+    keys = set().union(*(set(b) for b in buckets)) if any(buckets) else set()
+    total = ZERO
+    for k in keys:
+        if k < before_month:
+            total += _eff_month(buckets, k, current_key)["net_try"]
+    return money(total)
+
+
+def compute_monthly_cashflow(
+    cost_entries: list[dict],
+    client_invoices: list[dict],
+    today: date | None = None,
+    window: int = 18,
+    back: int = 6,
+    from_month: str | None = None,
+    to_month: str | None = None,
+) -> list[dict]:
+    """Per-month cashflow rows with a running cumulative.
+
+    Default (no from/to): the fixed rolling window (``back`` months back + the
+    remainder of ``window``), cumulative starting at 0 — unchanged behavior.
+    With from_month/to_month: exactly those months, and the cumulative is SEEDED
+    with the opening balance (net of all flows before from_month) so the period's
+    cumulative line is accurate rather than restarting at zero.
+    """
+    today = today or date.today()
+    current_key = _month_key(today)
+    buckets = _build_buckets(cost_entries, client_invoices)
+
+    if from_month and to_month:
+        months = _month_range(from_month, to_month)
+        cumulative = opening_balance(cost_entries, client_invoices, from_month, today=today)
+    else:
+        months = build_month_window(window=window, anchor=today, back=back)
+        cumulative = ZERO
 
     rows: list[dict] = []
-    cumulative = ZERO
     for (y, m) in months:
         k = f"{y:04d}-{m:02d}"
-        p_out = money(planned_out.get(k, ZERO))
-        a_out = money(actual_out.get(k, ZERO))
-        p_in = money(planned_in.get(k, ZERO))
-        a_in = money(actual_in.get(k, ZERO))
-
-        is_past = k < current_key
-        is_current = k == current_key
-
-        # Effective figures: actuals for past/current, planned for future.
-        if is_past or is_current:
-            eff_out = a_out
-            eff_in = a_in
-        else:
-            eff_out = p_out
-            eff_in = p_in
-
-        net = money(eff_in - eff_out)
-        cumulative = money(cumulative + net)
-
+        e = _eff_month(buckets, k, current_key)
+        cumulative = money(cumulative + e["net_try"])
         rows.append(
             {
                 "month": k,
                 "year": y,
                 "month_num": m,
-                "planned_out_try": p_out,
-                "actual_out_try": a_out,
-                "planned_in_try": p_in,
-                "actual_in_try": a_in,
-                "net_try": net,
+                "planned_out_try": e["planned_out_try"],
+                "actual_out_try": e["actual_out_try"],
+                "planned_in_try": e["planned_in_try"],
+                "actual_in_try": e["actual_in_try"],
+                "net_try": e["net_try"],
                 "cumulative_try": cumulative,
-                "is_past": is_past,
-                "is_current": is_current,
+                "is_past": e["is_past"],
+                "is_current": e["is_current"],
             }
         )
     return rows

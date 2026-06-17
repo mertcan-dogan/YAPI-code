@@ -5,7 +5,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.calculations import compute_monthly_cashflow, compute_project_financials
+from app.calculations import compute_monthly_cashflow, compute_project_financials, opening_balance
 from app.calculations.money import D, money
 from app.models.budget_line_item import BudgetLineItem
 from app.models.client_invoice import ClientInvoice
@@ -98,6 +98,19 @@ def project_financials(
 def project_cashflow(db: Session, project: Project, today: date | None = None) -> list[dict]:
     costs, invoices, _ = load_project_inputs(db, project)
     return compute_monthly_cashflow(costs, invoices, today=today)
+
+
+def project_cashflow_window(
+    db: Session, project: Project, from_month: str | None = None,
+    to_month: str | None = None, today: date | None = None,
+) -> dict:
+    """Cashflow rows for a custom month range (YYYY-MM..YYYY-MM) plus the opening
+    balance carried in from before the range. Omitting from/to falls back to the
+    fixed rolling window with a zero opening balance (today's behavior)."""
+    costs, invoices, _ = load_project_inputs(db, project)
+    rows = compute_monthly_cashflow(costs, invoices, today=today, from_month=from_month, to_month=to_month)
+    opening = opening_balance(costs, invoices, from_month, today=today) if (from_month and to_month) else money(D(0))
+    return {"rows": rows, "opening_balance_try": opening}
 
 
 # --------------------------------------------------------------------------- #

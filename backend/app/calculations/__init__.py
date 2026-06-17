@@ -6,7 +6,7 @@ renders values returned by these functions.
 """
 from app.calculations.money import D, money, pct, safe_div
 from app.calculations.project_financials import compute_project_financials
-from app.calculations.cashflow import compute_monthly_cashflow
+from app.calculations.cashflow import compute_monthly_cashflow, opening_balance
 from app.calculations.rag import compute_rag_status
 from app.calculations.equipment import equipment_cost, equipment_duration_days
 from app.calculations.subcontractor import (
@@ -21,6 +21,7 @@ __all__ = [
     "safe_div",
     "compute_project_financials",
     "compute_monthly_cashflow",
+    "opening_balance",
     "compute_rag_status",
     "equipment_cost",
     "equipment_duration_days",
