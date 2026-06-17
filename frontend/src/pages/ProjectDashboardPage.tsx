@@ -32,7 +32,9 @@ interface MetricRowDef {
   label: string;
   tryValue?: string | null;
   usdValue?: string | null;
-  pct: number;
+  // Proportion (money mode) or the value itself (percent mode). `null` means the
+  // denominator was 0 (no valid proportion) → render "—", never "%0,0".
+  pct: number | null;
   alert?: "amber" | "red" | null;
   kpi: KpiInfo;
 }
@@ -116,7 +118,7 @@ export default function ProjectDashboardPage() {
     const t = setTimeout(() => setHighlightCostId(null), 2500);
     return () => clearTimeout(t);
   }, [searchParams, setSearchParams]);
-  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock }>(
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock; milestones?: { total: number } }>(
     `/projects/${id}/dashboard`
   );
   const showUsd = useShowUsd(); // CR-014-D
@@ -299,11 +301,12 @@ export default function ProjectDashboardPage() {
   // Bütçe. USD shown only where the dashboard's USD block carries it, else "—".
   const contract = toNumber(f?.contract_value_try);
   const revised = toNumber(fac?.revised_budget_try ?? f?.revised_budget_try);
-  const shareOf = (base: number, v?: string | null) => (base > 0 ? (toNumber(v) / base) * 100 : 0);
+  // Divide-by-zero guard: a 0 base yields no proportion → null → renders "—".
+  const shareOf = (base: number, v?: string | null): number | null => (base > 0 ? (toNumber(v) / base) * 100 : null);
 
   const revenueRows: MetricRowDef[] = [
     {
-      label: "Sözleşme Değeri", tryValue: f?.contract_value_try, pct: contract > 0 ? 100 : 0,
+      label: "Sözleşme Değeri", tryValue: f?.contract_value_try, pct: contract > 0 ? 100 : null,
       kpi: { title: "Sözleşme Değeri", value: formatCurrency(f?.contract_value_try), accentColor: "#2563EB",
         description: "Proje sözleşme bedeli — işverenle anlaşılan toplam gelir (KDV hariç)." },
     },
@@ -340,7 +343,7 @@ export default function ProjectDashboardPage() {
         description: "Projenin başlangıçtaki onaylı bütçesi (ek işler hariç)." },
     },
     {
-      label: "Revize Bütçe", tryValue: fac?.revised_budget_try, pct: revised > 0 ? 100 : 0,
+      label: "Revize Bütçe", tryValue: fac?.revised_budget_try, pct: revised > 0 ? 100 : null,
       kpi: { title: "Revize Bütçe", value: formatCurrency(fac?.revised_budget_try), accentColor: "#06B6D4",
         description: "Onaylı ek işler eklendikten sonraki güncel bütçe." },
     },
@@ -391,9 +394,12 @@ export default function ProjectDashboardPage() {
     },
   ];
 
-  // Proje Sağlığı — completion vs cost-burn vs schedule-elapsed.
+  // Proje Sağlığı — completion vs cost-burn vs schedule-elapsed. `hasMilestones`
+  // (CR-019-B payload) means there is objective progress data, so a 0 completion
+  // is real rather than a blank default.
   const health = computeProjectHealth({
     completionPct: toNumber(f?.completion_pct),
+    hasMilestones: (data?.milestones?.total ?? 0) > 0,
     actualCostTry: toNumber(f?.total_actual_with_vat_try),
     revisedBudgetTry: revised,
     startDate: p?.start_date,
@@ -579,21 +585,28 @@ export default function ProjectDashboardPage() {
             {HEALTH_SIGNAL_META[health.signal].label}
           </div>
           <div className="space-y-3">
-            <HealthBar label="% Tamamlandı" pct={health.completionPct} color="#2563EB" />
-            <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={HEALTH_SIGNAL_META[health.signal].color} />
-            <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" />
+            <HealthBar label="% Tamamlandı" pct={health.completionKnown ? health.completionPct : null} color="#2563EB" emptyNote="Yeterli veri yok" />
+            <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={HEALTH_SIGNAL_META[health.signal].color} emptyNote="Bütçe girilmemiş" />
+            <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" emptyNote="Tarih girilmemiş" />
           </div>
           <div className="rounded-lg bg-bg p-3 text-sm text-text-secondary">
             <p className="mb-1"><b className="text-text-primary">% Tamamlandı:</b> işin fiziksel ilerleme oranı.</p>
             <p className="mb-1"><b className="text-text-primary">% Bütçe Harcandı:</b> gerçekleşen maliyetin revize bütçeye oranı.</p>
             <p><b className="text-text-primary">% Süre Geçti:</b> planlanan takvimin bugüne kadar geçen oranı.</p>
           </div>
-          <div className="rounded-lg border border-border p-3 text-sm">
-            <div className="mb-1 flex justify-between"><span className="text-text-secondary">Maliyet − İlerleme farkı</span>
-              <span className={cn("tabular font-medium", health.costGap > 5 ? "text-danger" : "text-text-primary")}>{health.costGap >= 0 ? "+" : ""}{health.costGap.toFixed(1)} puan</span></div>
-            <div className="flex justify-between"><span className="text-text-secondary">Süre − İlerleme farkı</span>
-              <span className={cn("tabular font-medium", health.timeGap > 5 ? "text-danger" : "text-text-primary")}>{health.timeGap >= 0 ? "+" : ""}{health.timeGap.toFixed(1)} puan</span></div>
-          </div>
+          {/* Variance rows render only for indicators that exist (no false figures). */}
+          {(health.costGap != null || health.timeGap != null) && (
+            <div className="rounded-lg border border-border p-3 text-sm">
+              {health.costGap != null && (
+                <div className="mb-1 flex justify-between"><span className="text-text-secondary">Maliyet − İlerleme farkı</span>
+                  <span className={cn("tabular font-medium", health.costGap > 5 ? "text-danger" : "text-text-primary")}>{health.costGap >= 0 ? "+" : ""}{health.costGap.toFixed(1)} puan</span></div>
+              )}
+              {health.timeGap != null && (
+                <div className="flex justify-between"><span className="text-text-secondary">Süre − İlerleme farkı</span>
+                  <span className={cn("tabular font-medium", health.timeGap > 5 ? "text-danger" : "text-text-primary")}>{health.timeGap >= 0 ? "+" : ""}{health.timeGap.toFixed(1)} puan</span></div>
+              )}
+            </div>
+          )}
           <p className="text-sm leading-relaxed text-text-primary">{healthExplanation(health)}</p>
         </div>
       </Modal>
@@ -875,7 +888,8 @@ function MetricTable({ title, rows, mode, showUsd, onRowClick, headerExtra }: {
           </thead>
           <tbody>
             {rows.map((r) => {
-              const barW = Math.max(0, Math.min(100, r.pct));
+              // null pct = no valid denominator → show "—" + an empty bar.
+              const barW = r.pct == null ? 0 : Math.max(0, Math.min(100, r.pct));
               const onActivate = () => onRowClick(r.kpi);
               return (
                 <tr
@@ -902,7 +916,7 @@ function MetricTable({ title, rows, mode, showUsd, onRowClick, headerExtra }: {
                         <div className="h-full rounded-full bg-brand" style={{ width: `${barW}%` }} />
                       </div>
                       <span className={cn("tabular w-14 text-right", mode === "percent" ? alertCls(r.alert) || "text-text-primary" : "text-text-secondary")}>
-                        {formatPct(r.pct)}
+                        {r.pct == null ? "—" : formatPct(r.pct)}
                       </span>
                     </div>
                   </td>
@@ -916,8 +930,22 @@ function MetricTable({ title, rows, mode, showUsd, onRowClick, headerExtra }: {
   );
 }
 
-// One labeled progress bar for the Proje Sağlığı card/modal.
-function HealthBar({ label, pct, color }: { label: string; pct: number; color: string }) {
+// One labeled progress bar for the Proje Sağlığı card/modal. A null pct means the
+// value can't be computed (no budget / no dates / no progress data) → show "—" and
+// a neutral note instead of a confident "%0,0".
+function HealthBar({ label, pct, color, emptyNote }: { label: string; pct: number | null; color: string; emptyNote?: string }) {
+  if (pct == null) {
+    return (
+      <div>
+        <div className="mb-1 flex items-center justify-between text-xs">
+          <span className="text-text-secondary">{label}</span>
+          <span className="tabular font-medium text-text-disabled">—</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-bg" />
+        {emptyNote && <p className="mt-0.5 text-[10px] italic text-text-disabled">{emptyNote}</p>}
+      </div>
+    );
+  }
   const w = Math.max(0, Math.min(100, pct));
   return (
     <div>
@@ -955,9 +983,9 @@ function ProjectHealthCard({ health, onOpen }: { health: ProjectHealth; onOpen: 
         </div>
       </div>
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
-        <HealthBar label="% Tamamlandı" pct={health.completionPct} color="#2563EB" />
-        <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={meta.color} />
-        <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" />
+        <HealthBar label="% Tamamlandı" pct={health.completionKnown ? health.completionPct : null} color="#2563EB" emptyNote="Yeterli veri yok" />
+        <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={meta.color} emptyNote="Bütçe girilmemiş" />
+        <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" emptyNote="Tarih girilmemiş" />
       </div>
       <p className="px-4 pb-3 text-xs leading-snug text-text-secondary">{healthExplanation(health)}</p>
     </div>

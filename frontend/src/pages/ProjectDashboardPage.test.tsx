@@ -165,4 +165,40 @@ describe("ProjectDashboardPage redesign", () => {
     render(createElement(ProjectDashboardPage));
     expect(screen.getByText(/Maliyet dağılımı yüklenemedi/)).toBeInTheDocument();
   });
+
+  // --- Display fixes: divide-by-zero + neutral health ---------------------- #
+  it("renders '—' (not %0,0) in the % columns when the denominators are 0", () => {
+    // Headline budget is 0 (real project): no Sözleşme/Revize base → no proportion.
+    const zeroProject = { ...PROJECT, completion_pct: "0", target_margin_pct: null };
+    const zeroFin = {
+      ...FINANCIALS, contract_value_try: "0", total_invoiced_try: "0", total_collected_try: "0",
+      total_outstanding_try: "0", total_retention_try: "0", revised_budget_try: "0",
+      total_actual_with_vat_try: "0", remaining_budget_try: "0", completion_pct: "0",
+      margin_pct: "5", // Kârlılık shows a real value, not a divide
+    };
+    const zeroFac = {
+      ...FAC, original_budget_try: "0", revised_budget_try: "0", cost_to_date_try: "0",
+      cost_to_complete_try: "0", forecast_final_cost_try: "0", forecast_final_margin_pct: "8",
+    };
+    h.dashboard = { data: { ...DASHBOARD, project: zeroProject, financials: zeroFin, forecast_at_completion: zeroFac }, meta: null, loading: false, error: null, refetch: () => {} };
+    render(createElement(ProjectDashboardPage));
+
+    // No "%0,0" anywhere — zero-denominator proportions render as "—".
+    expect(screen.queryByText("%0,0")).not.toBeInTheDocument();
+    // The em-dash proportion is present in the % columns.
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("Proje Sağlığı shows the neutral state (not a false 'Riskli') when completion + budget are unset", () => {
+    const zeroProject = { ...PROJECT, completion_pct: "0", target_margin_pct: null };
+    const zeroFin = { ...FINANCIALS, revised_budget_try: "0", total_actual_with_vat_try: "0", completion_pct: "0", margin_pct: "5" };
+    const zeroFac = { ...FAC, revised_budget_try: "0" };
+    // No `milestones` block → no objective progress → completion is a blank default.
+    h.dashboard = { data: { ...DASHBOARD, project: zeroProject, financials: zeroFin, forecast_at_completion: zeroFac }, meta: null, loading: false, error: null, refetch: () => {} };
+    render(createElement(ProjectDashboardPage));
+
+    expect(screen.getByText("Proje Sağlığı")).toBeInTheDocument();
+    expect(screen.queryByText("Riskli")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Yeterli veri yok").length).toBeGreaterThan(0);
+  });
 });

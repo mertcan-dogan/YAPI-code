@@ -73,16 +73,58 @@ describe("computeProjectHealth", () => {
     expect(h.signal).toBe("red");
   });
 
-  it("handles a zero budget without dividing by zero", () => {
+  it("a zero budget yields a null cost% (no divide-by-zero, not 0)", () => {
     const h = computeProjectHealth({
-      completionPct: 0,
+      completionPct: 40, // a real completion so only the budget is missing
       actualCostTry: 0,
       revisedBudgetTry: 0,
-      today: new Date("2026-01-01"),
+      today: new Date("2026-06-01"),
       ...dates,
     });
-    expect(h.costPct).toBe(0);
-    expect(h.signal).toBe("green");
+    expect(h.costPct).toBeNull();
+    expect(h.costKnown).toBe(false);
+    expect(h.costGap).toBeNull();
+  });
+
+  it("is UNKNOWN (no false red) when completion is a blank default and there are no milestones", () => {
+    // Both dates in the past → time would be 100%, but completion is an unset 0:
+    // the old code returned a confident red; now it must stay neutral.
+    const h = computeProjectHealth({
+      completionPct: 0,
+      actualCostTry: 500,
+      revisedBudgetTry: 1000,
+      startDate: "2020-01-01",
+      plannedEndDate: "2020-12-31",
+      today: new Date("2026-06-01"),
+    });
+    expect(h.completionKnown).toBe(false);
+    expect(h.signal).toBe("unknown");
+  });
+
+  it("treats a 0 completion as REAL when milestones exist, so it can flag risk", () => {
+    const h = computeProjectHealth({
+      completionPct: 0,
+      hasMilestones: true, // objective progress data exists (0% done)
+      actualCostTry: 700,
+      revisedBudgetTry: 1000,
+      startDate: "2020-01-01",
+      plannedEndDate: "2020-12-31",
+      today: new Date("2026-06-01"),
+    });
+    expect(h.completionKnown).toBe(true);
+    expect(h.signal).toBe("red");
+  });
+
+  it("is UNKNOWN when there is nothing to compare against (no budget, no dates)", () => {
+    const h = computeProjectHealth({
+      completionPct: 40,
+      actualCostTry: 0,
+      revisedBudgetTry: 0,
+      startDate: null,
+      plannedEndDate: null,
+      today: new Date("2026-06-01"),
+    });
+    expect(h.signal).toBe("unknown");
   });
 });
 
@@ -111,5 +153,20 @@ describe("healthExplanation", () => {
       ...dates,
     });
     expect(healthExplanation(h)).toContain("uyumlu");
+  });
+
+  it("gives a neutral note (not a risk verdict) when progress data is missing", () => {
+    const h = computeProjectHealth({
+      completionPct: 0, // blank default, no milestones
+      actualCostTry: 500,
+      revisedBudgetTry: 1000,
+      startDate: "2020-01-01",
+      plannedEndDate: "2020-12-31",
+      today: new Date("2026-06-01"),
+    });
+    const msg = healthExplanation(h);
+    expect(msg).toContain("İlerleme verisi yok");
+    // The "süre %100 geçti ama %0 tamamlandı" message must NOT fire here.
+    expect(msg).not.toContain("ilerlemenin önünde");
   });
 });
