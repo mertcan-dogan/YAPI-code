@@ -153,6 +153,67 @@ def project_usd_totals(db: Session, project: Project) -> dict:
     return usd_aggregates(db, project_ids=[project.id])
 
 
+def period_summary(db: Session, project: Project, from_date: date, to_date: date) -> dict:
+    """Activity totals for a project within [from_date, to_date] (inclusive).
+
+    Cost INCURRED by entry_date (VAT-incl, matching the cashflow's actual-out rule
+    and the dashboard exclusions), invoiced by invoice_date (net amount_try, like
+    the headline "İşverene Faturalanan"), collected by date_received. USD figures
+    are the SUM of the CR-014 ``amount_usd`` snapshots on the same rows, with a
+    count of contributing rows that lack a snapshot. Exact Decimal; dialect-safe
+    (Python date bounds work on SQLite + Postgres). Company-scoped.
+    """
+    costs = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id,
+            CostEntry.company_id == project.company_id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),  # match dashboard exclusion
+            CostEntry.entry_date >= from_date,
+            CostEntry.entry_date <= to_date,
+        )
+    ).scalars().all()
+    invoices = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id == project.id,
+            ClientInvoice.company_id == project.company_id,
+            ClientInvoice.is_deleted.is_(False),
+        )
+    ).scalars().all()
+
+    issued = [i for i in invoices if i.invoice_date and from_date <= i.invoice_date <= to_date]
+    collected = [i for i in invoices if i.date_received and from_date <= i.date_received <= to_date]
+
+    cost_incurred = money(sum((D(c.total_with_vat_try) for c in costs), D(0)))
+    invoiced = money(sum((D(i.amount_try) for i in issued), D(0)))
+    collected_try = money(sum((D(i.amount_received_try) for i in collected), D(0)))
+
+    def _usd_sum(rows):
+        return money(sum((D(r.amount_usd) for r in rows if r.amount_usd is not None), D(0)))
+
+    # One missing-snapshot count over the distinct contributing rows.
+    missing_invoice_ids = {i.id for i in issued if i.amount_usd is None} | {
+        i.id for i in collected if i.amount_usd is None
+    }
+    usd_missing = sum(1 for c in costs if c.amount_usd is None) + len(missing_invoice_ids)
+
+    return {
+        "from_date": from_date.isoformat(),
+        "to_date": to_date.isoformat(),
+        "cost_incurred_try": str(cost_incurred),
+        "invoiced_try": str(invoiced),
+        "collected_try": str(collected_try),
+        "net_try": str(money(collected_try - cost_incurred)),
+        "cost_incurred_usd": str(_usd_sum(costs)),
+        "invoiced_usd": str(_usd_sum(issued)),
+        "collected_usd": str(_usd_sum(collected)),
+        "usd_missing_count": usd_missing,
+        "cost_count": len(costs),
+        "invoice_count": len(issued),
+        "collected_count": len(collected),
+    }
+
+
 def cash_need_windows(db: Session, project: Project, today: date | None = None) -> list[dict]:
     """CR-004-M: net cash need over the next 30/60/90 days.
 

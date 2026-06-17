@@ -18,11 +18,39 @@ import { useAISummaryStore } from "@/store/aiSummary";
 import type { ProjectFinancials, Project, ResidentialAggregates } from "@/types";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, formatUSD, toNumber } from "@/utils/format";
 import { shouldShowFinancingHint } from "@/utils/financing";
+import { dashRangeParams, type DashPreset } from "@/utils/dashboardRange";
+import { cn } from "@/lib/cn";
 import { Banknote, Building2, Clock, Coins, FileText, Hammer, Layers, Pencil, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const RESIDENTIAL_TYPES = new Set(["building_residential", "urban_transformation"]);
+
+// CR: dashboard date-range filter — mirrors the CashFlowPage preset pattern.
+const DASH_PRESETS: { key: DashPreset; label: string }[] = [
+  { key: "3m", label: "Son 3 Ay" },
+  { key: "6m", label: "Son 6 Ay" },
+  { key: "12m", label: "Son 12 Ay" },
+  { key: "year", label: "Bu Yıl" },
+  { key: "all", label: "Tümü" },
+  { key: "custom", label: "Özel" },
+];
+
+interface PeriodSummary {
+  from_date: string;
+  to_date: string;
+  cost_incurred_try: string;
+  invoiced_try: string;
+  collected_try: string;
+  net_try: string;
+  cost_incurred_usd: string;
+  invoiced_usd: string;
+  collected_usd: string;
+  usd_missing_count: number;
+  cost_count: number;
+  invoice_count: number;
+  collected_count: number;
+}
 
 interface FAC {
   original_budget_try: string;
@@ -218,8 +246,28 @@ export default function ProjectDashboardPage() {
   const remaining = toNumber(f?.remaining_budget_try);
   const actualVsBudget = toNumber(f?.total_actual_with_vat_try) / Math.max(toNumber(f?.revised_budget_try), 1);
 
-  // Build S-curve + monthly cashflow series from the returned rolling window.
-  const cf = data?.cashflow ?? [];
+  // CR: date-range filter. Only "Dönem Özeti" + the time-series charts respond;
+  // the headline KPIs (Sözleşme, Marj, Tahmin…) stay full-project. Default "Tümü".
+  const [preset, setPreset] = useState<DashPreset>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const r = dashRangeParams(preset, customFrom, customTo);
+  const { rangeActive, label: rangeLabel, invalid: customInvalid } = r;
+
+  // Period summary (always fetched; "Tümü" uses wide bounds = whole project).
+  const period = useFetch<PeriodSummary>(`/projects/${id}/period-summary`, {
+    from_date: r.from_date,
+    to_date: r.to_date,
+  });
+  const ps = period.data;
+  // Charts: ranged cashflow when a range is active, else the dashboard's window.
+  const cfRange = useFetch<any[]>(
+    rangeActive ? `/projects/${id}/cashflow` : null,
+    rangeActive ? { from_month: r.from_month, to_month: r.to_month } : undefined,
+  );
+
+  // Build S-curve + monthly cashflow series from the (optionally ranged) window.
+  const cf = rangeActive ? (cfRange.data ?? []) : (data?.cashflow ?? []);
   let plannedCum = 0;
   let actualCum = 0;
   const sCurve = cf.map((r) => {
@@ -296,6 +344,50 @@ export default function ProjectDashboardPage() {
           {!narrLoading && narrative?.narrative && <AIDisclaimer />}
         </div>
       </Modal>
+
+      {/* CR: date-range filter — only "Dönem Özeti" + the time-series charts below
+          respond to it. The headline KPIs stay full-project. */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1 rounded-md border border-border p-0.5">
+          {DASH_PRESETS.map((pr) => (
+            <button
+              key={pr.key}
+              onClick={() => setPreset(pr.key)}
+              className={cn("rounded px-3 py-1 text-sm", preset === pr.key ? "bg-primary text-white" : "text-text-secondary")}
+            >
+              {pr.label}
+            </button>
+          ))}
+        </div>
+        {preset === "custom" && (
+          <div className="flex items-center gap-2 text-sm">
+            <input type="month" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+              className="rounded-md border border-border bg-surface px-2 py-1" aria-label="Başlangıç ayı" />
+            <span className="text-text-secondary">→</span>
+            <input type="month" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+              className="rounded-md border border-border bg-surface px-2 py-1" aria-label="Bitiş ayı" />
+            {customInvalid && <span className="text-xs text-danger">Başlangıç bitişten sonra olamaz</span>}
+          </div>
+        )}
+      </div>
+      <p className="mb-4 text-xs text-text-secondary">
+        Ana göstergeler (Sözleşme, Kâr Marjı, Tamamlanmada Tahmin) <b>tüm projeyi</b> gösterir;
+        yalnızca <b>Dönem Özeti</b> ve grafikler seçili dönemi yansıtır.
+      </p>
+
+      {/* Dönem Özeti — period activity totals (responds to the range). */}
+      <div className="mb-4 rounded-xl border border-border bg-surface shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+          <span className="text-sm font-semibold text-primary">Dönem Özeti — {rangeLabel}</span>
+          {ps && (ps.usd_missing_count ?? 0) > 0 && <UsdMissingNote count={ps.usd_missing_count} />}
+        </div>
+        <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+          <PeriodStat label="Maliyet (dönem)" try_={ps?.cost_incurred_try} usd={ps?.cost_incurred_usd} showUsd={showUsd} count={ps?.cost_count} loading={period.loading} />
+          <PeriodStat label="Faturalanan (dönem)" try_={ps?.invoiced_try} usd={ps?.invoiced_usd} showUsd={showUsd} count={ps?.invoice_count} loading={period.loading} />
+          <PeriodStat label="Tahsil Edilen (dönem)" try_={ps?.collected_try} usd={ps?.collected_usd} showUsd={showUsd} count={ps?.collected_count} loading={period.loading} />
+          <PeriodStat label="Net (Tahsilat − Maliyet)" try_={ps?.net_try} showUsd={false} loading={period.loading} negative={toNumber(ps?.net_try) < 0} />
+        </div>
+      </div>
 
       {/* CR-014-D: USD snapshot totals (point-in-time) + ₺/$/İkisi de toggle.
           USD is a derived snapshot sum, NOT a live conversion. "—"/warning when
@@ -636,6 +728,22 @@ function ResStat({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-[11px] text-text-secondary">{label}</div>
       <div className="font-semibold text-primary">{value}</div>
+    </div>
+  );
+}
+
+// CR: compact stat for the Dönem Özeti card (TRY + optional USD + entry count).
+function PeriodStat({ label, try_, usd, showUsd, count, loading, negative }: {
+  label: string; try_?: string; usd?: string; showUsd?: boolean; count?: number; loading?: boolean; negative?: boolean;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] text-text-secondary">{label}</div>
+      <div className={cn("font-semibold tabular", negative ? "text-danger" : "text-primary")}>
+        {loading ? "…" : formatCurrency(try_)}
+      </div>
+      {showUsd && !loading && usd != null && <div className="text-[11px] tabular text-text-secondary">{formatUSD(usd)}</div>}
+      {count != null && !loading && <div className="text-[10px] text-text-disabled">{count} kayıt</div>}
     </div>
   );
 }

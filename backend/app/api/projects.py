@@ -178,6 +178,28 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
     )
 
 
+@router.get("/projects/{project_id}/period-summary")
+def project_period_summary(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    from_date: str,
+    to_date: str,
+    db: Session = Depends(get_db),
+):
+    """Activity totals (cost incurred / invoiced / collected + USD) for a date
+    range — the dashboard's "Dönem Özeti". Headline KPIs stay full-project; only
+    this responds to the range. Company-scoped via get_company_project."""
+    project = get_company_project(db, project_id, user)
+    try:
+        start = date.fromisoformat(from_date)
+        end = date.fromisoformat(to_date)
+    except (ValueError, TypeError):
+        raise APIError(422, "INVALID_DATE", "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
+    if start > end:
+        raise APIError(422, "INVALID_RANGE", "Başlangıç tarihi bitiş tarihinden sonra olamaz")
+    return success(fin_service.period_summary(db, project, start, end))
+
+
 @router.post("/projects/{project_id}/ai-narrative")
 def project_ai_narrative(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     """CR-003-F: AI-written 2-3 sentence project summary."""
