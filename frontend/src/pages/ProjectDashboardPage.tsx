@@ -1,11 +1,10 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
-import { AIDisclaimer, Button, Modal } from "@/components/ui";
+import { AIDisclaimer, Button, Modal, Skeleton } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailModal";
 import { CurrencyToggle, UsdMissingNote, useShowUsd } from "@/components/currency";
 import { EmptyState, LoadError } from "@/components/EmptyState";
-import { KPICard } from "@/components/KPICard";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
 import { ResidentialDetailsEditor, unitsForPayload, type UnitRow } from "@/components/UnitScheduleEditor";
@@ -16,13 +15,27 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import { useAISummaryStore } from "@/store/aiSummary";
 import type { ProjectFinancials, Project, ResidentialAggregates } from "@/types";
-import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, formatUSD, toNumber } from "@/utils/format";
+import { formatCurrency, formatDate, formatDateTime, formatPct, formatUSD, toNumber } from "@/utils/format";
 import { shouldShowFinancingHint } from "@/utils/financing";
 import { dashRangeParams, type DashPreset } from "@/utils/dashboardRange";
+import { computeProjectHealth, healthExplanation, HEALTH_SIGNAL_META, type ProjectHealth } from "@/utils/projectHealth";
 import { cn } from "@/lib/cn";
-import { Banknote, Building2, Clock, Coins, FileText, Hammer, Layers, Pencil, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
+import { Activity, Building2, ChevronRight, Coins, Pencil, PieChart, RefreshCw, Sparkles } from "lucide-react";
+import * as React from "react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+
+// One row in a "story" metric table: a Turkish label, the ₺ amount, an optional
+// USD snapshot (else "—"), a % (proportion in money mode / the value itself in
+// percent mode), and the KpiInfo opened on click. `alert` tints the figure.
+interface MetricRowDef {
+  label: string;
+  tryValue?: string | null;
+  usdValue?: string | null;
+  pct: number;
+  alert?: "amber" | "red" | null;
+  kpi: KpiInfo;
+}
 
 const RESIDENTIAL_TYPES = new Set(["building_residential", "urban_transformation"]);
 
@@ -240,8 +253,6 @@ export default function ProjectDashboardPage() {
 
   useEffect(() => { if (id) loadNarrative(); /* eslint-disable-next-line */ }, [id]);
 
-  const facMargin = toNumber(fac?.forecast_final_margin_pct);
-
   const margin = toNumber(f?.margin_pct);
   const remaining = toNumber(f?.remaining_budget_try);
   const actualVsBudget = toNumber(f?.total_actual_with_vat_try) / Math.max(toNumber(f?.revised_budget_try), 1);
@@ -282,6 +293,113 @@ export default function ProjectDashboardPage() {
     cum += inV - outV;
     return { month: r.month, out: outV, in: inV, cumulative: cum };
   });
+
+  // --- Three "story" tables (whole-project; unaffected by the date-range filter).
+  // % proportions: revenue rows share Sözleşme Değeri, budget rows share Revize
+  // Bütçe. USD shown only where the dashboard's USD block carries it, else "—".
+  const contract = toNumber(f?.contract_value_try);
+  const revised = toNumber(fac?.revised_budget_try ?? f?.revised_budget_try);
+  const shareOf = (base: number, v?: string | null) => (base > 0 ? (toNumber(v) / base) * 100 : 0);
+
+  const revenueRows: MetricRowDef[] = [
+    {
+      label: "Sözleşme Değeri", tryValue: f?.contract_value_try, pct: contract > 0 ? 100 : 0,
+      kpi: { title: "Sözleşme Değeri", value: formatCurrency(f?.contract_value_try), accentColor: "#2563EB",
+        description: "Proje sözleşme bedeli — işverenle anlaşılan toplam gelir (KDV hariç)." },
+    },
+    {
+      label: "İşverene Faturalanan", tryValue: f?.total_invoiced_try, usdValue: data?.usd?.invoices.amount_usd, pct: shareOf(contract, f?.total_invoiced_try),
+      kpi: { title: "İşverene Faturalanan", value: formatCurrency(f?.total_invoiced_try), accentColor: "#2563EB",
+        description: "İşverene kesilen hakediş ve faturaların toplam tutarı.",
+        action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) } },
+    },
+    {
+      label: "Tahsil Edilen", tryValue: f?.total_collected_try, pct: shareOf(contract, f?.total_collected_try),
+      kpi: { title: "Tahsil Edilen", value: formatCurrency(f?.total_collected_try), accentColor: "#059669",
+        description: "İşverenden bugüne kadar tahsil edilen toplam tutar.",
+        action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) } },
+    },
+    {
+      label: "Bekleyen Tahsilat", tryValue: f?.total_outstanding_try, pct: shareOf(contract, f?.total_outstanding_try),
+      kpi: { title: "Bekleyen Tahsilat", value: formatCurrency(f?.total_outstanding_try), accentColor: "#D97706",
+        description: "Faturalanan ancak henüz tahsil edilmemiş tutar — açık alacaklar.",
+        action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) } },
+    },
+    {
+      label: "Hakediş Kesintisi", tryValue: f?.total_retention_try, pct: shareOf(contract, f?.total_retention_try),
+      kpi: { title: "Hakediş Kesintisi", value: formatCurrency(f?.total_retention_try), accentColor: "#0E1525",
+        description: "Hakedişlerden kesilen teminat (stopaj/teminat) toplamı.",
+        action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) } },
+    },
+  ];
+
+  const budgetRows: MetricRowDef[] = [
+    {
+      label: "Orijinal Bütçe", tryValue: fac?.original_budget_try, pct: shareOf(revised, fac?.original_budget_try),
+      kpi: { title: "Orijinal Bütçe", value: formatCurrency(fac?.original_budget_try), accentColor: "#2563EB",
+        description: "Projenin başlangıçtaki onaylı bütçesi (ek işler hariç)." },
+    },
+    {
+      label: "Revize Bütçe", tryValue: fac?.revised_budget_try, pct: revised > 0 ? 100 : 0,
+      kpi: { title: "Revize Bütçe", value: formatCurrency(fac?.revised_budget_try), accentColor: "#06B6D4",
+        description: "Onaylı ek işler eklendikten sonraki güncel bütçe." },
+    },
+    {
+      label: "Gerçekleşen Maliyet", tryValue: f?.total_actual_with_vat_try, usdValue: data?.usd?.costs.amount_usd,
+      pct: shareOf(revised, f?.total_actual_with_vat_try), alert: actualVsBudget > 0.8 ? "amber" : null,
+      kpi: { title: "Gerçekleşen Maliyet", value: formatCurrency(f?.total_actual_with_vat_try), accentColor: "#F59E0B",
+        description: "Bu projede bugüne kadar gerçekleşen toplam maliyet (KDV dahil). Revize bütçenin %80'ini aşınca uyarı verir.",
+        action: { label: "Maliyet kayıtlarını gör", onClick: () => setCostDrawer(true) } },
+    },
+    {
+      label: "Kalan Bütçe", tryValue: f?.remaining_budget_try, pct: shareOf(revised, f?.remaining_budget_try), alert: remaining < 0 ? "red" : null,
+      kpi: { title: "Kalan Bütçe", value: formatCurrency(f?.remaining_budget_try), accentColor: "#06B6D4",
+        description: "Revize bütçeden bugüne kadar harcanan tutar düşüldükten sonra kalan bakiye. Negatif değer bütçe aşımını gösterir.",
+        action: { label: "Bütçeye git", onClick: () => navigate(`/projects/${id}/budget`) } },
+    },
+    {
+      label: "Tamamlamaya Kalan Maliyet", tryValue: fac?.cost_to_complete_try, pct: shareOf(revised, fac?.cost_to_complete_try),
+      alert: toNumber(fac?.cost_to_complete_try) > toNumber(fac?.revised_budget_try) ? "amber" : null,
+      kpi: { title: "Tamamlamaya Kalan Maliyet", value: formatCurrency(fac?.cost_to_complete_try), accentColor: "#D97706",
+        description: "İşi tamamlamak için gereken tahmini kalan maliyet (tahmini final maliyet eksi bugüne kadar gerçekleşen)." },
+    },
+    {
+      label: "Tahmini Final Maliyet", tryValue: fac?.forecast_final_cost_try, pct: shareOf(revised, fac?.forecast_final_cost_try), alert: fac?.over_budget ? "red" : null,
+      kpi: { title: "Tahmini Final Maliyet", value: formatCurrency(fac?.forecast_final_cost_try), accentColor: "#7C3AED",
+        description: "Mevcut gidişata göre projenin tahmini toplam final maliyeti. Revize bütçeyi aşarsa kırmızı uyarı verir." },
+    },
+  ];
+
+  const profitRows: MetricRowDef[] = [
+    {
+      label: "Güncel Kar Marjı", pct: margin, alert: margin < 5 ? "red" : margin < 10 ? "amber" : null,
+      kpi: { title: "Güncel Kar Marjı", value: formatPct(f?.margin_pct), valueKind: "percent", accentColor: "#059669",
+        description: "Sözleşme bedeline göre güncel (gerçekleşen) kar marjı. %10 altında izlenmeli, %5 altında riskli kabul edilir." },
+    },
+    ...(p?.target_margin_pct != null ? [{
+      label: "Hedef Marj", pct: toNumber(p.target_margin_pct),
+      kpi: { title: "Hedef Marj", value: formatPct(p.target_margin_pct), valueKind: "percent" as const, accentColor: "#2563EB",
+        description: "Bu proje için belirlenen hedef kar marjı. Güncel ve tahmini marjı bu hedefle karşılaştırın." },
+    }] : []),
+    {
+      label: financingOn && includeFinancing ? "Tahmini Final Marj (fin. dahil)" : "Tahmini Final Marj",
+      pct: toNumber(shownForecastMargin), alert: toNumber(shownForecastMargin) < 5 ? "red" : toNumber(shownForecastMargin) < 10 ? "amber" : null,
+      kpi: { title: "Tahmini Final Marj", value: formatPct(shownForecastMargin), valueKind: "percent", accentColor: "#059669",
+        description: financingOn && includeFinancing
+          ? "Tahmini finansman maliyeti DAHİL beklenen kar marjı (modellenmiş tahmin — gerçek maliyet değildir). Üstteki kutudan hariç tutabilirsiniz."
+          : "Tahmini final maliyete göre beklenen kar marjı. %10 altında izlenmeli, %5 altında riskli." },
+    },
+  ];
+
+  // Proje Sağlığı — completion vs cost-burn vs schedule-elapsed.
+  const health = computeProjectHealth({
+    completionPct: toNumber(f?.completion_pct),
+    actualCostTry: toNumber(f?.total_actual_with_vat_try),
+    revisedBudgetTry: revised,
+    startDate: p?.start_date,
+    plannedEndDate: p?.planned_end_date,
+  });
+  const [healthOpen, setHealthOpen] = useState(false);
 
   if (error && !loading) {
     return (
@@ -416,107 +534,72 @@ export default function ProjectDashboardPage() {
         <CurrencyToggle />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="Sözleşme Değeri" value={formatCurrencyAbbrev(f?.contract_value_try)} valueTitle={formatCurrency(f?.contract_value_try)} icon={Wallet} accentColor="#2563EB"
-          onClick={() => setKpiDetail({
-            title: "Sözleşme Değeri", value: formatCurrency(f?.contract_value_try), accentColor: "#2563EB",
-            description: "Proje sözleşme bedeli — işverenle anlaşılan toplam gelir (KDV hariç).",
-          })} />
-        <KPICard loading={loading} label="Gerçekleşen Maliyet" value={formatCurrencyAbbrev(f?.total_actual_with_vat_try)} valueTitle={formatCurrency(f?.total_actual_with_vat_try)} icon={Hammer} accentColor="#F59E0B" alert={actualVsBudget > 0.8 ? "amber" : null}
-          onClick={() => setKpiDetail({
-            title: "Gerçekleşen Maliyet", value: formatCurrency(f?.total_actual_with_vat_try), accentColor: "#F59E0B",
-            description: "Bu projede bugüne kadar gerçekleşen toplam maliyet (KDV dahil). Revize bütçenin %80'ini aşınca uyarı verir.",
-            action: { label: "Maliyet kayıtlarını gör", onClick: () => setCostDrawer(true) },
-          })} />
-        <KPICard loading={loading} label="Kalan Bütçe" value={formatCurrencyAbbrev(f?.remaining_budget_try)} valueTitle={formatCurrency(f?.remaining_budget_try)} icon={Coins} accentColor="#06B6D4" alert={remaining < 0 ? "red" : null}
-          onClick={() => setKpiDetail({
-            title: "Kalan Bütçe", value: formatCurrency(f?.remaining_budget_try), accentColor: "#06B6D4",
-            description: "Revize bütçeden bugüne kadar harcanan tutar düşüldükten sonra kalan bakiye. Negatif değer bütçe aşımını gösterir.",
-            action: { label: "Bütçeye git", onClick: () => navigate(`/projects/${id}/budget`) },
-          })} />
-        <KPICard loading={loading} label="Güncel Kar Marjı" value={formatPct(f?.margin_pct)} icon={Percent} accentColor="#059669" alert={margin < 5 ? "red" : margin < 10 ? "amber" : null}
-          onClick={() => setKpiDetail({
-            title: "Güncel Kar Marjı", value: formatPct(f?.margin_pct), valueKind: "percent", accentColor: "#059669",
-            description: "Sözleşme bedeline göre güncel (gerçekleşen) kar marjı. %10 altında izlenmeli, %5 altında riskli kabul edilir.",
-          })} />
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <KPICard loading={loading} label="İşverene Faturalanan" value={formatCurrencyAbbrev(f?.total_invoiced_try)} valueTitle={formatCurrency(f?.total_invoiced_try)} icon={FileText} accentColor="#2563EB"
-          onClick={() => setKpiDetail({
-            title: "İşverene Faturalanan", value: formatCurrency(f?.total_invoiced_try), accentColor: "#2563EB",
-            description: "İşverene kesilen hakediş ve faturaların toplam tutarı.",
-            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
-          })} />
-        <KPICard loading={loading} label="Tahsil Edilen" value={formatCurrencyAbbrev(f?.total_collected_try)} valueTitle={formatCurrency(f?.total_collected_try)} icon={Banknote} accentColor="#059669"
-          onClick={() => setKpiDetail({
-            title: "Tahsil Edilen", value: formatCurrency(f?.total_collected_try), accentColor: "#059669",
-            description: "İşverenden bugüne kadar tahsil edilen toplam tutar.",
-            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
-          })} />
-        <KPICard loading={loading} label="Bekleyen Tahsilat" value={formatCurrencyAbbrev(f?.total_outstanding_try)} valueTitle={formatCurrency(f?.total_outstanding_try)} icon={Clock} accentColor="#D97706"
-          onClick={() => setKpiDetail({
-            title: "Bekleyen Tahsilat", value: formatCurrency(f?.total_outstanding_try), accentColor: "#D97706",
-            description: "Faturalanan ancak henüz tahsil edilmemiş tutar — açık alacaklar.",
-            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
-          })} />
-        <KPICard loading={loading} label="Hakediş Kesintisi" value={formatCurrencyAbbrev(f?.total_retention_try)} valueTitle={formatCurrency(f?.total_retention_try)} icon={Layers} accentColor="#0E1525"
-          onClick={() => setKpiDetail({
-            title: "Hakediş Kesintisi", value: formatCurrency(f?.total_retention_try), accentColor: "#0E1525",
-            description: "Hakedişlerden kesilen teminat (stopaj/teminat) toplamı.",
-            action: { label: "Faturalara git", onClick: () => navigate(`/projects/${id}/invoices`) },
-          })} />
-      </div>
+      {/* Three condensed "story" tables — whole-project (the date range above does
+          not affect them). Each row → KpiDetailModal. */}
+      {loading ? (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="rounded-xl border border-border bg-surface p-4 shadow-sm">
+              <Skeleton className="mb-3 h-4 w-32" />
+              {[0, 1, 2, 3].map((j) => <Skeleton key={j} className="mb-2 h-5 w-full" />)}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3 lg:items-start">
+          <MetricTable title="Gelir & Tahsilat" mode="money" showUsd={showUsd} rows={revenueRows} onRowClick={setKpiDetail} />
+          <MetricTable title="Bütçe & Maliyet" mode="money" showUsd={showUsd} rows={budgetRows} onRowClick={setKpiDetail} />
+          <MetricTable
+            title="Kârlılık"
+            mode="percent"
+            showUsd={showUsd}
+            rows={profitRows}
+            onRowClick={setKpiDetail}
+            headerExtra={financingOn ? (
+              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-text-secondary">
+                <input type="checkbox" className="h-3 w-3 accent-[var(--color-primary)]" checked={includeFinancing} onChange={(e) => setIncludeFinancing(e.target.checked)} />
+                Finansmanı dahil et
+              </label>
+            ) : undefined}
+          />
+        </div>
+      )}
 
       {id && <CostEntriesDrawer open={costDrawer} onClose={() => setCostDrawer(false)} projectId={id} highlightId={highlightCostId} />}
       <KpiDetailModal open={!!kpiDetail} onClose={() => setKpiDetail(null)} kpi={kpiDetail} />
 
-      {/* CR-003-F: Forecast-at-Completion */}
-      <div className="mt-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-primary">Tamamlanmada Tahmin</h2>
-          {financingOn && (
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
-              <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--color-primary)]" checked={includeFinancing} onChange={(e) => setIncludeFinancing(e.target.checked)} />
-              Tahmini finansman maliyetini marja dahil et
-            </label>
-          )}
+      {/* Proje Sağlığı — completion vs cost-burn vs schedule (on-track signal). */}
+      {!loading && f && (
+        <ProjectHealthCard health={health} onOpen={() => setHealthOpen(true)} />
+      )}
+      <Modal open={healthOpen} title="Proje Sağlığı" onClose={() => setHealthOpen(false)} size="md">
+        <div className="space-y-4">
+          <div className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium", HEALTH_SIGNAL_META[health.signal].bg)}>
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: HEALTH_SIGNAL_META[health.signal].color }} />
+            {HEALTH_SIGNAL_META[health.signal].label}
+          </div>
+          <div className="space-y-3">
+            <HealthBar label="% Tamamlandı" pct={health.completionPct} color="#2563EB" />
+            <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={HEALTH_SIGNAL_META[health.signal].color} />
+            <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" />
+          </div>
+          <div className="rounded-lg bg-bg p-3 text-sm text-text-secondary">
+            <p className="mb-1"><b className="text-text-primary">% Tamamlandı:</b> işin fiziksel ilerleme oranı.</p>
+            <p className="mb-1"><b className="text-text-primary">% Bütçe Harcandı:</b> gerçekleşen maliyetin revize bütçeye oranı.</p>
+            <p><b className="text-text-primary">% Süre Geçti:</b> planlanan takvimin bugüne kadar geçen oranı.</p>
+          </div>
+          <div className="rounded-lg border border-border p-3 text-sm">
+            <div className="mb-1 flex justify-between"><span className="text-text-secondary">Maliyet − İlerleme farkı</span>
+              <span className={cn("tabular font-medium", health.costGap > 5 ? "text-danger" : "text-text-primary")}>{health.costGap >= 0 ? "+" : ""}{health.costGap.toFixed(1)} puan</span></div>
+            <div className="flex justify-between"><span className="text-text-secondary">Süre − İlerleme farkı</span>
+              <span className={cn("tabular font-medium", health.timeGap > 5 ? "text-danger" : "text-text-primary")}>{health.timeGap >= 0 ? "+" : ""}{health.timeGap.toFixed(1)} puan</span></div>
+          </div>
+          <p className="text-sm leading-relaxed text-text-primary">{healthExplanation(health)}</p>
         </div>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-          <KPICard loading={loading} label="Orijinal Bütçe" value={formatCurrencyAbbrev(fac?.original_budget_try)} valueTitle={formatCurrency(fac?.original_budget_try)} icon={Target} accentColor="#2563EB"
-            onClick={() => setKpiDetail({
-              title: "Orijinal Bütçe", value: formatCurrency(fac?.original_budget_try), accentColor: "#2563EB",
-              description: "Projenin başlangıçtaki onaylı bütçesi (ek işler hariç).",
-            })} />
-          <KPICard loading={loading} label="Revize Bütçe" value={formatCurrencyAbbrev(fac?.revised_budget_try)} valueTitle={formatCurrency(fac?.revised_budget_try)} icon={Layers} accentColor="#06B6D4"
-            onClick={() => setKpiDetail({
-              title: "Revize Bütçe", value: formatCurrency(fac?.revised_budget_try), accentColor: "#06B6D4",
-              description: "Onaylı ek işler eklendikten sonraki güncel bütçe.",
-            })} />
-          <KPICard loading={loading} label="Bugüne Kadar Maliyet" value={formatCurrencyAbbrev(fac?.cost_to_date_try)} valueTitle={formatCurrency(fac?.cost_to_date_try)} icon={Hammer} accentColor="#F59E0B"
-            onClick={() => setKpiDetail({
-              title: "Bugüne Kadar Maliyet", value: formatCurrency(fac?.cost_to_date_try), accentColor: "#F59E0B",
-              description: "Bugüne kadar bu projede gerçekleşen toplam maliyet.",
-            })} />
-          <KPICard loading={loading} label="Tamamlamaya Kalan Maliyet" value={formatCurrencyAbbrev(fac?.cost_to_complete_try)} valueTitle={formatCurrency(fac?.cost_to_complete_try)} icon={Hammer} accentColor="#D97706" alert={toNumber(fac?.cost_to_complete_try) > toNumber(fac?.revised_budget_try) ? "amber" : null}
-            onClick={() => setKpiDetail({
-              title: "Tamamlamaya Kalan Maliyet", value: formatCurrency(fac?.cost_to_complete_try), accentColor: "#D97706",
-              description: "İşi tamamlamak için gereken tahmini kalan maliyet (tahmini final maliyet eksi bugüne kadar gerçekleşen).",
-            })} />
-          <KPICard loading={loading} label="Tahmini Final Maliyet" value={formatCurrencyAbbrev(fac?.forecast_final_cost_try)} valueTitle={formatCurrency(fac?.forecast_final_cost_try)} icon={Target} accentColor="#7C3AED" alert={fac?.over_budget ? "red" : null}
-            onClick={() => setKpiDetail({
-              title: "Tahmini Final Maliyet", value: formatCurrency(fac?.forecast_final_cost_try), accentColor: "#7C3AED",
-              description: "Mevcut gidişata göre projenin tahmini toplam final maliyeti. Revize bütçeyi aşarsa kırmızı uyarı verir.",
-            })} />
-          <KPICard loading={loading} label={financingOn && includeFinancing ? "Tahmini Final Marj (finansman dahil)" : "Tahmini Final Marj"} value={formatPct(shownForecastMargin)} icon={Percent} accentColor="#059669" alert={toNumber(shownForecastMargin) < 5 ? "red" : toNumber(shownForecastMargin) < 10 ? "amber" : null}
-            onClick={() => setKpiDetail({
-              title: "Tahmini Final Marj", value: formatPct(shownForecastMargin), valueKind: "percent", accentColor: "#059669",
-              description: financingOn && includeFinancing
-                ? "Tahmini finansman maliyeti DAHİL beklenen kar marjı (modellenmiş tahmin — gerçek maliyet değildir). Üstteki kutudan hariç tutabilirsiniz."
-                : "Tahmini final maliyete göre beklenen kar marjı. %10 altında izlenmeli, %5 altında riskli.",
-            })} />
-        </div>
-      </div>
+      </Modal>
+
+      {/* Maliyet Dağılımı — top cost categories + drill-down modal (CR-018-B). */}
+      {id && !loading && <CostBreakdownCard projectId={id} showUsd={showUsd} />}
 
       {/* CR-015-C: modeled financing cost — a forecast overlay, NOT an actual cost.
           Only rendered when enabled (effective toggle on + a positive accrual). */}
@@ -759,5 +842,230 @@ function FinStat({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] text-text-secondary">{label}</div>
       <div className="font-semibold text-primary">{value}</div>
     </div>
+  );
+}
+
+// A condensed "story" table: each row is a clickable (keyboard-accessible) metric
+// opening the KpiDetailModal. money mode → ₺/USD/% (proportion); percent mode →
+// the % value itself (₺/USD shown as "—").
+function MetricTable({ title, rows, mode, showUsd, onRowClick, headerExtra }: {
+  title: string;
+  rows: MetricRowDef[];
+  mode: "money" | "percent";
+  showUsd: boolean;
+  onRowClick: (kpi: KpiInfo) => void;
+  headerExtra?: React.ReactNode;
+}) {
+  const alertCls = (a?: "amber" | "red" | null) => (a === "red" ? "text-danger" : a === "amber" ? "text-warning" : "");
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+        <h2 className="text-sm font-semibold text-primary">{title}</h2>
+        {headerExtra}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-text-secondary">
+              <th className="px-4 py-1.5 font-medium">Metrik</th>
+              <th className="px-2 py-1.5 text-right font-medium">Tutar (₺)</th>
+              {showUsd && <th className="px-2 py-1.5 text-right font-medium">USD</th>}
+              <th className="px-2 py-1.5 text-right font-medium">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const barW = Math.max(0, Math.min(100, r.pct));
+              const onActivate = () => onRowClick(r.kpi);
+              return (
+                <tr
+                  key={r.label}
+                  role="button"
+                  tabIndex={0}
+                  onClick={onActivate}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(); } }}
+                  title="Detayını aç"
+                  className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-navy-50 focus:bg-navy-50 focus:outline-none"
+                >
+                  <td className="px-4 py-2 font-medium text-text-primary">{r.label}</td>
+                  <td className={cn("px-2 py-2 text-right tabular", mode === "money" && alertCls(r.alert))}>
+                    {mode === "percent" ? "—" : (r.tryValue != null ? formatCurrency(r.tryValue) : "—")}
+                  </td>
+                  {showUsd && (
+                    <td className="px-2 py-2 text-right tabular text-text-secondary">
+                      {mode === "percent" ? "—" : formatUSD(r.usdValue ?? undefined)}
+                    </td>
+                  )}
+                  <td className="px-2 py-2">
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-bg sm:block">
+                        <div className="h-full rounded-full bg-brand" style={{ width: `${barW}%` }} />
+                      </div>
+                      <span className={cn("tabular w-14 text-right", mode === "percent" ? alertCls(r.alert) || "text-text-primary" : "text-text-secondary")}>
+                        {formatPct(r.pct)}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// One labeled progress bar for the Proje Sağlığı card/modal.
+function HealthBar({ label, pct, color }: { label: string; pct: number; color: string }) {
+  const w = Math.max(0, Math.min(100, pct));
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="text-text-secondary">{label}</span>
+        <span className="tabular font-medium text-text-primary">{formatPct(pct)}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-bg">
+        <div className="h-full rounded-full" style={{ width: `${w}%`, backgroundColor: color }} />
+      </div>
+    </div>
+  );
+}
+
+// Proje Sağlığı — clickable on-track card (opens the detail modal).
+function ProjectHealthCard({ health, onOpen }: { health: ProjectHealth; onOpen: () => void }) {
+  const meta = HEALTH_SIGNAL_META[health.signal];
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
+      className="group mt-4 cursor-pointer rounded-xl border border-border bg-surface shadow-sm transition-colors hover:border-brand focus:border-brand focus:outline-none"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+          <Activity className="h-4 w-4 text-brand" /> Proje Sağlığı
+        </span>
+        <div className="flex items-center gap-2">
+          <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", meta.bg)}>
+            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: meta.color }} /> {meta.label}
+          </span>
+          <span className="hidden items-center text-[11px] font-medium text-brand opacity-0 transition-opacity group-hover:opacity-100 sm:inline-flex">Detay <ChevronRight className="h-3.5 w-3.5" /></span>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+        <HealthBar label="% Tamamlandı" pct={health.completionPct} color="#2563EB" />
+        <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={meta.color} />
+        <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" />
+      </div>
+      <p className="px-4 pb-3 text-xs leading-snug text-text-secondary">{healthExplanation(health)}</p>
+    </div>
+  );
+}
+
+// CR-018-B rollups for the cost-breakdown section.
+interface SubRollup { subcategory: string; amount_try: string; total_with_vat_try: string }
+interface CatRollup { cost_category: string; label_tr: string; amount_try: string; total_with_vat_try: string; subcategories: SubRollup[] }
+
+// Maliyet Dağılımı — top cost categories (share of total) + a drill-down modal
+// with the full category → subcategory breakdown. Uses the existing CR-018-B
+// endpoint; USD isn't returned per-category so it shows "—".
+function CostBreakdownCard({ projectId, showUsd }: { projectId: string; showUsd: boolean }) {
+  const { data, loading, error, refetch } = useFetch<{ categories: CatRollup[] }>(`/projects/${projectId}/costs/by-subcategory`);
+  const [open, setOpen] = useState(false);
+  const cats = data?.categories ?? [];
+  const total = cats.reduce((s, c) => s + toNumber(c.total_with_vat_try), 0);
+  const sorted = [...cats].sort((a, b) => toNumber(b.total_with_vat_try) - toNumber(a.total_with_vat_try));
+  const top = sorted.slice(0, 5);
+  const share = (v?: string) => (total > 0 ? (toNumber(v) / total) * 100 : 0);
+
+  if (loading) {
+    return (
+      <div className="mt-4 rounded-xl border border-border bg-surface p-4 shadow-sm">
+        <Skeleton className="mb-3 h-4 w-32" />
+        {[0, 1, 2].map((i) => <Skeleton key={i} className="mb-2 h-5 w-full" />)}
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="mt-4 rounded-xl border border-border bg-surface shadow-sm">
+        <LoadError message="Maliyet dağılımı yüklenemedi." onRetry={refetch} />
+      </div>
+    );
+  }
+  if (cats.length === 0) return null;
+
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen(true)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(true); } }}
+        className="group mt-4 cursor-pointer rounded-xl border border-border bg-surface shadow-sm transition-colors hover:border-brand focus:border-brand focus:outline-none"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+            <PieChart className="h-4 w-4 text-brand" /> Maliyet Dağılımı
+          </span>
+          <span className="hidden items-center text-[11px] font-medium text-brand opacity-0 transition-opacity group-hover:opacity-100 sm:inline-flex">Tüm dağılım <ChevronRight className="h-3.5 w-3.5" /></span>
+        </div>
+        <div className="space-y-2.5 p-4">
+          {top.map((c) => {
+            const pct = share(c.total_with_vat_try);
+            return (
+              <div key={c.cost_category}>
+                <div className="mb-1 flex items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate text-text-primary" title={c.label_tr}>{c.label_tr}</span>
+                  <span className="shrink-0 text-text-secondary">
+                    <span className="tabular font-medium text-text-primary">{formatCurrency(c.total_with_vat_try)}</span>
+                    <span className="tabular ml-2 text-xs">{formatPct(pct)}</span>
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-bg">
+                  <div className="h-full rounded-full bg-brand" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <Modal open={open} title="Maliyet Dağılımı" onClose={() => setOpen(false)} size="lg">
+        <div className="space-y-4">
+          <p className="text-xs text-text-secondary">Kategori ve alt kategori bazında toplam maliyet (KDV dahil). Yüzdeler toplam maliyete oranı gösterir.</p>
+          {sorted.map((c) => (
+            <div key={c.cost_category} className="rounded-lg border border-border">
+              <div className="flex items-center justify-between gap-2 border-b border-border bg-bg px-3 py-2">
+                <span className="font-medium text-primary">{c.label_tr}</span>
+                <span className="tabular text-sm font-semibold text-primary">{formatCurrency(c.total_with_vat_try)} · {formatPct(share(c.total_with_vat_try))}</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border/60 text-left text-[11px] uppercase tracking-wide text-text-secondary">
+                    <th className="px-3 py-1.5 font-medium">Alt Kategori</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Tutar (₺)</th>
+                    {showUsd && <th className="px-2 py-1.5 text-right font-medium">USD</th>}
+                    <th className="px-2 py-1.5 text-right font-medium">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.subcategories.map((s) => (
+                    <tr key={s.subcategory} className="border-b border-border/40 last:border-0">
+                      <td className="px-3 py-1.5 text-text-primary">{s.subcategory}</td>
+                      <td className="px-2 py-1.5 text-right tabular">{formatCurrency(s.total_with_vat_try)}</td>
+                      {showUsd && <td className="px-2 py-1.5 text-right tabular text-text-secondary">—</td>}
+                      <td className="px-2 py-1.5 text-right tabular text-text-secondary">{formatPct(share(s.total_with_vat_try))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      </Modal>
+    </>
   );
 }
