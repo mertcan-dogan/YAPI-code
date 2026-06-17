@@ -17,6 +17,7 @@ import { toast } from "@/store/toast";
 import { useAISummaryStore } from "@/store/aiSummary";
 import type { ProjectFinancials, Project, ResidentialAggregates } from "@/types";
 import { formatCurrency, formatCurrencyAbbrev, formatDate, formatDateTime, formatPct, formatUSD, toNumber } from "@/utils/format";
+import { shouldShowFinancingHint } from "@/utils/financing";
 import { Banknote, Building2, Clock, Coins, FileText, Hammer, Layers, Pencil, Percent, RefreshCw, Sparkles, Target, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -484,6 +485,21 @@ export default function ProjectDashboardPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Discoverability: financing is off -> tell the director where to enable it
+          (the dashboard card only appears once it's on). */}
+      {shouldShowFinancingHint(isDirector, financing) && (
+        <div className="mt-4 flex items-center gap-2 rounded-md border border-dashed border-border bg-bg px-4 py-2.5 text-sm text-text-secondary">
+          <Coins className="h-4 w-4 shrink-0 text-text-disabled" />
+          <span>
+            Tahmini finansman maliyeti kapalı.{" "}
+            <button onClick={() => navigate("/settings")} className="font-medium text-brand hover:underline">
+              Ayarlar → Şirket
+            </button>{" "}
+            bölümünden açabilirsiniz.
+          </span>
         </div>
       )}
 
