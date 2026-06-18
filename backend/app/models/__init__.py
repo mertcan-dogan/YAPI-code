@@ -20,6 +20,7 @@ from app.models.notification import Notification
 from app.models.kpi_snapshot import KPISnapshot
 from app.models.ai_conversation import AIConversation
 from app.models.ai_query_log import AIQueryLog
+from app.models.ai_feedback import AIFeedback
 from app.models.vendor import Vendor, VendorAlias
 from app.models.workspace_item import WorkspaceItem
 from app.models.fx_rate import FxRate
@@ -46,6 +47,7 @@ __all__ = [
     "KPISnapshot",
     "AIConversation",
     "AIQueryLog",
+    "AIFeedback",
     "Vendor",
     "VendorAlias",
     "WorkspaceItem",

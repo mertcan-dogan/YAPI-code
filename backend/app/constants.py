@@ -241,4 +241,6 @@ AUDITED_TABLES = {
     "vendors",
     # Equipment photos: photo add/remove.
     "equipment_log",
+    # CR-024-A: AI answer feedback (👍/👎) — append-only trust signal.
+    "ai_feedback",
 }

@@ -2,25 +2,35 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
 from app.db import get_db
-from app.deps import CurrentUser, DirectorOrPMUser
+from app.deps import CurrentUser, DirectorOrPMUser, DirectorUser
 from app.models.ai_alert import AIAlert
+from app.models.ai_feedback import AIFeedback
+from app.models.ai_query_log import AIQueryLog
 from app.models.project import Project
+from app.models.user import User
 from app.responses import APIError, success
 from app.services import ai as ai_service
 from app.services.access import get_company_project
 from app.services.alert_engine import analyze_project
+from app.services.audit import record_audit
 from app.services.financials import forecast_at_completion, project_financials
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
+# CR-024-A: reject pathologically long feedback comments.
+MAX_FEEDBACK_COMMENT = 2000
+
+
+def _ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
 
 
 class AssistantQuestion(BaseModel):
@@ -106,6 +116,104 @@ def agent(payload: AgentRequest, user: CurrentUser, db: Session = Depends(get_db
     except ai_service.AIUnavailable:
         return success(agent_service.degraded_response())
     return success(result)
+
+
+class AgentFeedbackIn(BaseModel):
+    query_log_id: uuid.UUID | None = None
+    question: str
+    rating: str  # "up" | "down"
+    comment: str | None = None
+
+
+@router.post("/agent/feedback")
+def agent_feedback(
+    payload: AgentFeedbackIn, user: CurrentUser, request: Request, db: Session = Depends(get_db)
+):
+    """CR-024-A: record a 👍/👎 (+ optional comment) on an agent answer.
+
+    Append-only and company-scoped; mirrors the alert-feedback write. It never
+    mutates/regenerates the answer (§0.2.4) — it only stores the signal. Free-text
+    comments stay in this company-scoped row and are not forwarded anywhere (§0.2.5).
+    """
+    if payload.rating not in ("up", "down"):
+        raise APIError(422, "VALIDATION_ERROR", "Geçersiz değerlendirme")
+
+    question = (payload.question or "").strip()
+    if not question:
+        raise APIError(422, "VALIDATION_ERROR", "Soru gerekli", field="question")
+
+    comment = (payload.comment or "").strip() or None
+    if comment and len(comment) > MAX_FEEDBACK_COMMENT:
+        raise APIError(422, "VALIDATION_ERROR", "Yorum en fazla 2000 karakter olabilir", field="comment")
+
+    # Only link a query_log_id that belongs to this company; otherwise store null
+    # (never link across companies, never 404 — feedback is still worth keeping).
+    log_id = None
+    if payload.query_log_id is not None:
+        log_id = db.execute(
+            select(AIQueryLog.id).where(
+                AIQueryLog.id == payload.query_log_id,
+                AIQueryLog.company_id == user.company_id,
+            )
+        ).scalar_one_or_none()
+
+    fb = AIFeedback(
+        company_id=user.company_id,
+        user_id=user.id,
+        ai_query_log_id=log_id,
+        question=question,
+        rating=payload.rating,
+        comment=comment,
+    )
+    db.add(fb)
+    db.flush()
+    # Audit the signal, NOT the free-text comment (privacy minimization §0.2.5).
+    record_audit(
+        db, company_id=user.company_id, user_id=user.id, table_name="ai_feedback",
+        record_id=fb.id, action="INSERT",
+        new_values={"rating": fb.rating, "ai_query_log_id": str(log_id) if log_id else None},
+        ip_address=_ip(request),
+    )
+    db.commit()
+    return success({"id": str(fb.id)})
+
+
+@router.get("/agent/feedback")
+def list_agent_feedback(
+    user: DirectorUser,
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+):
+    """CR-024-A: directors-only review of recent agent feedback (company-scoped,
+    newest first). For a future 'ne işe yaramıyor' review. Cross-user, so it is
+    restricted to directors even though PMs may use the agent."""
+    total = db.execute(
+        select(func.count()).select_from(AIFeedback).where(AIFeedback.company_id == user.company_id)
+    ).scalar_one()
+    rows = db.execute(
+        select(AIFeedback)
+        .where(AIFeedback.company_id == user.company_id)
+        .order_by(AIFeedback.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    ).scalars().all()
+    names = {
+        u.id: u.full_name
+        for u in db.execute(select(User).where(User.company_id == user.company_id)).scalars().all()
+    }
+    data = [
+        {
+            "id": str(f.id),
+            "question": f.question,
+            "rating": f.rating,
+            "comment": f.comment,
+            "created_at": f.created_at.isoformat(),
+            "user": names.get(f.user_id),
+        }
+        for f in rows
+    ]
+    return success(data, meta={"total": total, "page": page, "per_page": per_page})
 
 
 @router.post("/analyze-project/{project_id}")

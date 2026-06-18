@@ -386,8 +386,10 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
 
     answer = _text_of(resp.content) if resp is not None else ""
 
+    # CR-024-A: capture the log row id so the answer can be linked to feedback.
+    query_log_id = None
     if user_id is not None:
-        _log_query(db, company_id, user_id, messages, tools_used, row_counts)
+        query_log_id = _log_query(db, company_id, user_id, messages, tools_used, row_counts)
 
     return {
         "answer_markdown": answer,
@@ -396,24 +398,34 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
         "tools_used": tools_used,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "notes": "",
+        # CR-024-A (additive): surface the log id + the row counts already computed
+        # above so the frontend explainability panel / feedback can use real data.
+        "query_log_id": str(query_log_id) if query_log_id else None,
+        "row_counts": row_counts,
     }
 
 
-def _log_query(db: Session, company_id, user_id, messages, tools_used, row_counts) -> None:
-    """Append one ai_query_log row (§6.1). Only the question, tool names and
-    per-tool row counts — never full record contents. Never breaks the response."""
+def _log_query(db: Session, company_id, user_id, messages, tools_used, row_counts):
+    """Append one ai_query_log row (§6.1) and return its id (CR-024-A).
+
+    Only the question, tool names and per-tool row counts — never full record
+    contents. Never breaks the response: on any logging error returns ``None``.
+    """
     from app.models.ai_query_log import AIQueryLog
 
     question = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     try:
-        db.add(AIQueryLog(
+        row = AIQueryLog(
             company_id=company_id, user_id=user_id, question=question,
             tools_used=tools_used, row_counts=row_counts,
-        ))
+        )
+        db.add(row)
         db.commit()
+        return row.id
     except Exception as exc:  # logging must never fail the request
         logger.warning("ai_query_log write failed: %s", exc)
         db.rollback()
+        return None
 
 
 def degraded_response() -> dict:
@@ -425,4 +437,7 @@ def degraded_response() -> dict:
         "tools_used": [],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "notes": "",
+        # CR-024-A: keep the shape consistent with run_agent's success response.
+        "query_log_id": None,
+        "row_counts": {},
     }
