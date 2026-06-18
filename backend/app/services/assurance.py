@@ -25,13 +25,14 @@ from __future__ import annotations
 import logging
 import statistics
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.calculations.money import D
 from app.constants import COST_CATEGORIES
+from app.models.ai_alert import AIAlert
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
 from app.models.project import Project
@@ -403,3 +404,80 @@ def collect_findings(db: Session, company_id, today: date | None = None) -> list
         except Exception:  # noqa: BLE001 - one rule must never abort the scan
             logger.exception("[assurance] rule %s failed; skipping", name)
     return findings
+
+
+# --------------------------------------------------------------------------- #
+# CR-022-B — dedup-aware writer + scan entrypoint.
+# This is the ONLY code here that writes, and it writes ONLY AIAlert rows — never
+# a cost/invoice/financial figure (mandatory money-untouched guard test).
+# --------------------------------------------------------------------------- #
+def _suppressed_dedup_keys(db: Session, company_id, keys: set) -> set:
+    """dedup_keys whose existing alert should suppress a re-creation: the most
+    recent alert for that key is active, OR dismissed but still within its
+    dismissal window. A dismissed alert whose window has passed is NOT suppressed
+    (it re-surfaces, mirroring the 7-day health-alert behavior)."""
+    if not keys:
+        return set()
+    now = datetime.now(timezone.utc)
+    rows = db.execute(
+        select(AIAlert)
+        .where(AIAlert.company_id == company_id, AIAlert.dedup_key.in_(list(keys)))
+        .order_by(AIAlert.created_at.desc())
+    ).scalars().all()
+    latest: dict = {}
+    for a in rows:
+        latest.setdefault(a.dedup_key, a)  # first seen = most recent (desc order)
+    suppress = set()
+    for key, a in latest.items():
+        if not a.is_dismissed or (a.dismissed_until is not None and a.dismissed_until > now):
+            suppress.add(key)
+    return suppress
+
+
+def _write_finding(db: Session, company_id, c: dict) -> None:
+    db.add(AIAlert(
+        company_id=company_id,
+        project_id=c["project_id"],
+        alert_type=c["alert_type"],
+        severity=c["severity"],
+        title_tr=c["title_tr"],
+        body_tr=c["body_tr"],
+        reasoning=c["reasoning"],
+        recommended_action=c["recommended_action"],
+        source_type=c["source_type"],
+        source_id=c["source_id"],
+        dedup_key=c["dedup_key"],
+    ))
+
+
+def scan_company(db: Session, company_id, today: date | None = None) -> dict:
+    """Run the rule pack and upsert findings as AIAlert rows with per-issue dedup.
+
+    Read-only w.r.t. financial data: it only creates AIAlert rows. Never raises —
+    a per-candidate write failure is logged and skipped. Returns an honest summary
+    of what was scanned vs found (the basis for the 'Finans Güvence' stat)."""
+    counts = scanned_counts(db, company_id)
+    candidates = collect_findings(db, company_id, today)
+
+    found: dict = defaultdict(int)
+    for c in candidates:
+        found[c["alert_type"]] += 1
+
+    suppress = _suppressed_dedup_keys(db, company_id, {c["dedup_key"] for c in candidates})
+    created = 0
+    for c in candidates:
+        if c["dedup_key"] in suppress:
+            continue
+        try:
+            _write_finding(db, company_id, c)
+            suppress.add(c["dedup_key"])  # don't double-create within one scan
+            created += 1
+        except Exception:  # noqa: BLE001 - never let one finding abort the scan
+            logger.exception("[assurance] failed to write finding %s", c.get("dedup_key"))
+    db.commit()
+    return {
+        "scanned": counts,
+        "found": dict(found),
+        "total_found": len(candidates),
+        "created": created,
+    }

@@ -248,6 +248,11 @@ def list_alerts(user: CurrentUser, db: Session = Depends(get_db)):
                 "is_actioned": a.is_actioned,
                 "feedback": a.feedback,
                 "created_at": a.created_at.isoformat(),
+                # CR-022: record linkage for the Finans Güvence view (NULL on
+                # legacy health alerts — the view filters on dedup_key presence).
+                "source_type": a.source_type,
+                "source_id": str(a.source_id) if a.source_id else None,
+                "dedup_key": a.dedup_key,
             }
         )
     return success(visible, meta={"total": len(visible), "ai_available": ai_service.is_available()})
@@ -272,9 +277,23 @@ def alert_feedback(alert_id: uuid.UUID, payload: AlertFeedback, user: CurrentUse
     return success({"id": str(alert_id), "feedback": payload.feedback})
 
 
+@router.post("/assurance/scan")
+def assurance_scan(user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-022-B: run the read-only assurance rule pack for the caller's company and
+    upsert anomaly findings (dedup-aware, respects dismissals). Returns the honest
+    scan summary {scanned, found, total_found, created}. Same permission as
+    analyze-project/analyze-all (any authenticated user)."""
+    from app.services import assurance
+
+    return success(assurance.scan_company(db, user.company_id))
+
+
 @router.post("/analyze-all")
 def analyze_all(user: CurrentUser, db: Session = Depends(get_db)):
-    """CR-003-M: re-run the alert engine across all active projects."""
+    """CR-003-M: re-run the alert engine across all active projects.
+    CR-022-B: also refresh the company's assurance findings in the same pass."""
+    from app.services import assurance
+
     total = 0
     for p in db.execute(
         select(Project).where(
@@ -282,7 +301,8 @@ def analyze_all(user: CurrentUser, db: Session = Depends(get_db)):
         )
     ).scalars().all():
         total += len(analyze_project(db, p))
-    return success({"alerts_created": total})
+    assurance_summary = assurance.scan_company(db, user.company_id)
+    return success({"alerts_created": total, "assurance": assurance_summary})
 
 
 @router.put("/alerts/{alert_id}/dismiss")
