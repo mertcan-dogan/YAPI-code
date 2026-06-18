@@ -3,6 +3,7 @@ import { AIDisclaimer, Button, Modal, Skeleton } from "@/components/ui";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailModal";
+import { MilestonesCard, type MilestonesBlock } from "@/components/dashboard/MilestonesCard";
 import { CurrencyToggle, UsdMissingNote, useShowUsd } from "@/components/currency";
 import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -118,7 +119,7 @@ export default function ProjectDashboardPage() {
     const t = setTimeout(() => setHighlightCostId(null), 2500);
     return () => clearTimeout(t);
   }, [searchParams, setSearchParams]);
-  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock; milestones?: { total: number } }>(
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock; milestones?: MilestonesBlock }>(
     `/projects/${id}/dashboard`
   );
   const showUsd = useShowUsd(); // CR-014-D
@@ -129,6 +130,9 @@ export default function ProjectDashboardPage() {
   // CR-016-C: residential details (m² + daire dağılımı). Visible for residential
   // project types or any project that already carries a schedule / construction m².
   const isDirector = useAuth((s) => s.user?.role === "director");
+  // CR-019-C: directors + project managers manage milestones (mirrors the API).
+  const role = useAuth((s) => s.user?.role);
+  const canManageMilestones = role === "director" || role === "project_manager";
   const isResidential =
     (p?.units?.length ?? 0) > 0 ||
     !!(p?.construction_gross_m2) ||
@@ -394,12 +398,19 @@ export default function ProjectDashboardPage() {
     },
   ];
 
-  // Proje Sağlığı — completion vs cost-burn vs schedule-elapsed. `hasMilestones`
-  // (CR-019-B payload) means there is objective progress data, so a 0 completion
-  // is real rather than a blank default.
+  // CR-019-C: when milestones exist, the weighted schedule-progress % is the
+  // objective "% Tamamlandı"; otherwise fall back to the manual completion_pct.
+  // `hasMilestones` also makes a 0% an objective value (not a blank default).
+  const milestones = data?.milestones;
+  const hasMilestones = (milestones?.total ?? 0) > 0;
+  const milestoneProgress = milestones?.schedule_progress_pct != null ? toNumber(milestones.schedule_progress_pct) : null;
+  const milestoneBased = hasMilestones && milestoneProgress != null;
+  const completionForHealth = milestoneBased ? milestoneProgress! : toNumber(f?.completion_pct);
+
+  // Proje Sağlığı — completion vs cost-burn vs schedule-elapsed.
   const health = computeProjectHealth({
-    completionPct: toNumber(f?.completion_pct),
-    hasMilestones: (data?.milestones?.total ?? 0) > 0,
+    completionPct: completionForHealth,
+    hasMilestones,
     actualCostTry: toNumber(f?.total_actual_with_vat_try),
     revisedBudgetTry: revised,
     startDate: p?.start_date,
@@ -576,7 +587,7 @@ export default function ProjectDashboardPage() {
 
       {/* Proje Sağlığı — completion vs cost-burn vs schedule (on-track signal). */}
       {!loading && f && (
-        <ProjectHealthCard health={health} onOpen={() => setHealthOpen(true)} />
+        <ProjectHealthCard health={health} milestoneBased={milestoneBased} onOpen={() => setHealthOpen(true)} />
       )}
       <Modal open={healthOpen} title="Proje Sağlığı" onClose={() => setHealthOpen(false)} size="md">
         <div className="space-y-4">
@@ -585,12 +596,15 @@ export default function ProjectDashboardPage() {
             {HEALTH_SIGNAL_META[health.signal].label}
           </div>
           <div className="space-y-3">
-            <HealthBar label="% Tamamlandı" pct={health.completionKnown ? health.completionPct : null} color="#2563EB" emptyNote="Yeterli veri yok" />
+            <HealthBar label={milestoneBased ? "% Tamamlandı (kilometre taşı)" : "% Tamamlandı"} pct={health.completionKnown ? health.completionPct : null} color="#2563EB" emptyNote="Yeterli veri yok" />
             <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={HEALTH_SIGNAL_META[health.signal].color} emptyNote="Bütçe girilmemiş" />
             <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" emptyNote="Tarih girilmemiş" />
           </div>
+          {milestoneBased && (
+            <p className="text-xs italic text-text-secondary">İlerleme, kilometre taşlarının ağırlıklı tamamlanmasından hesaplanır.</p>
+          )}
           <div className="rounded-lg bg-bg p-3 text-sm text-text-secondary">
-            <p className="mb-1"><b className="text-text-primary">% Tamamlandı:</b> işin fiziksel ilerleme oranı.</p>
+            <p className="mb-1"><b className="text-text-primary">% Tamamlandı:</b> {milestoneBased ? "kilometre taşlarının ağırlıklı tamamlanma oranı." : "işin fiziksel ilerleme oranı (elle girilen)."}</p>
             <p className="mb-1"><b className="text-text-primary">% Bütçe Harcandı:</b> gerçekleşen maliyetin revize bütçeye oranı.</p>
             <p><b className="text-text-primary">% Süre Geçti:</b> planlanan takvimin bugüne kadar geçen oranı.</p>
           </div>
@@ -610,6 +624,11 @@ export default function ProjectDashboardPage() {
           <p className="text-sm leading-relaxed text-text-primary">{healthExplanation(health)}</p>
         </div>
       </Modal>
+
+      {/* CR-019-C: Aşamalar & Kilometre Taşları (SCHEDULE lane — never money). */}
+      {id && !loading && (
+        <MilestonesCard projectId={id} block={data?.milestones} canManage={canManageMilestones} onChanged={refetch} />
+      )}
 
       {/* Maliyet Dağılımı — top cost categories + drill-down modal (CR-018-B). */}
       {id && !loading && <CostBreakdownCard projectId={id} showUsd={showUsd} />}
@@ -961,7 +980,7 @@ function HealthBar({ label, pct, color, emptyNote }: { label: string; pct: numbe
 }
 
 // Proje Sağlığı — clickable on-track card (opens the detail modal).
-function ProjectHealthCard({ health, onOpen }: { health: ProjectHealth; onOpen: () => void }) {
+function ProjectHealthCard({ health, milestoneBased, onOpen }: { health: ProjectHealth; milestoneBased?: boolean; onOpen: () => void }) {
   const meta = HEALTH_SIGNAL_META[health.signal];
   return (
     <div
@@ -983,11 +1002,12 @@ function ProjectHealthCard({ health, onOpen }: { health: ProjectHealth; onOpen: 
         </div>
       </div>
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
-        <HealthBar label="% Tamamlandı" pct={health.completionKnown ? health.completionPct : null} color="#2563EB" emptyNote="Yeterli veri yok" />
+        <HealthBar label={milestoneBased ? "% Tamamlandı (kilometre taşı)" : "% Tamamlandı"} pct={health.completionKnown ? health.completionPct : null} color="#2563EB" emptyNote="Yeterli veri yok" />
         <HealthBar label="% Bütçe Harcandı" pct={health.costPct} color={meta.color} emptyNote="Bütçe girilmemiş" />
         <HealthBar label="% Süre Geçti" pct={health.timePct} color="#64748B" emptyNote="Tarih girilmemiş" />
       </div>
-      <p className="px-4 pb-3 text-xs leading-snug text-text-secondary">{healthExplanation(health)}</p>
+      <p className="px-4 pb-1 text-xs leading-snug text-text-secondary">{healthExplanation(health)}</p>
+      {milestoneBased && <p className="px-4 pb-3 text-[11px] italic text-text-disabled">İlerleme kilometre taşlarından hesaplanır.</p>}
     </div>
   );
 }

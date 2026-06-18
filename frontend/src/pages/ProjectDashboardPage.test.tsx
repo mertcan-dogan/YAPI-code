@@ -15,16 +15,18 @@ const h = vi.hoisted(() => {
     period: { ...empty },
     cashflow: { ...empty },
     bySub: { ...empty },
+    milestones: { ...empty, data: [] as any[] },
   };
 });
 
-// Dispatch useFetch by URL: dashboard / period-summary / by-subcategory / cashflow.
+// Dispatch useFetch by URL: dashboard / period-summary / by-subcategory / cashflow / milestones.
 vi.mock("@/hooks/useFetch", () => ({
   useFetch: (url: string | null) => {
     if (url == null) return { data: null, meta: null, loading: false, error: null, refetch: () => {} };
     if (url.includes("/by-subcategory")) return h.bySub;
     if (url.includes("/period-summary")) return h.period;
     if (url.includes("/cashflow")) return h.cashflow;
+    if (url.includes("/milestones")) return h.milestones;
     return h.dashboard;
   },
 }));
@@ -34,7 +36,7 @@ vi.mock("@/components/currency", () => ({
   CurrencyToggle: () => null,
   UsdMissingNote: () => null,
 }));
-vi.mock("@/lib/api", () => ({ apiPost: vi.fn(() => Promise.resolve({})), apiPut: vi.fn(() => Promise.resolve({})) }));
+vi.mock("@/lib/api", () => ({ apiPost: vi.fn(() => Promise.resolve({})), apiPut: vi.fn(() => Promise.resolve({})), apiDelete: vi.fn(() => Promise.resolve({})) }));
 vi.mock("@/store/auth", () => ({ useAuth: (sel: any) => sel({ user: { role: "director" } }) }));
 vi.mock("@/store/aiSummary", () => ({
   useAISummaryStore: () => ({
@@ -96,6 +98,7 @@ beforeEach(() => {
   h.period = { data: null, meta: null, loading: false, error: null, refetch: () => {} };
   h.cashflow = { data: null, meta: null, loading: false, error: null, refetch: () => {} };
   h.bySub = { data: BY_SUB, meta: null, loading: false, error: null, refetch: () => {} };
+  h.milestones = { data: [], meta: null, loading: false, error: null, refetch: () => {} };
 });
 afterEach(cleanup);
 
@@ -200,5 +203,42 @@ describe("ProjectDashboardPage redesign", () => {
     expect(screen.getByText("Proje Sağlığı")).toBeInTheDocument();
     expect(screen.queryByText("Riskli")).not.toBeInTheDocument();
     expect(screen.getAllByText("Yeterli veri yok").length).toBeGreaterThan(0);
+  });
+
+  // --- CR-019-C: schedule section + health wiring -------------------------- #
+  const MS_BLOCK = { schedule_progress_pct: "75.00", total: 4, done: 3, next_deadline: "2099-01-01", overdue_count: 2, by_stage: [] };
+
+  it("renders the Aşamalar & Kilometre Taşları section with progress/next/overdue", () => {
+    h.dashboard = { data: { ...DASHBOARD, milestones: MS_BLOCK }, meta: null, loading: false, error: null, refetch: () => {} };
+    render(createElement(ProjectDashboardPage));
+
+    expect(screen.getByText("Aşamalar & Kilometre Taşları")).toBeInTheDocument();
+    expect(screen.getByText("3 / 4 tamamlandı")).toBeInTheDocument();
+    expect(screen.getByText(/Sıradaki:/)).toBeInTheDocument();
+    expect(screen.getByText(/2 gecikmiş/)).toBeInTheDocument();
+  });
+
+  it("Proje Sağlığı uses the milestone-derived % (labeled) when milestones exist", () => {
+    h.dashboard = { data: { ...DASHBOARD, milestones: MS_BLOCK }, meta: null, loading: false, error: null, refetch: () => {} };
+    render(createElement(ProjectDashboardPage));
+    // The % Tamamlandı bar is labeled as milestone-based.
+    expect(screen.getByText("% Tamamlandı (kilometre taşı)")).toBeInTheDocument();
+    expect(screen.queryByText("% Tamamlandı")).not.toBeInTheDocument(); // plain label not used
+  });
+
+  it("uses the manual completion (plain label) when there are no milestones", () => {
+    // Default DASHBOARD has no milestones block.
+    render(createElement(ProjectDashboardPage));
+    expect(screen.getByText("% Tamamlandı")).toBeInTheDocument();
+    expect(screen.queryByText("% Tamamlandı (kilometre taşı)")).not.toBeInTheDocument();
+  });
+
+  it("milestones do not change any money display (separate lanes §0.2)", () => {
+    // Money proportions/margins are identical whether or not milestones exist.
+    h.dashboard = { data: { ...DASHBOARD, milestones: MS_BLOCK }, meta: null, loading: false, error: null, refetch: () => {} };
+    render(createElement(ProjectDashboardPage));
+    expect(screen.getByText("%10,0")).toBeInTheDocument();   // retention 100/1000
+    expect(screen.getByText("%12,5")).toBeInTheDocument();   // güncel kar marjı
+    expect(screen.getAllByText("$12,345.00").length).toBeGreaterThan(0); // USD snapshot
   });
 });
