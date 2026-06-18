@@ -508,14 +508,26 @@ export function AppLayout() {
 }
 
 // Page header helper
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: React.ReactNode }) {
+export function PageHeader({
+  title,
+  subtitle,
+  action,
+  breadcrumb,
+}: {
+  title: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+  /** CR-028: optional overline breadcrumb/eyebrow above the title. */
+  breadcrumb?: React.ReactNode;
+}) {
   return (
     <div className="mb-5 flex items-start justify-between gap-4">
-      <div>
+      <div className="min-w-0">
+        {breadcrumb && <div className="overline mb-1">{breadcrumb}</div>}
         <h1 className="text-2xl font-bold text-primary">{title}</h1>
         {subtitle && <p className="mt-0.5 text-sm text-text-secondary">{subtitle}</p>}
       </div>
-      {action}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }

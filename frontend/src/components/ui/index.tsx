@@ -34,12 +34,166 @@ export function Button({
   );
 }
 
-// --- Card ---
+// --- Card --- (CR-028: hairline border + soft shadow-card, flat & crisp)
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-xl border border-border bg-surface shadow-sm", className)} {...props} />;
+  return <div className={cn("rounded-card border border-border bg-surface shadow-card", className)} {...props} />;
 }
 export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("p-4", className)} {...props} />;
+}
+
+// --- Badge (CR-028) — semantic pill for statuses/tags. The single source of
+// truth for pill shape; StatusBadge composes this. `style` overrides colors. ---
+type BadgeVariant = "neutral" | "info" | "success" | "warning" | "danger";
+export function Badge({
+  variant = "neutral",
+  className,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement> & { variant?: BadgeVariant }) {
+  const variants: Record<BadgeVariant, string> = {
+    neutral: "bg-bg text-text-secondary",
+    info: "bg-navy-50 text-brand",
+    success: "bg-green-50 text-success",
+    warning: "bg-amber-50 text-warning",
+    danger: "bg-red-50 text-danger",
+  };
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+        variants[variant],
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </span>
+  );
+}
+
+// --- Overline (CR-028) — small muted uppercase label (field/column/section). ---
+export function Overline({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("overline", className)} {...props} />;
+}
+
+// --- SectionTitle (CR-028) — title + optional subtitle + right slot. ---
+export function SectionTitle({
+  title,
+  subtitle,
+  right,
+  icon: Icon,
+  className,
+}: {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  right?: React.ReactNode;
+  icon?: React.ComponentType<{ className?: string }>;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex items-start justify-between gap-3", className)}>
+      <div className="min-w-0">
+        <h2 className="flex items-center gap-2 text-section text-primary">
+          {Icon && <Icon className="h-3.5 w-3.5 text-brand" />}
+          <span>{title}</span>
+        </h2>
+        {subtitle && <p className="mt-0.5 text-caption leading-snug text-text-secondary">{subtitle}</p>}
+      </div>
+      {right && <div className="shrink-0">{right}</div>}
+    </div>
+  );
+}
+
+// --- Stat / Metric (CR-028) — inline metric block (big .tabular value + muted
+// overline label + optional delta in green/red). KPICard remains the richer
+// dashboard *card* (icon + sparkline + click); Stat is the lightweight sibling. ---
+export function Stat({
+  label,
+  value,
+  valueTitle,
+  hint,
+  delta,
+  className,
+}: {
+  label: string;
+  value: React.ReactNode;
+  valueTitle?: string;
+  hint?: React.ReactNode;
+  delta?: { text: string; positive?: boolean } | null;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <div className="overline">{label}</div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span title={valueTitle} className="tabular whitespace-nowrap text-stat text-primary">{value}</span>
+        {delta && (
+          <span className={cn("tabular text-xs font-medium", delta.positive ? "text-success" : "text-danger")}>{delta.text}</span>
+        )}
+      </div>
+      {hint && <div className="mt-0.5 text-caption text-text-secondary">{hint}</div>}
+    </div>
+  );
+}
+
+// --- Toolbar (CR-028) — consistent filter/action bar (replaces per-page ad-hoc). ---
+export function Toolbar({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("flex flex-wrap items-center gap-2", className)} {...props} />;
+}
+export function ToolbarSpacer() {
+  return <div className="flex-1" />;
+}
+
+// --- Tabs (CR-028) — accessible, keyboard-navigable (←/→). ---
+export interface TabItem {
+  id: string;
+  label: React.ReactNode;
+}
+export function Tabs({
+  tabs,
+  value,
+  onChange,
+  className,
+}: {
+  tabs: TabItem[];
+  value: string;
+  onChange: (id: string) => void;
+  className?: string;
+}) {
+  const onKey = (e: React.KeyboardEvent) => {
+    const i = tabs.findIndex((t) => t.id === value);
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      onChange(tabs[(i + 1) % tabs.length].id);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      onChange(tabs[(i - 1 + tabs.length) % tabs.length].id);
+    }
+  };
+  return (
+    <div role="tablist" className={cn("flex flex-wrap items-center gap-1", className)} onKeyDown={onKey}>
+      {tabs.map((t) => {
+        const active = t.id === value;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(t.id)}
+            className={cn(
+              "focus-ring rounded-control px-3 py-1.5 text-sm font-medium transition-colors",
+              active ? "bg-brand text-white" : "bg-surface text-text-secondary hover:bg-surface-hover"
+            )}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // --- Input / Label / Textarea / Select ---

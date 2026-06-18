@@ -1,6 +1,9 @@
 import { STATUS_LABELS } from "@/constants";
+import { Badge } from "./ui";
 
-// Status Badge — colour map from Section 6.5
+// Status Badge — entity status colour map (Section 6.5). CR-028: the pill SHAPE
+// now comes from the Badge primitive (one source of truth); these per-status
+// colours stay exactly as before via an inline style override.
 const STYLES: Record<string, { bg: string; text: string }> = {
   active: { bg: "#DCFCE7", text: "#166534" },
   completed: { bg: "#DBEAFE", text: "#1E40AF" },
@@ -15,12 +18,5 @@ const STYLES: Record<string, { bg: string; text: string }> = {
 
 export function StatusBadge({ status }: { status: string }) {
   const s = STYLES[status] ?? { bg: "#F1F5F9", text: "#475569" };
-  return (
-    <span
-      className="inline-block rounded-full px-2 py-0.5 text-xs font-medium"
-      style={{ backgroundColor: s.bg, color: s.text }}
-    >
-      {STATUS_LABELS[status] ?? status}
-    </span>
-  );
+  return <Badge style={{ backgroundColor: s.bg, color: s.text }}>{STATUS_LABELS[status] ?? status}</Badge>;
 }
