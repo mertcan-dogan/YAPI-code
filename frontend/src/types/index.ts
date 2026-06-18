@@ -243,4 +243,17 @@ export interface AIAlert {
   recommended_action: string | null;
   is_actioned: boolean;
   created_at: string;
+  feedback?: string | null;
+  // CR-022: record linkage for assurance findings (NULL on legacy health alerts).
+  source_type?: string | null;
+  source_id?: string | null;
+  dedup_key?: string | null;
+}
+
+// CR-022-B: POST /ai/assurance/scan summary.
+export interface AssuranceScanSummary {
+  scanned: { cost_entries: number; client_invoices: number };
+  found: Record<string, number>;
+  total_found: number;
+  created: number;
 }
