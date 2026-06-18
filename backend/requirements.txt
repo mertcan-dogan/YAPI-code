@@ -28,6 +28,10 @@ anthropic==0.42.0
 # Email
 resend==2.5.1
 
+# Observability — error monitoring (errors-only; PII/financial data scrubbed).
+# [fastapi] pulls the Starlette/FastAPI integrations. Env-gated via SENTRY_DSN.
+sentry-sdk[fastapi]==2.63.0
+
 # PDF + Excel
 # CR-004-A: ReportLab replaces WeasyPrint — renders on Windows without GTK/Pango/Cairo.
 reportlab==4.2.5

@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     environment: str = "development"
     frontend_url: str = "http://localhost:5173"
 
+    # Observability (error monitoring). When SENTRY_DSN is blank, Sentry is fully
+    # disabled — nothing is initialized and no data leaves the process.
+    sentry_dsn: str = ""
+
     # Database
     database_url: str = "postgresql+psycopg://yapi:yapi_dev_password@localhost:5432/yapi"
 

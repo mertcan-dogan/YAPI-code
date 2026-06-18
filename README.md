@@ -113,6 +113,7 @@ npm run dev
 | `RESEND_API_KEY` | Transactional email |
 | `FRONTEND_URL` | CORS allowed origin |
 | `ENVIRONMENT` | `development` / `staging` / `production` |
+| `SENTRY_DSN` | Error monitoring DSN (Python project). Leave blank to disable Sentry. Errors-only; PII/financial data is never sent. |
 
 ### Frontend (`frontend/.env`)
 | Variable | Description |
@@ -120,6 +121,8 @@ npm run dev
 | `VITE_API_BASE_URL` | Backend base URL, e.g. `http://localhost:8000/api/v1` |
 | `VITE_SUPABASE_URL` | Supabase project URL |
 | `VITE_SUPABASE_ANON_KEY` | **Public anon** key only — never the service key |
+| `VITE_SENTRY_DSN` | Error monitoring DSN (React project). Leave blank to disable Sentry. Errors-only; no Session Replay. |
+| `VITE_ENVIRONMENT` | `development` / `staging` / `production` (tags Sentry events) |
 
 > 🔒 `SUPABASE_SERVICE_KEY` and `ANTHROPIC_API_KEY` are backend-only and must
 > never appear in the frontend bundle.
