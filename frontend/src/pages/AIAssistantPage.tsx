@@ -1,6 +1,7 @@
 import { AIDisclaimer, Select } from "@/components/ui";
 import { AiTrustBadge } from "@/components/ai/AiTrustBadge";
 import { AiExplainPanel } from "@/components/ai/AiExplainPanel";
+import { AiFeedbackControl } from "@/components/ai/AiFeedbackControl";
 import { AgentChart } from "@/components/charts/AgentChart";
 import { MarkdownText } from "@/components/MarkdownText";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -409,6 +410,11 @@ export default function AIAssistantPage() {
                         <Pin className="h-3 w-3" /> Sabitle
                       </button>
                     </div>
+                    {/* CR-024-C: feedback only on a real, logged answer — not on the
+                        degraded/error message (which has no query_log_id). */}
+                    {m.query_log_id && (
+                      <AiFeedbackControl question={messages[i - 1]?.text ?? m.text} queryLogId={m.query_log_id} />
+                    )}
                   </div>
                 </div>
               )

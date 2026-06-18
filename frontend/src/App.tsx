@@ -7,6 +7,7 @@ import { useAuth } from "./store/auth";
 
 import AIAlertsPage from "./pages/AIAlertsPage";
 import AIAssistantPage from "./pages/AIAssistantPage";
+import AiPrinciplesPage from "./pages/AiPrinciplesPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import AuditLogPage from "./pages/AuditLogPage";
 import BudgetPage from "./pages/BudgetPage";
@@ -91,6 +92,7 @@ export default function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/ai-assistant" element={<AIAssistantPage />} />
+          <Route path="/ai-principles" element={<AiPrinciplesPage />} />
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/vendors" element={<VendorsPage />} />
           <Route path="/document-capture" element={<DocumentCapturePage />} />

@@ -227,9 +227,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       </div>
       {/* Brand footer — small persistent Yapı mark, shows even when a company logo is set */}
-      <div className="flex items-center justify-center gap-1.5 border-t border-white/10 px-5 py-3">
-        <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-gradient-to-br from-brand to-brand-2 text-[10px] font-bold leading-none text-white">Y</span>
-        <span className="text-[11px] font-medium tracking-wide text-white/40">Powered by Yapı</span>
+      <div className="flex flex-col items-center gap-1 border-t border-white/10 px-5 py-3">
+        <div className="flex items-center justify-center gap-1.5">
+          <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-gradient-to-br from-brand to-brand-2 text-[10px] font-bold leading-none text-white">Y</span>
+          <span className="text-[11px] font-medium tracking-wide text-white/40">Powered by Yapı</span>
+        </div>
+        {/* CR-024-C: link to the AI principles & security page. */}
+        <Link to="/ai-principles" onClick={onNavigate} className="text-[10px] text-white/40 hover:text-white/70">
+          Yapı AI — İlkeler & Güvenlik
+        </Link>
       </div>
     </>
   );
