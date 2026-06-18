@@ -22,6 +22,7 @@ from app.schemas.equipment import EquipmentCreate
 from app.schemas.invoice import ClientInvoiceCreate
 from app.schemas.subcontractor import SubcontractorCreate
 from app.services import ai as ai_service
+from app.services import fx
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
@@ -116,6 +117,8 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
                           vat_amount_try=vat, total_with_vat_try=twv, **d)
         db.add(entry)
         db.flush()
+        # CR-014-B parity: snapshot USD so AI-imported rows aren't left amount_usd=NULL.
+        fx.snapshot_cost_usd(db, entry)
         record_audit(db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
                      record_id=entry.id, action="INSERT", new_values=snapshot(entry))
         imported["maliyet_girisleri"] += 1
