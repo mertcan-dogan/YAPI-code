@@ -1,4 +1,6 @@
 import { AIDisclaimer, Select } from "@/components/ui";
+import { AiTrustBadge } from "@/components/ai/AiTrustBadge";
+import { AiExplainPanel } from "@/components/ai/AiExplainPanel";
 import { AgentChart } from "@/components/charts/AgentChart";
 import { MarkdownText } from "@/components/MarkdownText";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -34,6 +36,9 @@ interface Msg {
   charts?: AgentChartSpec[];
   citations?: Citation[];
   tools_used?: string[];
+  // CR-024: explainability + feedback (in-session only).
+  row_counts?: Record<string, number>;
+  query_log_id?: string | null;
 }
 
 // CR-007-F: tool name -> Turkish step label, for the post-response "thinking" replay.
@@ -264,6 +269,9 @@ export default function AIAssistantPage() {
         charts: res.charts ?? [],
         citations: res.citations ?? [],
         tools_used: res.tools_used ?? [],
+        // CR-024: real explainability data + the log id for feedback linkage.
+        row_counts: res.row_counts ?? {},
+        query_log_id: res.query_log_id ?? null,
       };
       const afterAi = [...afterUser, aiMsg];
       setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: afterAi, updatedAt: new Date().toISOString() } : c)));
@@ -314,6 +322,10 @@ export default function AIAssistantPage() {
   return (
     <div>
       <PageHeader title="Yapı Agent" subtitle="Araçlarla analiz yapan yapay zeka ajanı — Türkçe sorun." />
+      {/* CR-024-B: always-visible read-only trust badge → AI principles page. */}
+      <div className="mb-3">
+        <AiTrustBadge />
+      </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
         <div className="lg:col-span-3">
           {/* Active conversation header + new chat */}
@@ -374,6 +386,17 @@ export default function AIAssistantPage() {
                           </button>
                         ))}
                       </div>
+                    )}
+                    {/* CR-024-B: "AI nasıl çalıştı?" — built from this answer's real
+                        tools/rows/citations/timestamp. Hidden on the degraded
+                        no-answer error message (no tools, no timestamp). */}
+                    {m.at && (
+                      <AiExplainPanel
+                        toolsUsed={m.tools_used}
+                        rowCounts={m.row_counts}
+                        citationCount={(m.citations ?? []).length}
+                        generatedAt={m.at}
+                      />
                     )}
                     {m.at && <div className="mt-1.5 text-[10px] text-text-secondary">Bu yanıt {formatDateTime(m.at)} itibarıyla hesaplanmıştır</div>}
                     <div className="mt-1 flex items-center gap-3">

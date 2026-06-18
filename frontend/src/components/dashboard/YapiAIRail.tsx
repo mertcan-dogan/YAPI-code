@@ -1,4 +1,5 @@
 import { SideDrawer } from "@/components/SideDrawer";
+import { AiTrustBadge } from "@/components/ai/AiTrustBadge";
 import { AIDisclaimer } from "@/components/ui";
 import { apiPost } from "@/lib/api";
 import { ChevronRight, Loader2, Send, Sparkles } from "lucide-react";
@@ -58,6 +59,11 @@ function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose
           )}
         </div>
       )}
+
+      {/* CR-024-B: always-visible compact read-only trust badge (both rail + drawer). */}
+      <div className="border-b border-border px-4 py-2">
+        <AiTrustBadge compact />
+      </div>
 
       {/* Large, modern chat */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">

@@ -31,4 +31,8 @@ export interface AgentResponse {
   tools_used: string[];
   generated_at: string;
   notes?: string;
+  // CR-024-A (additive): link to the logged query + per-tool row counts, used by
+  // the explainability panel and the feedback control.
+  query_log_id?: string | null;
+  row_counts?: Record<string, number>;
 }
