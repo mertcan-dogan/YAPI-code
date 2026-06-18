@@ -1,5 +1,6 @@
 import { MetricLineChart } from "@/components/charts";
-import { Button, Modal } from "@/components/ui";
+import { Button } from "@/components/ui";
+import { SideDrawer } from "@/components/SideDrawer";
 import { cn } from "@/lib/cn";
 import { ArrowDown, ArrowUp } from "lucide-react";
 
@@ -17,7 +18,8 @@ export interface KpiInfo {
   action?: { label: string; onClick: () => void };
 }
 
-/** Generic KPI drill-down: value, trend, explanation, optional action. */
+/** Generic KPI drill-down: value, trend, explanation, optional action.
+ *  CR-028 §3.2.4: opens as a SideDrawer slide-over (app-like, no page nav). */
 export function KpiDetailModal({ open, onClose, kpi }: { open: boolean; onClose: () => void; kpi: KpiInfo | null }) {
   if (!kpi) return null;
   const hasDelta = kpi.delta != null;
@@ -25,7 +27,7 @@ export function KpiDetailModal({ open, onClose, kpi }: { open: boolean; onClose:
   const trend = (kpi.series ?? []).map((v, i) => ({ name: String(i + 1), value: v }));
 
   return (
-    <Modal open={open} title={kpi.title} onClose={onClose} size="md">
+    <SideDrawer open={open} title={kpi.title} onClose={onClose}>
       <div className="space-y-4">
         <div>
           <div className="tabular text-3xl font-bold text-primary">{kpi.value}</div>
@@ -55,6 +57,7 @@ export function KpiDetailModal({ open, onClose, kpi }: { open: boolean; onClose:
         {kpi.action && (
           <div className="flex justify-end">
             <Button
+              variant="outline"
               onClick={() => {
                 onClose();
                 kpi.action!.onClick();
@@ -65,6 +68,6 @@ export function KpiDetailModal({ open, onClose, kpi }: { open: boolean; onClose:
           </div>
         )}
       </div>
-    </Modal>
+    </SideDrawer>
   );
 }

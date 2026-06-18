@@ -9,14 +9,20 @@ import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailMo
 import { IncomingWorkflowCard } from "@/components/dashboard/IncomingWorkflowCard";
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { OverduePaymentsModal, LowMarginModal } from "@/components/dashboard/DashboardModals";
+import { AskAnywhereBar } from "@/components/dashboard/AskAnywhereBar";
+import { AskAgentDrawer } from "@/components/dashboard/AskAgentDrawer";
+import { DashboardInsightSummary } from "@/components/dashboard/DashboardInsightSummary";
+import { FlaggedProjectDrawer } from "@/components/dashboard/FlaggedProjectDrawer";
+import { PriorityBriefingDrawer } from "@/components/dashboard/PriorityBriefingDrawer";
 import { CurrencyToggle, UsdMissingNote, useShowUsd } from "@/components/currency";
 import { LoadError } from "@/components/EmptyState";
+import { Button } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { formatCurrency, formatCurrencyAbbrev, formatPct, formatUSD, toNumber } from "@/utils/format";
-import { Banknote, Hammer, Percent, Wallet } from "lucide-react";
+import { Banknote, Hammer, Percent, ScanLine, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -74,6 +80,10 @@ export default function DashboardPage() {
   const [overdueOpen, setOverdueOpen] = useState(false);
   const [marginOpen, setMarginOpen] = useState(false);
   const [kpiDetail, setKpiDetail] = useState<KpiInfo | null>(null);
+  // CR-028-C AI-native: ask-bar answer + flagged-project + "see all" slide-overs.
+  const [askQuestion, setAskQuestion] = useState<string | null>(null);
+  const [flaggedProject, setFlaggedProject] = useState<any | null>(null);
+  const [briefingDrawerOpen, setBriefingDrawerOpen] = useState(false);
   const { getSummary, setSummary, clearSummary } = useAISummaryStore();
   const CACHE_KEY = "dashboard-summary";
 
@@ -181,6 +191,22 @@ export default function DashboardPage() {
   const overdueCount = k?.overdue_payment_count ?? 0;
   const showUsd = useShowUsd(); // CR-014-D
 
+  // CR-028-C §3.2.3: read-only suggested actions derived from REAL data.
+  const worstProject = useMemo(() => {
+    const ps = data?.projects ?? [];
+    return ps.length ? [...ps].sort((a, b) => toNumber(a.margin_pct) - toNumber(b.margin_pct))[0] : null;
+  }, [data?.projects]);
+  const askPrefills = [
+    "Vadesi geçmiş ödemeler ne kadar?",
+    "En düşük marjlı proje hangisi?",
+    "Bu ay marj neden düştü?",
+  ];
+  const askActions = [
+    ...(overdueCount > 0 ? [{ label: `${overdueCount} vadesi geçmiş ödemeyi gör`, onClick: () => setOverdueOpen(true) }] : []),
+    ...(worstProject && toNumber(worstProject.margin_pct) < 10 ? [{ label: "En riskli projeyi aç", onClick: () => setFlaggedProject(worstProject) }] : []),
+    { label: "En düşük marjlı projeler", onClick: () => setMarginOpen(true) },
+  ];
+
   return (
     <div>
       <DashboardToolbar
@@ -193,6 +219,20 @@ export default function DashboardPage() {
         briefing={briefing}
         briefingState={briefingState}
         onRefreshBriefing={handleRefreshBriefing}
+      />
+
+      {/* CR-028-C AI-native: ask-anywhere bar (⌘K) + inline cited summary. */}
+      <AskAnywhereBar onAsk={setAskQuestion} prefills={askPrefills} actions={askActions} />
+      <DashboardInsightSummary briefing={briefing} state={briefingState} onSeeAll={() => setBriefingDrawerOpen(true)} />
+
+      <AskAgentDrawer question={askQuestion} onClose={() => setAskQuestion(null)} />
+      <FlaggedProjectDrawer project={flaggedProject} onClose={() => setFlaggedProject(null)} />
+      <PriorityBriefingDrawer
+        open={briefingDrawerOpen}
+        onClose={() => setBriefingDrawerOpen(false)}
+        briefing={briefing}
+        briefingState={briefingState}
+        onRefresh={handleRefreshBriefing}
       />
 
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
@@ -353,9 +393,9 @@ export default function DashboardPage() {
           title={
             <span className="inline-flex items-center gap-3">
               Gelen Belgeler
-              <button onClick={() => navigate("/document-capture")} className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-brand hover:border-brand">
-                Belge Yükle →
-              </button>
+              <Button variant="outline" onClick={() => navigate("/document-capture")} className="rounded-control px-2 py-0.5 text-xs text-brand">
+                <ScanLine className="h-3.5 w-3.5" /> Belge Yükle
+              </Button>
             </span>
           }
           subtitle="Son eklenen faturalar, hakedişler ve ek işler."
@@ -368,9 +408,9 @@ export default function DashboardPage() {
             title="Onay Bekleyenler"
             subtitle={<span className="block truncate">Onayınızı bekleyen işlemler.</span>}
             right={
-              <button onClick={() => navigate("/approvals")} className="text-sm font-medium text-brand hover:underline">
+              <Button variant="ghost" onClick={() => navigate("/approvals")} className="px-2 py-1 text-sm text-brand hover:bg-surface-hover">
                 Tüm onaylar →
-              </button>
+              </Button>
             }
           >
             <ApprovalsPanel onGoToApprovals={() => navigate("/approvals")} />
