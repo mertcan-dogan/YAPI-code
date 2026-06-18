@@ -429,7 +429,10 @@ def _suppressed_dedup_keys(db: Session, company_id, keys: set) -> set:
         latest.setdefault(a.dedup_key, a)  # first seen = most recent (desc order)
     suppress = set()
     for key, a in latest.items():
-        if not a.is_dismissed or (a.dismissed_until is not None and a.dismissed_until > now):
+        du = a.dismissed_until
+        if du is not None and du.tzinfo is None:
+            du = du.replace(tzinfo=timezone.utc)  # SQLite returns naive; treat as UTC
+        if not a.is_dismissed or (du is not None and du > now):
             suppress.add(key)
     return suppress
 
