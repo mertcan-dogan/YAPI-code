@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger("yapi.observability")
@@ -188,8 +189,13 @@ def migration_head_matches(current: str | None, expected: str | None) -> bool:
     return current is not None and expected is not None and current == expected
 
 
+@lru_cache(maxsize=1)
 def get_expected_head() -> str | None:
-    """Latest Alembic script head from ``migrations/versions`` (None on error)."""
+    """Latest Alembic script head from ``migrations/versions`` (None on error).
+
+    Cached: the migration scripts are static per deploy, so /health (hit every
+    ~30s by the container healthcheck) doesn't re-parse the directory each time.
+    """
     try:
         from alembic.config import Config
         from alembic.script import ScriptDirectory

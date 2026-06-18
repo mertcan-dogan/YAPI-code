@@ -16,18 +16,17 @@ try:
 except Exception:  # pragma: no cover - optional dependency / platform quirks
     logging.getLogger("yapi").warning("truststore unavailable; falling back to certifi CA bundle")
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 
 from app.config import settings
-from app.db import get_db
 from app.middleware.errors import CatchAllErrorMiddleware, register_error_handlers
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.services.observability import (
     check_migration_head,
+    get_expected_head,
     init_sentry,
     verify_migration_head_on_boot,
 )
@@ -128,17 +127,43 @@ register_error_handlers(app)
 
 # --- Health check (Section 13.2) ---
 @app.get("/health", tags=["health"])
-def health(db: Session = Depends(get_db)):
-    # Liveness stays HTTP 200 regardless; a migration mismatch is signaled via the
-    # db_migration_ok=false field (and the boot-time Sentry alert), not by failing
-    # the probe — so a stale-schema deploy is observable without flapping liveness.
-    status = check_migration_head(db.connection())
-    return {
-        "status": "ok",
-        "db_migration_ok": status.ok,
-        "db_revision": status.current,
-        "expected_revision": status.expected,
-    }
+def health():
+    # Resilient liveness probe: ALWAYS returns HTTP 200 while the process is up.
+    # The container HEALTHCHECK does raise_for_status() with retries, so a 500 here
+    # during a transient DB outage could trigger a restart loop that makes the blip
+    # worse. We therefore do NOT use Depends(get_db) (dependency resolution can
+    # raise before the handler body, escaping any try/except) and instead open the
+    # connection inside the handler, swallowing DB errors.
+    #
+    # On DB error db_migration_ok is null (unknown) — NOT false — so a blip is never
+    # mistaken for a schema mismatch. The real mismatch signal is the boot-time
+    # ERROR log + Sentry alert from verify_migration_head_on_boot().
+    expected_head = get_expected_head()
+    try:
+        from app.db import SessionLocal
+
+        db = SessionLocal()
+        try:
+            status = check_migration_head(db.connection())
+        finally:
+            db.close()
+        return {
+            "status": "ok",
+            "db_migration_ok": status.ok,
+            "db_revision": status.current,
+            "expected_revision": status.expected,
+        }
+    except Exception:  # noqa: BLE001 - liveness must never 500 on a DB blip
+        logging.getLogger("yapi").warning(
+            "[health] DB/migration check unavailable; returning liveness-only", exc_info=True
+        )
+        return {
+            "status": "ok",
+            "db_migration_ok": None,
+            "db_revision": None,
+            "expected_revision": expected_head,
+            "db_error": True,
+        }
 
 
 # --- API v1 routers ---

@@ -216,3 +216,24 @@ def test_health_includes_migration_fields(client):
     assert isinstance(body["db_migration_ok"], bool)
     # The latest script head is always resolvable from the migrations package.
     assert body["expected_revision"] is not None
+
+
+def test_health_stays_200_when_db_unavailable(client, monkeypatch):
+    """A transient DB outage must NOT make /health 500 (would restart-loop the
+    container). It returns 200 with db_migration_ok=null (unknown, not false)."""
+    from app import db as db_module
+
+    def _db_down():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(db_module, "SessionLocal", _db_down)
+
+    r = client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["db_migration_ok"] is None  # unknown, not a mismatch
+    assert body["db_revision"] is None
+    assert body["db_error"] is True
+    # The script head is filesystem-resolvable even when the DB is down.
+    assert body["expected_revision"] is not None
