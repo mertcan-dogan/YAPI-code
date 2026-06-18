@@ -2,27 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens — Section 6.2 */
+/* Design tokens — Section 6.2 + CR-028 (data-dense professional, Ramp/Mercury).
+   Variable NAMES are stable (unmigrated pages depend on them); CR-028 re-aims
+   the VALUES toward a cooler neutral ramp with ONE restrained accent and adds
+   density/radius/elevation tokens. */
 :root {
-  --color-primary: #0e1525;
-  --color-primary-light: #1e293f;
-  --color-brand: #2563eb;
+  --color-primary: #0e1525;        /* sidebar / primary chrome — unchanged */
+  --color-primary-light: #1e2a44;
+  --color-brand: #2563eb;          /* THE single restrained accent */
   --color-brand-light: #3b82f6;
-  --color-brand-2: #06b6d4;
+  /* CR-028: de-cyan the brand gradient — pull the second stop toward blue so
+     decorative cyan gradients become a restrained single-hue. */
+  --color-brand-2: #3b82f6;
   --color-accent: #f59e0b;
   --color-success: #059669;
   --color-danger: #ef4444;
   --color-warning: #d97706;
-  --color-bg: #f5f7fa;
+  /* Cooler neutral ramp */
+  --color-bg: #f6f8fb;
   --color-surface: #ffffff;
-  --color-border: #e3e8ef;
+  --color-surface-hover: #f3f5f9; /* CR-028: row/control hover tint */
+  --color-border: #e6e9f1;        /* hairline separator (primary depth cue) */
+  --color-border-strong: #d3dae5; /* CR-028: stronger divider when needed */
   --color-text-primary: #16202e;
-  --color-text-secondary: #64748b;
-  --color-text-disabled: #94a3b8;
-  --color-navy-50: #eff5ff;
+  --color-text-secondary: #5b6779;
+  --color-text-muted: #8a94a6;    /* CR-028: overline labels / captions */
+  --color-text-disabled: #97a1b2;
+  --color-navy-50: #eef4ff;
   --color-amber-50: #fffbeb;
   --color-red-50: #fef2f2;
   --color-green-50: #ecfdf5;
+
+  /* CR-028: density + radius + elevation system (use over per-page guesses) */
+  --radius-sm: 6px;     /* small controls, chips */
+  --radius: 8px;        /* default controls (buttons, inputs) */
+  --radius-card: 12px;  /* cards, panels */
+  --row-h: 38px;        /* compact data-table row */
+  --shadow-card: 0 1px 2px 0 rgb(16 24 40 / 0.04), 0 1px 3px 0 rgb(16 24 40 / 0.05);
+  --shadow-pop: 0 6px 20px -4px rgb(16 24 40 / 0.12), 0 2px 6px -2px rgb(16 24 40 / 0.06);
 }
 
 html,
@@ -43,6 +60,21 @@ body {
 /* All financial figures use tabular numerals (Section 6.3) */
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* CR-028: small muted uppercase label for field/column/section overlines (§0.2.2). */
+.overline {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+/* CR-028: consistent, visible focus ring for keyboard users (§0.0.7). */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
 }
 
 /* Skeleton shimmer (Section 6.7) */
