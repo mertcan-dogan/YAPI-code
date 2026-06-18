@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
+    "lint:ui": "node scripts/check-ui-guardrails.mjs",
     "test": "vitest run"
   },
   "dependencies": {
