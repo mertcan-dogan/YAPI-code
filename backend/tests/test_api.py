@@ -21,7 +21,10 @@ def _project_payload(**over):
 def test_health(client):
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    body = r.json()
+    # Liveness stays "ok"; observability fields are additive (CR-OBS).
+    assert body["status"] == "ok"
+    assert {"db_migration_ok", "db_revision", "expected_revision"} <= set(body)
 
 
 def test_unauthenticated_returns_401(client, seed):

@@ -16,14 +16,21 @@ try:
 except Exception:  # pragma: no cover - optional dependency / platform quirks
     logging.getLogger("yapi").warning("truststore unavailable; falling back to certifi CA bundle")
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 
 from app.config import settings
+from app.db import get_db
 from app.middleware.errors import CatchAllErrorMiddleware, register_error_handlers
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.services.observability import (
+    check_migration_head,
+    init_sentry,
+    verify_migration_head_on_boot,
+)
 from app.startup import run_migrations
 
 # Routers
@@ -59,12 +66,29 @@ from app.api import (
 
 logging.basicConfig(level=logging.INFO)
 
+# Initialize error monitoring BEFORE the app is created so init-time failures are
+# captured too. No-op when SENTRY_DSN is unset (local dev + tests run unchanged).
+init_sentry(dsn=settings.sentry_dsn, environment=settings.environment)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Reconcile the database schema to the models on every boot, regardless of
     # how the platform builds/starts the container (see app/startup.py).
     run_migrations()
+    # Silent-failure protection: verify the applied Alembic revision matches the
+    # latest script head. A mismatch logs an ERROR + alerts Sentry but never
+    # blocks startup. Best-effort — only meaningful against the real (Postgres) DB.
+    try:
+        from app.db import get_engine
+
+        if settings.database_url.startswith(("postgres://", "postgresql")):
+            with get_engine().connect() as conn:
+                verify_migration_head_on_boot(conn)
+    except Exception:  # noqa: BLE001 - diagnostics must never block boot
+        logging.getLogger("yapi.startup").exception(
+            "[startup] migration-head integrity check failed to run"
+        )
     yield
 
 
@@ -104,8 +128,17 @@ register_error_handlers(app)
 
 # --- Health check (Section 13.2) ---
 @app.get("/health", tags=["health"])
-def health():
-    return {"status": "ok"}
+def health(db: Session = Depends(get_db)):
+    # Liveness stays HTTP 200 regardless; a migration mismatch is signaled via the
+    # db_migration_ok=false field (and the boot-time Sentry alert), not by failing
+    # the probe — so a stale-schema deploy is observable without flapping liveness.
+    status = check_migration_head(db.connection())
+    return {
+        "status": "ok",
+        "db_migration_ok": status.ok,
+        "db_revision": status.current,
+        "expected_revision": status.expected,
+    }
 
 
 # --- API v1 routers ---
