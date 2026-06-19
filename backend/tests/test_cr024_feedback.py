@@ -218,11 +218,13 @@ def test_agent_response_has_query_log_id_and_row_counts_and_no_other_changes(db,
     # Additive keys present and real.
     assert out["row_counts"] == {"list_projects": 1}
     assert isinstance(out["query_log_id"], str) and out["query_log_id"]
-    # All previously-existing keys still present and unchanged in shape.
+    # All previously-existing keys still present and unchanged in shape
+    # (CR-011-C adds the additive `proposed_actions` list).
     assert set(out.keys()) == {
         "answer_markdown", "charts", "citations", "tools_used",
-        "generated_at", "notes", "query_log_id", "row_counts",
+        "generated_at", "notes", "query_log_id", "row_counts", "proposed_actions",
     }
+    assert out["proposed_actions"] == []  # read-only answer -> no proposals
     assert out["answer_markdown"] == "Portföy özeti."
     assert out["tools_used"] == ["list_projects"]
     # query_log_id points at the real logged row.
@@ -234,9 +236,10 @@ def test_degraded_response_has_consistent_shape():
     out = agent_service.degraded_response()
     assert out["query_log_id"] is None
     assert out["row_counts"] == {}
+    assert out["proposed_actions"] == []
     assert set(out.keys()) == {
         "answer_markdown", "charts", "citations", "tools_used",
-        "generated_at", "notes", "query_log_id", "row_counts",
+        "generated_at", "notes", "query_log_id", "row_counts", "proposed_actions",
     }
 
 

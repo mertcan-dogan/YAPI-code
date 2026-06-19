@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.constants import COST_CATEGORIES
+from app.services import agent_actions as actions
 from app.services import agent_tools as tools
 from app.services import ai as ai_service
 from app.utils.format import format_date_tr, format_number_tr
@@ -151,6 +152,17 @@ TOOL_REGISTRY = {
     "get_assurance_findings": (tools.get_assurance_findings, {"project_id", "severity"}),
 }
 
+# CR-011-C — ACTION tools (propose-only). Kept in a SEPARATE registry so the
+# read-only guarantee on TOOL_REGISTRY stays intact and the executor routes
+# actions through the approvals lifecycle (never a direct mutation, §0.2.1).
+ACTION_TOOL_REGISTRY = {
+    "propose_reminder": (actions.propose_reminder, {"title", "note", "due_date", "project_id"}),
+    "propose_flag_invoice": (actions.propose_flag_invoice,
+                             {"target_kind", "target_id", "reason", "project_id"}),
+    "propose_followup_task": (actions.propose_followup_task, {"title", "note", "project_id"}),
+}
+ACTION_TOOL_NAMES = set(ACTION_TOOL_REGISTRY)
+
 
 def build_tool_schemas() -> list[dict]:
     """Anthropic tool definitions — one per read-only tool plus create_chart.
@@ -281,6 +293,51 @@ def build_tool_schemas() -> list[dict]:
                 "severity": {"type": "string", "enum": ["high", "medium", "low"]},
             }},
         },
+        # CR-011-C — ACTION tools. These do NOT change anything directly; each one
+        # creates a PENDING approval request that a human must approve. Use them
+        # ONLY when the user explicitly asks for an action, and always say it is a
+        # proposal awaiting approval ("öneri oluşturuldu — onayınızı bekliyor").
+        {
+            "name": "propose_reminder",
+            "description": (
+                "ÖNERİ (doğrudan yazmaz): bir hatırlatıcı oluşturmayı önerir — onay "
+                "bekleyen bir talep açar. Kullanıcı açıkça hatırlatıcı isterse kullan."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "title": {"type": "string"},
+                "note": {"type": "string"},
+                "due_date": date_s,
+                "project_id": pid,
+            }, "required": ["title"]},
+        },
+        {
+            "name": "propose_flag_invoice",
+            "description": (
+                "ÖNERİ (doğrudan yazmaz): bir hakediş faturasını veya maliyet kaydını "
+                "incelenmek üzere işaretlemeyi önerir — onay bekleyen bir talep açar. "
+                "target_id, get_assurance_findings / query_* araçlarından gelen kayıt "
+                "kimliği olmalı."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "target_kind": {"type": "string", "enum": ["client_invoice", "cost_entry"]},
+                "target_id": {"type": "string", "description": "Hedef kayıt UUID"},
+                "reason": {"type": "string"},
+                "project_id": pid,
+            }, "required": ["target_kind", "target_id", "reason"]},
+        },
+        {
+            "name": "propose_followup_task",
+            "description": (
+                "ÖNERİ (doğrudan yazmaz): bir takip görevi / onay talebi oluşturmayı "
+                "önerir — onay bekleyen bir talep açar. Kullanıcı bir görev/iş öğesi "
+                "isterse kullan."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "title": {"type": "string"},
+                "note": {"type": "string"},
+                "project_id": pid,
+            }, "required": ["title"]},
+        },
         {
             "name": "create_chart",
             "description": (
@@ -376,7 +433,8 @@ def scoped_tool_schemas(scope: str | None) -> list[dict]:
     cfg = SCOPES.get(scope or "")
     if not cfg:
         return schemas
-    allowed = set(cfg["tools"]) | ALWAYS_SCOPED_TOOLS
+    # Action tools (propose-only) stay available in every scope (§3.1).
+    allowed = set(cfg["tools"]) | ALWAYS_SCOPED_TOOLS | ACTION_TOOL_NAMES
     return [t for t in schemas if t["name"] in allowed]
 
 
@@ -513,10 +571,15 @@ def _apply_relative_window(allowed: set[str], raw: dict, params: dict, today: da
 
 
 def execute_tool(db: Session, company_id, name: str, tool_input: dict,
-                 charts: list, citations: list, seen: set, today: date | None = None) -> dict:
+                 charts: list, citations: list, seen: set, today: date | None = None,
+                 user_id=None, proposed_actions: list | None = None) -> dict:
     """Run one tool with company_id injected server-side. Never raises — returns
     an error dict so the model can recover within the loop. A relative date window
-    (if any) is resolved to literal ISO dates here (§1.2), never by the model."""
+    (if any) is resolved to literal ISO dates here (§1.2), never by the model.
+
+    CR-011-C: ACTION tools are routed separately — they create a PENDING approval
+    request (propose-only, §0.2.1) and the proposal is appended to
+    ``proposed_actions`` for the UI. They require a ``user_id`` (requested_by)."""
     if name == "create_chart":
         try:
             spec = tools.create_chart(**(tool_input or {}))
@@ -524,6 +587,24 @@ def execute_tool(db: Session, company_id, name: str, tool_input: dict,
             return {"error": str(exc)}
         charts.append(spec)
         return {"ok": True, "chart": spec}
+
+    # CR-011-C — propose-only action tools (never a direct mutation).
+    action = ACTION_TOOL_REGISTRY.get(name)
+    if action is not None:
+        if user_id is None:
+            return {"error": "Bu eylem için oturum bağlamı gerekli."}
+        func, allowed = action
+        params = _coerce_params(allowed, tool_input)
+        try:
+            result = func(db, company_id, user_id, **params)
+        except actions.ActionError as exc:
+            return {"error": str(exc)}
+        except TypeError as exc:  # missing/invalid params
+            return {"error": f"Eylem parametreleri geçersiz: {exc}"}
+        pa = result.get("proposed_action") if isinstance(result, dict) else None
+        if pa is not None and proposed_actions is not None:
+            proposed_actions.append(pa)
+        return result
 
     entry = TOOL_REGISTRY.get(name)
     if entry is None:
@@ -565,6 +646,9 @@ _STEP_LABELS = {
     "get_retention_summary": "Teminat kesintileri inceleniyor…",
     "get_assurance_findings": "Güvence bulguları taranıyor…",
     "create_chart": "Grafik hazırlanıyor…",
+    "propose_reminder": "Hatırlatıcı önerisi hazırlanıyor…",
+    "propose_flag_invoice": "İnceleme önerisi hazırlanıyor…",
+    "propose_followup_task": "Görev önerisi hazırlanıyor…",
 }
 
 
@@ -572,11 +656,25 @@ def _step_label(name: str) -> str:
     return _STEP_LABELS.get(name, "Veriler inceleniyor…")
 
 
+# CR-011-C — propose-only action guidance (always present; the agent has action
+# tools in every scope). Reinforces the §0.2.1 invariant in the model's own words.
+_ACTION_GUIDANCE = (
+    "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, "
+    "propose_followup_task): Bu araçlar HİÇBİR ŞEYİ DOĞRUDAN DEĞİŞTİRMEZ — yalnızca "
+    "ONAY BEKLEYEN bir öneri oluştururlar ve değişiklik ancak kullanıcı /approvals "
+    "sayfasından onaylarsa uygulanır. Bunları YALNIZCA kullanıcı açıkça bir eylem "
+    "(hatırlatıcı, işaretleme, görev) istediğinde çağır. Sonucu bildirirken ASLA "
+    "'yaptım/oluşturdum/işaretledim' deme; 'öneri oluşturuldu, onayınızı bekliyor' "
+    "de ve onay için /approvals sayfasına yönlendir."
+)
+
+
 def _build_system(today: date | None, project_id, scope: str | None = None,
                   scope_context: str = "") -> str:
-    """Assemble the system prompt: base + server-date rules + optional domain
-    `scope` preamble + cheap pre-loaded scope context + active project (§2.1)."""
-    system = SYSTEM_PROMPT + _date_guidance(today or date.today())
+    """Assemble the system prompt: base + server-date rules + action guidance +
+    optional domain `scope` preamble + cheap pre-loaded scope context + active
+    project (§2.1, §3.1)."""
+    system = SYSTEM_PROMPT + _date_guidance(today or date.today()) + _ACTION_GUIDANCE
     pre = _scope_preamble(scope)
     if pre:
         system += "\n\nALAN ODAĞI: " + pre
@@ -614,6 +712,7 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
     row_counts: dict[str, int] = {}
     charts: list[dict] = []
     citations: list[dict] = []
+    proposed_actions: list[dict] = []  # CR-011-C — pending approval proposals
     seen_citation_ids: set = set()
 
     timeout = settings.ai_agent_timeout_seconds
@@ -656,7 +755,8 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
                 # preview on a step and shows the tool's Turkish label.
                 yield {"type": "step", "tool": block.name, "label": _step_label(block.name)}
             result = execute_tool(db, company_id, block.name, dict(block.input or {}),
-                                  charts, citations, seen_citation_ids, today)
+                                  charts, citations, seen_citation_ids, today,
+                                  user_id, proposed_actions)
             if isinstance(result, dict) and "row_count" in result:
                 row_counts[block.name] = row_counts.get(block.name, 0) + int(result["row_count"])
             results_block.append({
@@ -685,6 +785,9 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
         # above so the frontend explainability panel / feedback can use real data.
         "query_log_id": str(query_log_id) if query_log_id else None,
         "row_counts": row_counts,
+        # CR-011-C — pending approval proposals (Onayla/Reddet cards). Read-only
+        # answers carry an empty list, so the response shape is unchanged.
+        "proposed_actions": proposed_actions,
     }}
 
 
@@ -802,4 +905,5 @@ def degraded_response() -> dict:
         # CR-024-A: keep the shape consistent with run_agent's success response.
         "query_log_id": None,
         "row_counts": {},
+        "proposed_actions": [],
     }

@@ -42,6 +42,7 @@ def create_request(
     description: str,
     amount_try=None,
     requested_by: uuid.UUID,
+    proposed_by_agent: bool = False,
 ) -> ApprovalRequest:
     req = ApprovalRequest(
         company_id=company_id,
@@ -54,6 +55,7 @@ def create_request(
         amount_try=amount_try,
         status="pending",
         requested_by=requested_by,
+        proposed_by_agent=proposed_by_agent,
     )
     db.add(req)
     db.flush()
@@ -70,6 +72,12 @@ def apply_request(db: Session, req: ApprovalRequest) -> None:
         _apply_cost_deletion(db, req)
     elif req.kind == "variation_approval":
         _apply_variation_approval(db, req)
+    # CR-011-C — agent-proposed actions. These run ONLY here, after a human has
+    # approved the pending request; the agent itself never reaches this code.
+    elif req.kind in ("agent_reminder", "agent_task"):
+        _apply_agent_notification(db, req)
+    elif req.kind == "agent_flag_invoice":
+        _apply_agent_flag_invoice(db, req)
 
 
 def mark_decided(req: ApprovalRequest, *, user_id: uuid.UUID, status: str, reason: str | None = None) -> None:
@@ -138,3 +146,46 @@ def _apply_variation_approval(db: Session, req: ApprovalRequest) -> None:
         v.approved_date = _date.fromisoformat(payload["approved_date"])
     db.flush()
     _sync_category_budget(db, v.project_id, v.company_id, v.cost_category)
+
+
+# --- CR-011-C agent-proposed appliers ----------------------------------------
+def _apply_agent_notification(db: Session, req: ApprovalRequest) -> None:
+    """An approved agent reminder/task becomes an in-app notification (CR-006-C
+    bell). Scoped to the user who triggered the agent (requested_by)."""
+    from app.models.notification import Notification
+
+    payload = req.payload or {}
+    note = Notification(
+        company_id=req.company_id,
+        user_id=req.requested_by,
+        title=(payload.get("title") or req.description or "Hatırlatıcı")[:200],
+        body=payload.get("body"),
+        notification_type="ai_alert",
+        severity=payload.get("severity") or "medium",
+        related_project_id=req.project_id,
+    )
+    db.add(note)
+    db.flush()
+
+
+def _apply_agent_flag_invoice(db: Session, req: ApprovalRequest) -> None:
+    """An approved 'flag for review' becomes a manual AIAlert review finding on
+    the target record — so it shows up in Finans Güvence and is dismissible."""
+    from app.models.ai_alert import AIAlert
+
+    payload = req.payload or {}
+    source_type = payload.get("source_type")  # client_invoice | cost_entry
+    alert = AIAlert(
+        company_id=req.company_id,
+        project_id=req.project_id,
+        alert_type="agent_flag",
+        severity=payload.get("severity") or "medium",
+        title_tr=(payload.get("title") or "İnceleme için işaretlendi")[:200],
+        body_tr=payload.get("reason") or req.description or "",
+        recommended_action="Bu kaydı inceleyin.",
+        source_type=source_type,
+        source_id=req.target_id,
+        dedup_key=f"agent_flag:{source_type}:{req.target_id}",
+    )
+    db.add(alert)
+    db.flush()

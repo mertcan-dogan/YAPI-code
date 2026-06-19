@@ -1236,3 +1236,144 @@ def _nl2br(text) -> str:
     from xml.sax.saxutils import escape
 
     return escape(str(text or "")).replace("\n", "<br/>")
+
+
+# ---------------------------------------------------------------------------
+# CR-011-C — Agent analysis export (PDF + Excel)
+# An agent analysis = answer text + its chart(s) + citations. Self-contained
+# (the caller passes the analysis the agent already produced; no re-run).
+# ---------------------------------------------------------------------------
+def build_agent_analysis_data(company: Company | None, analysis: dict) -> dict:
+    """Shape the analysis for rendering (no ReportLab/openpyxl import — testable)."""
+    now = datetime.now(timezone.utc)
+    return {
+        "company_name": company.name if company else "Yapı",
+        "logo_url": company.logo_url if company else None,
+        "title": analysis.get("title") or "Yapı AI Analizi",
+        "question": analysis.get("question"),
+        "answer_markdown": analysis.get("answer_markdown") or "",
+        "charts": analysis.get("charts") or [],
+        "citations": analysis.get("citations") or [],
+        "generated_at": format_datetime_tr(now),
+        "report_date": format_date_tr(now.date()),
+    }
+
+
+def render_agent_analysis_pdf(company: Company | None, analysis: dict) -> bytes:
+    return _agent_analysis_pdf(build_agent_analysis_data(company, analysis))
+
+
+def _agent_chart_flowables(s, ch: dict) -> list:
+    """Render one agent chart as a titled data table (its underlying numbers) —
+    honest and dialect/markup-safe for any chart_type (line/bar/composed)."""
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph
+
+    out = [Paragraph(_nl2br(ch.get("title") or "Grafik"), s["h3"])]
+    series = ch.get("series") or []
+    data = ch.get("data") or []
+    x_key = ch.get("x_key") or "x"
+    if not series or not data:
+        out.append(Paragraph("Grafik verisi yok.", s["body"]))
+        return out
+    header = [x_key] + [str(se.get("label") or se.get("key") or "") for se in series]
+    rows = [header]
+    for pt in data:
+        row = [str(pt.get(x_key, ""))]
+        for se in series:
+            row.append(str(pt.get(se.get("key"), "")))
+        rows.append(row)
+    ncol = len(header)
+    out.append(_data_table(
+        rows, col_widths=[17.6 / ncol * cm] * ncol, num_cols=tuple(range(1, ncol)),
+    ))
+    if ch.get("source_note"):
+        out.append(Paragraph(_nl2br(ch["source_note"]), s["note"]))
+    return out
+
+
+def _agent_analysis_pdf(d: dict) -> bytes:
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, Spacer
+
+    s = _styles()
+    story = [
+        _header_table(s, d["logo_url"], d["company_name"], d["title"], d["report_date"]),
+        Spacer(1, 10),
+    ]
+    if d.get("question"):
+        story.append(Paragraph(f"<b>Soru:</b> {_nl2br(d['question'])}", s["h3"]))
+        story.append(Spacer(1, 4))
+
+    story.append(Paragraph("Analiz", s["h2"]))
+    story.append(Paragraph(_format_ai_md(d["answer_markdown"]), s["body"]))
+
+    for ch in d["charts"]:
+        story.append(Spacer(1, 8))
+        story += _agent_chart_flowables(s, ch)
+
+    cits = d["citations"]
+    if cits:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Kaynaklar", s["h2"]))
+        rows = [["Kaynak", "Bağlantı"]]
+        for c in cits:
+            rows.append([_short(str(c.get("label", "")), 60), str(c.get("deep_link", ""))])
+        story.append(_data_table(rows, col_widths=[8.8 * cm, 8.8 * cm]))
+
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(AI_DISCLAIMER, s["disclaimer"]))
+    return _render_story(story, d["generated_at"], footer_note=AI_DISCLAIMER)
+
+
+def _safe_sheet_title(title, idx: int) -> str:
+    """Excel sheet titles: <=31 chars, none of []:*?/\\, unique (idx-prefixed)."""
+    import re
+
+    t = re.sub(r"[\[\]:\*\?/\\]", " ", str(title or "")).strip()
+    return (f"{idx}-{t}" if t else f"Grafik {idx}")[:31]
+
+
+def render_agent_analysis_excel(company: Company | None, analysis: dict) -> bytes:
+    """Render the analysis to an .xlsx workbook: an Analiz sheet (answer text),
+    one sheet per chart (its data), and a Kaynaklar sheet (citations)."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    d = build_agent_analysis_data(company, analysis)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Analiz"
+    ws.append([d["title"]])
+    ws.append(["Şirket", d["company_name"]])
+    ws.append(["Oluşturulma", d["generated_at"]])
+    if d.get("question"):
+        ws.append(["Soru", d["question"]])
+    ws.append([])
+    ws.append(["Analiz"])
+    answer_lines = _strip_action_lines(d["answer_markdown"]) or [d["answer_markdown"]]
+    for line in answer_lines:
+        ws.append([line])
+
+    for idx, ch in enumerate(d["charts"], 1):
+        cws = wb.create_sheet(title=_safe_sheet_title(ch.get("title"), idx))
+        series = ch.get("series") or []
+        x_key = ch.get("x_key") or "x"
+        cws.append([x_key] + [str(se.get("label") or se.get("key") or "") for se in series])
+        for pt in (ch.get("data") or []):
+            cws.append([pt.get(x_key)] + [pt.get(se.get("key")) for se in series])
+
+    cits = d["citations"]
+    if cits:
+        kws = wb.create_sheet(title="Kaynaklar")
+        kws.append(["Kaynak", "Tür", "Bağlantı"])
+        for c in cits:
+            kws.append([c.get("label"), c.get("type"), c.get("deep_link")])
+
+    info = wb.create_sheet(title="Bilgi")
+    info.append([AI_DISCLAIMER])
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

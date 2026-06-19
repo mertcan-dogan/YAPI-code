@@ -25,6 +25,10 @@ KIND_LABELS = {
     "subcontractor_change": "Alt Yüklenici Değişikliği",
     "cost_deletion": "Maliyet Silme",
     "variation_approval": "Ek İş Onayı",
+    # CR-011-C — agent-proposed action kinds.
+    "agent_reminder": "Hatırlatıcı (AI önerisi)",
+    "agent_flag_invoice": "İnceleme İşareti (AI önerisi)",
+    "agent_task": "Görev (AI önerisi)",
 }
 
 
@@ -83,6 +87,8 @@ def list_approvals(user: DirectorUser, db: Session = Depends(get_db)):
             "amount_try": str(r.amount_try) if r.amount_try is not None else None,
             "created_by": str(r.requested_by),
             "created_at": r.created_at.isoformat(),
+            # CR-011-C — lets the UI badge agent-proposed requests ("Yapı AI öneriyor").
+            "proposed_by_agent": bool(r.proposed_by_agent),
         })
     return success(items, meta={"total": len(items)})
 
