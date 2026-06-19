@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 import * as React from "react";
-import { Info, Loader2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Info, Loader2, X } from "lucide-react";
 
 // --- Button ---
 type ButtonVariant = "primary" | "ghost" | "danger" | "outline";
@@ -331,5 +331,217 @@ export function AIDisclaimer({ short = false, className }: { short?: boolean; cl
       <Info className="mt-0.5 h-3 w-3 shrink-0" />
       <span>{text}</span>
     </p>
+  );
+}
+
+// --- Menu / Dropdown (CR-029) — accessible popover for header dropdowns + the
+// card three-dot menus. Click-outside + Escape close; keyboard focusable. ---
+export function Menu({
+  trigger,
+  triggerClassName,
+  triggerLabel,
+  align = "right",
+  width,
+  children,
+}: {
+  trigger: React.ReactNode;
+  triggerClassName?: string;
+  triggerLabel?: string; // aria-label for icon-only triggers
+  align?: "left" | "right";
+  width?: number;
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
+}) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const close = () => setOpen(false);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={triggerLabel}
+        onClick={() => setOpen((o) => !o)}
+        className={cn("focus-ring", triggerClassName)}
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={width ? { width } : undefined}
+          className={cn(
+            "absolute z-50 mt-1 min-w-[180px] overflow-hidden rounded-control border border-border bg-surface py-1 shadow-pop animate-fade-in",
+            align === "right" ? "right-0" : "left-0"
+          )}
+        >
+          {typeof children === "function" ? children(close) : children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function MenuItem({
+  icon: Icon,
+  children,
+  onClick,
+  danger,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+  onClick?: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-hover",
+        danger ? "text-danger" : "text-text-primary"
+      )}
+    >
+      {Icon && <Icon className="h-4 w-4 shrink-0 text-text-muted" />}
+      {children}
+    </button>
+  );
+}
+
+// --- Sparkline (CR-029) — KPI mini-chart (mockup spark() port). ---
+export function Sparkline({
+  data,
+  color = "var(--color-brand)",
+  className,
+  width = 120,
+  height = 26,
+}: {
+  data: number[];
+  color?: string;
+  className?: string;
+  width?: number;
+  height?: number;
+}) {
+  if (!data || data.length < 2) return null;
+  const mn = Math.min(...data);
+  const mx = Math.max(...data);
+  const rg = mx - mn || 1;
+  const pts = data.map((d, i) => [(i / (data.length - 1)) * width, height - 2 - ((d - mn) / rg) * (height - 4)]);
+  const line = pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const area = `0,${height} ${line} ${width},${height}`;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className={className} aria-hidden="true">
+      <polygon points={area} fill={color} opacity={0.08} />
+      <polyline points={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// --- Switch / Toggle (CR-029) — iOS-style. ---
+export function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange?: (v: boolean) => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange?.(!checked)}
+      className={cn(
+        "focus-ring relative h-[16px] w-[28px] shrink-0 rounded-full transition-colors",
+        checked ? "bg-success" : "bg-border-strong",
+        disabled && "cursor-not-allowed opacity-60"
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow-sm transition-all",
+          checked ? "left-[14px]" : "left-[2px]"
+        )}
+      />
+    </button>
+  );
+}
+
+// --- Pagination (CR-029) — prev/next arrows, disabled at ends. ---
+export function Pagination({
+  page,
+  pageCount,
+  onPage,
+  className,
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (p: number) => void;
+  className?: string;
+}) {
+  const btn =
+    "focus-ring flex h-[26px] w-[26px] items-center justify-center rounded-sm border border-border bg-surface text-text-secondary transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-40";
+  return (
+    <div className={cn("flex items-center gap-1.5", className)}>
+      <button type="button" aria-label="Önceki" disabled={page <= 1} onClick={() => onPage(page - 1)} className={btn}>
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <button type="button" aria-label="Sonraki" disabled={page >= pageCount} onClick={() => onPage(page + 1)} className={btn}>
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// --- Avatar (CR-029) — initials or photo. ---
+export function Avatar({
+  name,
+  src,
+  size = 34,
+  className,
+}: {
+  name?: string;
+  src?: string | null;
+  size?: number;
+  className?: string;
+}) {
+  const initials =
+    (name || "")
+      .split(" ")
+      .map((w) => w[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toLocaleUpperCase("tr") || "?";
+  if (src) {
+    return <img src={src} alt={name ?? ""} className={cn("rounded-full object-cover", className)} style={{ width: size, height: size }} />;
+  }
+  return (
+    <span
+      className={cn("inline-flex items-center justify-center rounded-full bg-gradient-to-br from-brand to-purple font-semibold text-white", className)}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }}
+    >
+      {initials}
+    </span>
   );
 }

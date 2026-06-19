@@ -12,12 +12,19 @@ export default {
         danger: "var(--color-danger)",
         warning: "var(--color-warning)",
         bg: "var(--color-bg)",
-        surface: { DEFAULT: "var(--color-surface)", hover: "var(--color-surface-hover)" },
+        surface: { DEFAULT: "var(--color-surface)", soft: "var(--color-surface-soft)", hover: "var(--color-surface-hover)" },
         border: { DEFAULT: "var(--color-border)", strong: "var(--color-border-strong)" },
         "text-primary": "var(--color-text-primary)",
         "text-secondary": "var(--color-text-secondary)",
         "text-muted": "var(--color-text-muted)",
+        "text-faint": "var(--color-text-faint)",
         "text-disabled": "var(--color-text-disabled)",
+        // CR-029: full BuildFlow accent set (+ soft tints for icon badges/pills).
+        teal: { DEFAULT: "var(--color-teal)", soft: "var(--color-teal-soft)" },
+        purple: { DEFAULT: "var(--color-purple)", soft: "var(--color-purple-soft)" },
+        orange: { DEFAULT: "var(--color-orange)", soft: "var(--color-orange-soft)" },
+        "blue-soft": "var(--color-blue-soft)",
+        "blue-border": "var(--color-blue-border)",
         "navy-50": "var(--color-navy-50)",
         "amber-50": "var(--color-amber-50)",
         "red-50": "var(--color-red-50)",
@@ -42,6 +49,7 @@ export default {
       },
       boxShadow: {
         card: "var(--shadow-card)",
+        lg: "var(--shadow-lg)",
         pop: "var(--shadow-pop)",
       },
       keyframes: {
