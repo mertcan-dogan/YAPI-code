@@ -4,6 +4,8 @@ import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { BriefingHero, type RiskChips } from "@/components/dashboard/buildflow/BriefingHero";
 import { KpiCards } from "@/components/dashboard/buildflow/KpiCards";
 import { DashboardCharts } from "@/components/dashboard/buildflow/DashboardCharts";
+import { ProjectRiskTable } from "@/components/dashboard/buildflow/ProjectRiskTable";
+import { ReportsPanel } from "@/components/dashboard/buildflow/ReportsPanel";
 import { CurrencyToggle } from "@/components/currency";
 import { LoadError } from "@/components/EmptyState";
 import { Menu, MenuItem, Modal } from "@/components/ui";
@@ -250,7 +252,25 @@ export default function DashboardPage() {
             />
             <KpiCards data={data} approvalsCount={approvalsCount} loading={loading} />
             <DashboardCharts data={data} loading={loading} />
-            {/* CR-029-E: project-risk table, reports & decks. */}
+
+            {/* Lower grid: project-risk table (wide) + reports & decks (§9–§10) */}
+            <div className="grid grid-cols-1 gap-2.5 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.9fr)]">
+              <ProjectRiskTable
+                projects={data?.projects ?? []}
+                performance={data?.portfolio_performance ?? []}
+                marginFade={data?.margin_fade?.projects ?? []}
+                alerts={alerts ?? []}
+                loading={loading}
+              />
+              <ReportsPanel />
+            </div>
+
+            {/* Custom layout hint (§12) */}
+            <div className="flex items-center gap-2 px-1 pt-1 text-[11.5px] text-text-muted">
+              <Settings2 className="h-3.5 w-3.5" />
+              Widget'ları sürükleyerek yeniden düzenleyin • Widget ekley/çıkarın:&nbsp;
+              <button className="focus-ring font-medium text-brand hover:underline" onClick={() => setInfoOpen(true)}>Özel düzen</button>
+            </div>
           </div>
 
           {/* right rail — CR-029-F: action queue, skills, feed. */}
