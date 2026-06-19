@@ -15,14 +15,15 @@ import {
   LayoutDashboard,
   LayoutGrid,
   LogOut,
-  Menu,
+  Menu as MenuIcon,
   MessageSquare,
   PlusSquare,
   Plus,
-  Send,
+  RefreshCw,
+  Search,
   Settings,
   ScanLine,
-  Sparkles,
+  ShieldCheck,
   TrendingUp,
   Users,
   Wrench,
@@ -34,14 +35,48 @@ import { apiGet } from "@/lib/api";
 import { useProjectStore } from "@/store/project";
 import { NotificationBell } from "@/components/NotificationBell";
 import { CommandPalette } from "@/components/CommandPalette";
-import { Modal } from "@/components/ui";
+import { Avatar, Menu, MenuItem, Modal } from "@/components/ui";
 import { ROLE_LABELS } from "@/constants";
 
-const GLOBAL_NAV = [
-  { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
-  { icon: FolderKanban, label: "Projeler", to: "/projects" },
-  { icon: MessageSquare, label: "Yapı Agent", to: "/ai-assistant" },
-  { icon: LayoutGrid, label: "Çalışma Alanım", to: "/workspace" },
+// CR-029-B §3.2: grouped nav → real YAPI routes (light BuildFlow shell).
+const NAV_GROUPS: { group: string; items: { icon: any; label: string; to: string; directorOnly?: boolean }[] }[] = [
+  {
+    group: "Genel",
+    items: [
+      { icon: LayoutDashboard, label: "Ana Sayfa", to: "/dashboard" },
+      { icon: MessageSquare, label: "Yapı Agent", to: "/ai-assistant" },
+      { icon: LayoutGrid, label: "Çalışma Alanım", to: "/workspace" },
+    ],
+  },
+  {
+    group: "Portföy",
+    items: [
+      { icon: FolderKanban, label: "Projeler", to: "/projects" },
+      { icon: Building2, label: "Tedarikçiler", to: "/vendors" },
+    ],
+  },
+  {
+    group: "Finans",
+    items: [
+      { icon: FileBarChart, label: "Raporlar", to: "/reports" },
+      { icon: ShieldCheck, label: "Finans Güvence & Uyarılar", to: "/ai-alerts" },
+    ],
+  },
+  {
+    group: "Aksiyon",
+    items: [
+      { icon: ScanLine, label: "Belge Tara", to: "/document-capture" },
+      { icon: ClipboardCheck, label: "Onay Bekleyenler", to: "/approvals", directorOnly: true },
+      { icon: Bell, label: "Hatırlatıcılar", to: "/reminders" },
+    ],
+  },
+  {
+    group: "Yönetim",
+    items: [
+      { icon: Settings, label: "Ayarlar", to: "/settings" },
+      { icon: History, label: "Denetim İzi", to: "/audit-log", directorOnly: true },
+    ],
+  },
 ];
 
 const PROJECT_NAV = (id: string) => [
@@ -54,29 +89,20 @@ const PROJECT_NAV = (id: string) => [
   { icon: Wrench, label: "Ekipman", to: `/projects/${id}/equipment` },
 ];
 
-const BOTTOM_NAV = [
-  { icon: Building2, label: "Tedarikçiler", to: "/vendors" },
-  { icon: Bell, label: "Hatırlatıcılar", to: "/reminders" },
-  { icon: FileBarChart, label: "Raporlar", to: "/reports" },
-  { icon: Sparkles, label: "Yapay Zeka Uyarıları", to: "/ai-alerts" },
-  { icon: ScanLine, label: "Belge Tara", to: "/document-capture" },
-  { icon: Settings, label: "Ayarlar", to: "/settings" },
-];
-
-function NavItem({ icon: Icon, label, to, active, onNavigate }: any) {
+// CR-029-B: light nav item — active = blue-soft bg + blue text (mockup .nav-i.on).
+function NavItem({ icon: Icon, label, to, active, onNavigate, right }: any) {
   return (
     <Link
       to={to}
       onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-        active
-          ? "bg-white/10 text-white shadow-[inset_2px_0_0_var(--color-brand-2)]"
-          : "text-white/60 hover:bg-white/5 hover:text-white"
+        "flex h-10 items-center gap-2.5 rounded-control px-3 text-[13px] transition-colors",
+        active ? "bg-[var(--color-blue-soft)] font-semibold text-brand" : "text-text-secondary hover:bg-surface-hover"
       )}
     >
-      <Icon className={cn("h-4 w-4 shrink-0", active && "text-brand-2")} />
-      <span className="truncate">{label}</span>
+      <Icon className={cn("h-[18px] w-[18px] shrink-0", active ? "text-brand" : "text-text-muted")} />
+      <span className="flex-1 truncate">{label}</span>
+      {right}
     </Link>
   );
 }
@@ -93,15 +119,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { activeProjectId, activeProjectName, setActiveProject, clearActiveProject } = useProjectStore();
   const [approvalCount, setApprovalCount] = React.useState(0);
   const [projects, setProjects] = React.useState<{ id: string; name: string; status: string }[]>([]);
-  const [aiQuery, setAiQuery] = React.useState("");
-
-  const askYapiAI = () => {
-    const q = aiQuery.trim();
-    if (!q) return;
-    setAiQuery("");
-    onNavigate?.();
-    navigate("/ai-assistant", { state: { q } });
-  };
 
   // CR-004-H: the active project comes from the URL when on a project page,
   // otherwise from the persisted store — so the submenu survives global pages.
@@ -141,35 +158,58 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.();
   };
 
+  const GROUP_LABEL = "px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-text-faint";
   return (
     <>
-      <Link to="/dashboard" onClick={onNavigate} className="flex items-center gap-2 px-5 py-4 text-white">
+      {/* CR-029-B: logo — gradient cube + Yapı wordmark (or company logo). */}
+      <Link to="/dashboard" onClick={onNavigate} className="flex h-12 items-center gap-2.5 px-2 text-text-primary">
         {logoUrl ? (
-          <img src={logoUrl} alt={companyName ?? "Şirket"} className="max-h-10 max-w-[180px] object-contain" />
+          <img src={logoUrl} alt={companyName ?? "Şirket"} className="max-h-9 max-w-[150px] object-contain" />
         ) : (
           <>
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-brand-2 font-bold text-white">Y</div>
-            <span className="text-lg font-bold">{companyName ?? "Yapı"}</span>
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-teal text-sm font-bold text-white">Y</span>
+            <span className="text-[19px] font-bold">Yapı</span>
           </>
         )}
       </Link>
-      <nav className="sidebar-scroll flex-1 space-y-1 overflow-y-auto px-3 py-2">
-        {GLOBAL_NAV.map((n) => (
-          <NavItem key={n.to} {...n} active={pathname === n.to} onNavigate={onNavigate} />
+
+      <nav className="sidebar-scroll flex-1 space-y-0.5 overflow-y-auto">
+        {NAV_GROUPS.map((grp) => (
+          <div key={grp.group}>
+            <div className={GROUP_LABEL}>{grp.group}</div>
+            {grp.items
+              .filter((n) => !n.directorOnly || isDirector)
+              .map((n) => (
+                <NavItem
+                  key={n.to}
+                  icon={n.icon}
+                  label={n.label}
+                  to={n.to}
+                  active={n.to === "/dashboard" ? pathname === n.to : pathname.startsWith(n.to)}
+                  onNavigate={onNavigate}
+                  right={
+                    n.to === "/approvals" && approvalCount > 0 ? (
+                      <span className="rounded-full bg-danger px-1.5 text-[10px] font-bold leading-[16px] text-white">{approvalCount}</span>
+                    ) : undefined
+                  }
+                />
+              ))}
+          </div>
         ))}
+
+        {/* Active-project context submenu (preserved; light theme). */}
         {effectiveId && (
-          <div className="mt-3 border-t border-white/10 pt-3">
+          <div className="mt-2 border-t border-border pt-2">
             <div className="flex items-center justify-between px-3 pb-1">
-              <span className="text-[10px] uppercase tracking-wide text-white/40">Aktif Proje</span>
-              <button onClick={closeContext} className="text-white/40 hover:text-white" aria-label="Proje bağlamını kapat">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-faint">Aktif Proje</span>
+              <button onClick={closeContext} className="text-text-faint hover:text-text-primary" aria-label="Proje bağlamını kapat">
                 <X className="h-3.5 w-3.5" />
               </button>
             </div>
-            <p className="truncate px-3 pb-2 text-[13px] font-bold text-white" title={effectiveName}>{effectiveName}</p>
+            <p className="truncate px-3 pb-1 text-[13px] font-semibold text-text-primary" title={effectiveName}>{effectiveName}</p>
             {PROJECT_NAV(effectiveId).map((n) => (
               <NavItem key={n.to} {...n} active={pathname === n.to} onNavigate={onNavigate} />
             ))}
-            {/* CR-001-H: Denetim İzi — director only, under Ekipman */}
             {isDirector && (
               <NavItem
                 icon={History}
@@ -181,70 +221,58 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             )}
           </div>
         )}
-        <div className="mt-3 border-t border-white/10 pt-3">
-          {BOTTOM_NAV.map((n) => (
-            <NavItem key={n.to} {...n} active={pathname.startsWith(n.to)} onNavigate={onNavigate} />
-          ))}
-          {isDirector && (
-            <Link
-              to="/approvals"
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center justify-between gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                pathname === "/approvals" ? "bg-primary-light text-white" : "text-white/70 hover:bg-primary-light/60 hover:text-white"
-              )}
-            >
-              <span className="flex items-center gap-3"><ClipboardCheck className="h-4 w-4 shrink-0" /> Onay Bekleyenler</span>
-              {approvalCount > 0 && <span className="rounded-full bg-danger px-1.5 text-[10px] font-bold text-white">{approvalCount}</span>}
-            </Link>
-          )}
-          {isDirector && (
-            <NavItem icon={History} label="Denetim İzi" to="/audit-log" active={pathname === "/audit-log"} onNavigate={onNavigate} />
-          )}
-        </div>
       </nav>
-      {/* Yapı AI agent box — inline question that hands off to the AI assistant. */}
-      <div className="border-t border-white/10 px-3 py-3">
-        <div className="rounded-xl bg-white/5 p-3">
-          <div className="mb-2 flex items-center gap-2">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-brand to-brand-2 text-white">
-              <Sparkles className="h-3.5 w-3.5" />
-            </span>
-            <span className="text-[13px] font-semibold text-white">Yapı AI</span>
-          </div>
-          <div className="flex items-center gap-1.5 rounded-lg bg-primary px-2 ring-1 ring-white/10 focus-within:ring-brand-2">
-            <input
-              value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && askYapiAI()}
-              placeholder="Bir şey sor…"
-              className="min-w-0 flex-1 bg-transparent py-2 text-[13px] text-white placeholder:text-white/40 outline-none"
-            />
-            <button onClick={askYapiAI} disabled={!aiQuery.trim()} className="text-brand-2 disabled:text-white/30" aria-label="Yapı AI'ya sor">
-              <Send className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-      {/* Brand footer — small persistent Yapı mark, shows even when a company logo is set */}
-      <div className="flex flex-col items-center gap-1 border-t border-white/10 px-5 py-3">
-        <div className="flex items-center justify-center gap-1.5">
-          <span className="flex h-4 w-4 items-center justify-center rounded-sm bg-gradient-to-br from-brand to-brand-2 text-[10px] font-bold leading-none text-white">Y</span>
-          <span className="text-[11px] font-medium tracking-wide text-white/40">Powered by Yapı</span>
-        </div>
-        {/* CR-024-C: link to the AI principles & security page. */}
-        <Link to="/ai-principles" onClick={onNavigate} className="text-[10px] text-white/40 hover:text-white/70">
-          Yapı AI — İlkeler & Güvenlik
-        </Link>
-      </div>
+
+      {/* CR-029-B §3.1: AI Sistem Durumu card + refresh (drives son eşitlenme). */}
+      <SystemStatusCard />
     </>
   );
 }
 
-// Desktop sidebar (lg and up).
+// CR-029-B §3.1: "AI Sistem Durumu" — operational dot + last-synced + refresh
+// button. Refresh broadcasts a window event the dashboard listens for (re-fetch).
+function SystemStatusCard() {
+  const [syncedAt, setSyncedAt] = React.useState<number>(() => Date.now());
+  const [, force] = React.useReducer((x) => x + 1, 0);
+  // Re-render the relative time roughly every minute.
+  React.useEffect(() => {
+    const t = window.setInterval(force, 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+  const refresh = () => {
+    window.dispatchEvent(new CustomEvent("yapi:refresh"));
+    setSyncedAt(Date.now());
+  };
+  const mins = Math.max(0, Math.round((Date.now() - syncedAt) / 60_000));
+  const rel = mins === 0 ? "az önce" : `${mins} dk önce`;
+  return (
+    <div className="mt-2 rounded-card border border-border bg-surface p-3 text-caption">
+      <div className="mb-1.5 font-semibold text-text-primary">AI Sistem Durumu</div>
+      <div className="flex items-center gap-2 text-text-secondary">
+        <span className="h-2 w-2 rounded-full bg-success" /> Tüm sistemler çalışıyor
+      </div>
+      <div className="mt-2 flex items-end justify-between border-t border-border pt-2">
+        <div className="text-text-faint">
+          <div>Veriler en son eşitlendi</div>
+          <div className="font-medium text-text-secondary">{rel}</div>
+        </div>
+        <button
+          onClick={refresh}
+          title="Verileri yenile ve yeniden eşitle"
+          aria-label="Verileri yenile"
+          className="focus-ring flex h-[26px] w-[26px] items-center justify-center rounded-sm border border-border bg-surface text-text-secondary transition-colors hover:bg-surface-hover"
+        >
+          <RefreshCw className="h-[15px] w-[15px]" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Desktop sidebar (lg and up) — CR-029-B: light BuildFlow shell, 200px.
 function Sidebar() {
   return (
-    <aside className="hidden w-64 shrink-0 flex-col bg-primary lg:flex">
+    <aside className="sticky top-0 hidden h-screen w-[200px] shrink-0 flex-col gap-1 border-r border-border bg-surface-soft p-3.5 lg:flex">
       <SidebarContent />
     </aside>
   );
@@ -279,14 +307,14 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
         role="dialog"
         aria-modal="true"
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85%] flex-col bg-primary shadow-xl transition-transform duration-200 ease-out",
+          "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85%] flex-col gap-1 bg-surface-soft p-3.5 shadow-xl transition-transform duration-200 ease-out",
           open ? "translate-x-0" : "-translate-x-full"
         )}
       >
         <button
           onClick={onClose}
           aria-label="Menüyü kapat"
-          className="absolute right-3 top-4 z-10 text-white/60 hover:text-white"
+          className="absolute right-3 top-4 z-10 text-text-secondary hover:text-text-primary"
         >
           <X className="h-5 w-5" />
         </button>
@@ -296,84 +324,43 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
   );
 }
 
-// CR-002-G: clickable project selector in the top-left.
-function ProjectSelector() {
+// CR-029-B §4.1: workspace (company) selector in the top-left. Single-company for
+// now → the menu offers company settings + new project (project *switching* lives
+// in the sidebar/Projeler/⌘K command palette).
+function WorkspaceSelector() {
   const navigate = useNavigate();
-  const params = useParams();
-  const { activeProjectId, setActiveProject } = useProjectStore();
-  const [open, setOpen] = React.useState(false);
-  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([]);
-  const selectorRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    apiGet<{ id: string; name: string; status: string }[]>("/projects")
-      .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active")))
-      .catch(() => setProjects([]));
-  }, []);
-
-  // Close on outside click via a document listener (not an overlay) so the
-  // page stays scrollable while the selector is open.
-  React.useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => {
-      if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointer);
-    return () => document.removeEventListener("pointerdown", onPointer);
-  }, [open]);
-
-  const selectedId = params.id ?? activeProjectId;
-  const current = projects.find((p) => p.id === selectedId);
-  const choose = (p: { id: string; name: string }) => {
-    setActiveProject(p.id, p.name);
-    setOpen(false);
-    navigate(`/projects/${p.id}/dashboard`);
-  };
-
+  const companyName = useAuth((s) => s.user?.company_name);
   return (
-    <div ref={selectorRef} className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-sm text-text-primary hover:bg-bg sm:px-3"
-      >
-        <FolderKanban className="h-4 w-4 text-brand" />
-        <span className="max-w-[120px] truncate sm:max-w-[200px]">{current?.name ?? "Proje Seç"}</span>
-        <ChevronDown className="h-4 w-4 text-text-secondary" />
-      </button>
-      {open && (
-          <div className="absolute left-0 top-11 z-20 max-h-80 w-64 overflow-auto rounded-md border border-border bg-surface py-1 shadow-lg">
-            {projects.length === 0 && <div className="px-3 py-2 text-xs text-text-secondary">Aktif proje yok</div>}
-            {projects.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => choose(p)}
-                className={cn("flex w-full items-center px-3 py-2 text-left text-sm hover:bg-navy-50", p.id === selectedId && "font-semibold text-primary")}
-              >
-                <span className="truncate">{p.name}</span>
-              </button>
-            ))}
-            <div className="mt-1 border-t border-border">
-              <button
-                onClick={() => { setOpen(false); navigate("/projects/new"); }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-primary-light hover:bg-navy-50"
-              >
-                <Plus className="h-4 w-4" /> Yeni Proje
-              </button>
-            </div>
-          </div>
+    <Menu
+      align="left"
+      triggerClassName="ctrl-trigger flex h-9 items-center gap-2 rounded-control border border-border bg-surface px-3 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-hover"
+      triggerLabel="Çalışma alanı menüsü"
+      trigger={
+        <>
+          <Building2 className="h-4 w-4 text-text-muted" />
+          <span className="max-w-[150px] truncate">{companyName ?? "Yapı"}</span>
+          <ChevronDown className="h-4 w-4 text-text-muted" />
+        </>
+      }
+    >
+      {(close) => (
+        <>
+          <MenuItem icon={Settings} onClick={() => { close(); navigate("/settings"); }}>Şirket Ayarları</MenuItem>
+          <MenuItem icon={Plus} onClick={() => { close(); navigate("/projects/new"); }}>Yeni Proje</MenuItem>
+        </>
       )}
-    </div>
+    </Menu>
   );
 }
 
 function TopNav({ onMenu }: { onMenu: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = React.useState(false);
   const [cmdOpen, setCmdOpen] = React.useState(false);
   const [helpOpen, setHelpOpen] = React.useState(false);
-  const menuRef = React.useRef<HTMLDivElement>(null);
   const roleLabel = user?.role ? ROLE_LABELS[user.role] ?? user.role : null;
+  // ⌘K opens the global command palette (the dashboard's AI command bar
+  // intercepts ⌘K with a capture-phase listener while it is mounted).
   React.useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -384,67 +371,52 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, []);
-  // Close the profile menu on outside click. We use a document listener instead
-  // of a full-screen overlay so it never intercepts page scroll while open.
-  React.useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointer);
-    return () => document.removeEventListener("pointerdown", onPointer);
-  }, [open]);
   return (
-    <header className="flex h-16 items-center justify-between border-b border-border bg-surface px-4 lg:px-6">
-      <div className="flex items-center gap-3">
-        <button onClick={onMenu} className="text-text-secondary hover:text-primary lg:hidden" aria-label="Menüyü aç">
-          <Menu className="h-5 w-5" />
-        </button>
-        <ProjectSelector />
-      </div>
-      <div ref={menuRef} className="relative flex items-center gap-3">
-        <button
-          onClick={() => setHelpOpen(true)}
-          className="text-text-secondary transition-colors hover:text-primary"
-          aria-label="Yardım"
-          title="Yardım"
-        >
-          <HelpCircle className="h-5 w-5" />
-        </button>
-        <NotificationBell />
-        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-2 text-sm font-medium text-white">
-            {user?.full_name?.charAt(0) ?? "K"}
-          </div>
-          <span className="hidden flex-col items-start leading-tight sm:flex">
-            <span className="text-sm text-text-primary">{user?.full_name}</span>
-            {roleLabel && <span className="text-[11px] text-text-secondary">{roleLabel}</span>}
-          </span>
-        </button>
-        {open && (
-            <div className="absolute right-0 top-12 z-50 w-48 rounded-md border border-border bg-surface py-1 shadow-lg">
+    <header className="flex h-[60px] items-center gap-3 border-b border-border bg-surface px-4 lg:px-4">
+      <button onClick={onMenu} className="text-text-secondary hover:text-text-primary lg:hidden" aria-label="Menüyü aç">
+        <MenuIcon className="h-5 w-5" />
+      </button>
+      <WorkspaceSelector />
+      <div className="hidden h-[26px] w-px bg-border sm:block" />
+      {/* Global search — opens the ⌘K command palette. */}
+      <button
+        onClick={() => setCmdOpen(true)}
+        className="hidden h-9 flex-[0_0_420px] items-center gap-2 rounded-control border border-border bg-surface px-3 text-sm text-text-faint transition-colors hover:bg-surface-hover md:flex"
+      >
+        <Search className="h-4 w-4 text-text-muted" />
+        <span>Proje, belge, fatura, rapor ara…</span>
+        <span className="ml-auto rounded-[5px] border border-border px-1.5 py-px text-[11px] text-text-muted">⌘K</span>
+      </button>
+      <div className="flex-1" />
+      <NotificationBell />
+      <Menu
+        triggerLabel="Kullanıcı menüsü"
+        triggerClassName="flex items-center gap-2"
+        trigger={
+          <>
+            <Avatar name={user?.full_name} size={34} />
+            <span className="hidden flex-col items-start leading-tight sm:flex">
+              <span className="text-[13px] font-semibold text-text-primary">{user?.full_name}</span>
+              {roleLabel && <span className="text-[10px] text-text-muted">{roleLabel}</span>}
+            </span>
+            <ChevronDown className="h-[15px] w-[15px] text-text-faint" />
+          </>
+        }
+      >
+        {(close) => (
+          <>
             <div className="border-b border-border px-3 py-2 text-xs text-text-secondary">{user?.email}</div>
-            <Link to="/settings" onClick={() => setOpen(false)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-bg">
-              <Settings className="h-4 w-4" /> Ayarlar
-            </Link>
-            <button
-              onClick={async () => {
-                await logout();
-                navigate("/login");
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-danger hover:bg-bg"
-            >
-              <LogOut className="h-4 w-4" /> Çıkış Yap
-            </button>
-            </div>
+            <MenuItem icon={Settings} onClick={() => { close(); navigate("/settings"); }}>Profil &amp; Ayarlar</MenuItem>
+            <MenuItem icon={HelpCircle} onClick={() => { close(); setHelpOpen(true); }}>Yardım</MenuItem>
+            <MenuItem icon={LogOut} danger onClick={async () => { close(); await logout(); navigate("/login"); }}>Çıkış Yap</MenuItem>
+          </>
         )}
-      </div>
+      </Menu>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
       <Modal open={helpOpen} title="Yapı — Hızlı Yardım" onClose={() => setHelpOpen(false)} size="md">
         <div className="space-y-3 text-sm text-text-primary">
-          <p><span className="font-semibold">Ana Sayfa:</span> tüm aktif projelerinizin finansal portföy görünümü — KPI'lar, performans grafiği, bütçe dağılımı ve gelen belgeler.</p>
-          <p><span className="font-semibold">Filtreler &amp; Tarih:</span> üstteki tarih aralığı ve Filtreler ile panoyu daraltabilirsiniz.</p>
-          <p><span className="font-semibold">Yapı AI:</span> sağ paneldeki veya kenar çubuğundaki kutudan projeleriniz hakkında soru sorabilirsiniz.</p>
+          <p><span className="font-semibold">Ana Sayfa:</span> tüm aktif projelerinizin finansal komuta merkezi — AI brifingi, KPI'lar, grafikler, proje risk tablosu ve aksiyon kuyruğu.</p>
+          <p><span className="font-semibold">Yapı'ya sor:</span> üstteki AI komut çubuğuna doğal dille soru sorun; yanıt kaynaklarıyla birlikte açılır.</p>
           <p><span className="font-semibold">⌘K / Ctrl+K:</span> hızlı arama ve komut menüsünü açar.</p>
           <p className="text-text-secondary">Daha fazla yardım için yöneticinizle veya destek ekibiyle iletişime geçin.</p>
         </div>
@@ -490,6 +462,10 @@ export function AppLayout() {
     setDrawerOpen(false);
   }, [pathname]);
 
+  // CR-029-B (hybrid): the dashboard command center is full-bleed (it owns its
+  // grid + padding); every other page keeps the centered, padded container.
+  const isDashboard = pathname === "/dashboard";
+
   return (
     <div className="flex h-full">
       <Sidebar />
@@ -497,9 +473,13 @@ export function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNav onMenu={() => setDrawerOpen(true)} />
         <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
-          <div className="mx-auto max-w-[calc(50%_+_700px)] p-4 lg:p-6">
+          {isDashboard ? (
             <Outlet />
-          </div>
+          ) : (
+            <div className="mx-auto max-w-[calc(50%_+_700px)] p-4 lg:p-6">
+              <Outlet />
+            </div>
+          )}
         </main>
       </div>
       <MobileNav />
