@@ -134,6 +134,11 @@ def test_tools_never_write_to_db(db, seed):
     T.compare_vendors(db, cid)
     T.get_cashflow(db, cid, today=date(2026, 6, 15))
     T.get_overdue_payments(db, cid, today=date(2026, 6, 15))
+    # CR-011-B — new read-only tools are equally write-free.
+    T.get_equipment_utilisation(db, cid, today=date(2026, 6, 15))
+    T.get_budget_variance(db, cid)
+    T.get_retention_summary(db, cid)
+    T.get_assurance_findings(db, cid)
     T.create_chart(chart_type="bar", title="t", x_key="k",
                    series=[{"key": "v", "label": "V", "type": "bar"}], data=[{"k": "a", "v": 1}])
     db.commit()
@@ -142,12 +147,16 @@ def test_tools_never_write_to_db(db, seed):
 
 
 def test_registry_has_no_write_capable_tool():
-    """The registry exposes only the fixed read-only tools — no raw-SQL / write tool."""
+    """The registry exposes only the fixed read-only tools — no raw-SQL / write tool.
+    CR-011-B adds four more read-only tools; the read-only guarantee is unchanged."""
     names = set(agent_service.TOOL_REGISTRY)
     assert names == {
         "list_projects", "get_project_financials", "query_cost_entries",
         "query_client_invoices", "query_subcontractors", "get_vendor_spend",
         "compare_vendors", "get_cashflow", "get_overdue_payments",
+        # CR-011-B
+        "get_equipment_utilisation", "get_budget_variance",
+        "get_retention_summary", "get_assurance_findings",
     }
     for forbidden in ("run_sql", "execute_sql", "raw_sql", "insert", "update", "delete"):
         assert forbidden not in names

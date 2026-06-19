@@ -144,6 +144,11 @@ TOOL_REGISTRY = {
     "compare_vendors": (tools.compare_vendors, {"date_from", "date_to", "top_n", "cost_category"}),
     "get_cashflow": (tools.get_cashflow, {"project_id", "window_days"}),
     "get_overdue_payments": (tools.get_overdue_payments, {"project_id"}),
+    # CR-011-B — new read-only tools.
+    "get_equipment_utilisation": (tools.get_equipment_utilisation, {"project_id", "ownership_type"}),
+    "get_budget_variance": (tools.get_budget_variance, {"project_id", "cost_category"}),
+    "get_retention_summary": (tools.get_retention_summary, {"project_id"}),
+    "get_assurance_findings": (tools.get_assurance_findings, {"project_id", "severity"}),
 }
 
 
@@ -234,6 +239,49 @@ def build_tool_schemas() -> list[dict]:
             "input_schema": {"type": "object", "properties": {"project_id": pid}},
         },
         {
+            "name": "get_equipment_utilisation",
+            "description": (
+                "Ekipman kullanımı: makine bazında sahalama süresi, aktif/biten durumu, "
+                "tahmini kira (kiralık için oran × süre) + yakıt/bakım ve sahiplik (owned/"
+                "rented) bazında toplamlar."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "project_id": pid,
+                "ownership_type": {"type": "string", "enum": ["owned", "rented"]},
+            }},
+        },
+        {
+            "name": "get_budget_variance",
+            "description": (
+                "Bütçe-gerçekleşen sapması: proje/kategori bazında revize bütçe "
+                "(orijinal + onaylı değişiklik) ile gerçekleşen (KDV dahil fiili maliyet) "
+                "karşılaştırması ve sapma (revize − gerçekleşen; eksi = bütçe aşımı)."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "project_id": pid, "cost_category": {"type": "string"},
+            }},
+        },
+        {
+            "name": "get_retention_summary",
+            "description": (
+                "Teminat/hakediş kesintisi (retention): hakediş faturalarında tutulan "
+                "teminat tutarları, proje bazında toplam ve ilgili faturalar."
+            ),
+            "input_schema": {"type": "object", "properties": {"project_id": pid}},
+        },
+        {
+            "name": "get_assurance_findings",
+            "description": (
+                "Açık Finans Güvence (CR-022 anomali) bulguları: incelenmesi gereken "
+                "fatura/maliyet kayıtlarını derin bağlantılarıyla döndürür. 'Hangi "
+                "faturaları incelemeliyim?' sorularında kullan."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "project_id": pid,
+                "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+            }},
+        },
+        {
             "name": "create_chart",
             "description": (
                 "Az önce hesapladığın herhangi bir zaman serisini (aylık kırılım) veya "
@@ -257,6 +305,113 @@ def build_tool_schemas() -> list[dict]:
             }, "required": ["chart_type", "title", "x_key", "series", "data"]},
         },
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Domain scoping (CR-011-B §2.1) — the dock foundation.
+# ONE engine, many scopes (§0.2.3 — do NOT fork): a scope layers a Turkish
+# domain preamble + a prioritized read-only tool subset + a cheap pre-loaded
+# headline figure. null / "genel" = today's general agent, unchanged.
+# --------------------------------------------------------------------------- #
+ALWAYS_SCOPED_TOOLS = {"create_chart", "list_projects"}
+
+SCOPES: dict[str, dict] = {
+    "gider": {
+        "label": "Gider",
+        "preamble": (
+            "Sen YAPI Gider Agent'ısın. Maliyet/gider kayıtları, tedarikçi harcamaları, "
+            "bütçe-gerçekleşen sapması ve maliyet kontrolüne odaklan. Soruları gider "
+            "perspektifinden yanıtla; gelir/hakediş ayrıntısına yalnızca gerekirse gir."
+        ),
+        "tools": ["query_cost_entries", "get_vendor_spend", "compare_vendors",
+                  "get_budget_variance", "get_project_financials"],
+    },
+    "gelir": {
+        "label": "Gelir",
+        "preamble": (
+            "Sen YAPI Gelir Agent'ısın. Hakediş/işveren faturaları, tahsilatlar, açık "
+            "alacaklar ve teminat kesintilerine odaklan. Soruları gelir/tahsilat "
+            "perspektifinden yanıtla."
+        ),
+        "tools": ["query_client_invoices", "get_retention_summary",
+                  "get_overdue_payments", "get_project_financials"],
+    },
+    "finans": {
+        "label": "Finans",
+        "preamble": (
+            "Sen YAPI Finans Agent'ısın. Nakit akışı, kârlılık, vadesi geçmiş "
+            "ödeme/tahsilatlar ve genel finansal sağlığa odaklan. Bütçe sapması ve "
+            "güvence bulgularını da gerektiğinde kullan."
+        ),
+        "tools": ["get_cashflow", "get_overdue_payments", "get_project_financials",
+                  "get_budget_variance", "get_assurance_findings"],
+    },
+    "hakedis": {
+        "label": "Hakediş",
+        "preamble": (
+            "Sen YAPI Hakediş Agent'ısın. Hakediş faturaları, teminat kesintileri, alt "
+            "yüklenici hakedişleri ve tahsilata odaklan. Soruları hakediş "
+            "perspektifinden yanıtla."
+        ),
+        "tools": ["query_client_invoices", "get_retention_summary",
+                  "query_subcontractors", "get_overdue_payments"],
+    },
+    "belge": {
+        "label": "Belge",
+        "preamble": (
+            "Sen YAPI Belge Agent'ısın. Fatura/maliyet kayıtları ve incelenmesi gereken "
+            "belgelere (Finans Güvence bulguları) odaklan. 'Hangi belgeleri/faturaları "
+            "incelemeliyim?' türü soruları derin bağlantılı kaynaklarla yanıtla."
+        ),
+        "tools": ["get_assurance_findings", "query_cost_entries", "query_client_invoices"],
+    },
+}
+
+
+def scoped_tool_schemas(scope: str | None) -> list[dict]:
+    """Return the tool schemas available for ``scope``: the scope's prioritized
+    subset + always-on tools (create_chart, list_projects). Unknown/None scope =
+    the full catalogue (genel)."""
+    schemas = build_tool_schemas()
+    cfg = SCOPES.get(scope or "")
+    if not cfg:
+        return schemas
+    allowed = set(cfg["tools"]) | ALWAYS_SCOPED_TOOLS
+    return [t for t in schemas if t["name"] in allowed]
+
+
+def _scope_preamble(scope: str | None) -> str:
+    cfg = SCOPES.get(scope or "")
+    return cfg["preamble"] if cfg else ""
+
+
+def _scope_context(db: Session, company_id, scope: str | None, today: date) -> str:
+    """Cheap pre-loaded headline figure for the scope (§2.1), reusing the existing
+    SQL-aggregating tools. Defensive: any failure returns '' (never breaks the
+    request) so a scoped chat degrades to no-context rather than erroring."""
+    cfg = SCOPES.get(scope or "")
+    if not cfg:
+        return ""
+    try:
+        if scope == "gider":
+            s = tools.query_cost_entries(
+                db, company_id, date_from=date(today.year, 1, 1), date_to=today)["summary"]
+            return f"Bu yıl toplam gider (matrah): {s['total_amount_try']} ₺ ({s['entry_count']} kayıt)."
+        if scope in ("gelir", "hakedis"):
+            s = tools.query_client_invoices(db, company_id)["summary"]
+            return (f"Açık alacak (tahsil edilmemiş): {s['total_outstanding_try']} ₺; "
+                    f"toplam hakediş: {s['invoice_count']} adet.")
+        if scope == "finans":
+            s = tools.get_overdue_payments(db, company_id, today=today)["summary"]
+            return (f"Vadesi geçmiş ödenecek: {s['overdue_payable_total_try']} ₺ "
+                    f"({s['overdue_payable_count']}); vadesi geçmiş tahsilat: "
+                    f"{s['overdue_receivable_total_try']} ₺ ({s['overdue_receivable_count']}).")
+        if scope == "belge":
+            s = tools.get_assurance_findings(db, company_id)["summary"]
+            return f"Açık güvence bulgusu: {s['finding_count']} adet (incelenmesi önerilen kayıtlar)."
+    except Exception as exc:  # pre-loading must never fail the request
+        logger.warning("scope context failed for %s: %s", scope, exc)
+    return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -405,6 +560,10 @@ _STEP_LABELS = {
     "compare_vendors": "Tedarikçiler karşılaştırılıyor…",
     "get_cashflow": "Nakit akışı hesaplanıyor…",
     "get_overdue_payments": "Vadesi geçmiş ödemeler taranıyor…",
+    "get_equipment_utilisation": "Ekipman kullanımı inceleniyor…",
+    "get_budget_variance": "Bütçe sapması hesaplanıyor…",
+    "get_retention_summary": "Teminat kesintileri inceleniyor…",
+    "get_assurance_findings": "Güvence bulguları taranıyor…",
     "create_chart": "Grafik hazırlanıyor…",
 }
 
@@ -413,10 +572,16 @@ def _step_label(name: str) -> str:
     return _STEP_LABELS.get(name, "Veriler inceleniyor…")
 
 
-def _build_system(today: date | None, project_id) -> str:
-    """Assemble the system prompt (base + server-date rules + active project).
-    Factored so CR-011-B can layer a domain `scope` preamble on top."""
+def _build_system(today: date | None, project_id, scope: str | None = None,
+                  scope_context: str = "") -> str:
+    """Assemble the system prompt: base + server-date rules + optional domain
+    `scope` preamble + cheap pre-loaded scope context + active project (§2.1)."""
     system = SYSTEM_PROMPT + _date_guidance(today or date.today())
+    pre = _scope_preamble(scope)
+    if pre:
+        system += "\n\nALAN ODAĞI: " + pre
+    if scope_context:
+        system += "\n\nALAN BAĞLAMI (ön-yükleme): " + scope_context
     if project_id is not None:
         system += (
             f"\n\nAKTİF PROJE BAĞLAMI: Kullanıcı şu an proje {project_id} bağlamında "
@@ -426,7 +591,7 @@ def _build_system(today: date | None, project_id) -> str:
 
 
 def _agent_events(db: Session, company_id, messages: list[dict], project_id, user_id,
-                  today: date, stream: bool):
+                  today: date, stream: bool, scope: str | None = None):
     """Shared tool-use loop, expressed as an event generator (CR-011-A §1.1).
 
     Yields ``{"type": "delta", "text": ...}`` for live answer tokens (streaming
@@ -440,8 +605,9 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
     flight falls back to a single non-stream call so the answer is never lost
     (§4.4 / §1.1)."""
     client = ai_service._client()  # raises AIUnavailable when no key/SDK
-    tool_schemas = build_tool_schemas()
-    system = _build_system(today, project_id)
+    tool_schemas = scoped_tool_schemas(scope)
+    scope_ctx = _scope_context(db, company_id, scope, today)
+    system = _build_system(today, project_id, scope, scope_ctx)
 
     convo: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     tools_used: list[str] = []
@@ -553,7 +719,7 @@ def _stream_call(client, call_kw):
 
 
 def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None,
-              today: date | None = None) -> dict:
+              today: date | None = None, scope: str | None = None) -> dict:
     """Execute the tool-use loop (non-stream) and return the structured response
     (§3.1) — the long-standing entry point, unchanged for callers/tests.
 
@@ -564,22 +730,27 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
 
     ``today`` (default date.today()) is grounding context for relative date
     phrases; the server — not the model — resolves them to literal ISO dates via
-    each tool's ``relative_window`` parameter (§1.2: the model never computes)."""
+    each tool's ``relative_window`` parameter (§1.2: the model never computes).
+
+    ``scope`` (CR-011-B §2.1) optionally narrows the agent to a domain (gider /
+    gelir / finans / hakedis / belge): a preamble + a prioritized tool subset +
+    a pre-loaded headline figure. None / unknown = the general agent."""
     final = None
     for ev in _agent_events(db, company_id, messages, project_id, user_id,
-                            today or date.today(), stream=False):
+                            today or date.today(), stream=False, scope=scope):
         if ev.get("type") == "final":
             final = ev["data"]
     return final if final is not None else degraded_response()
 
 
 def run_agent_stream(db: Session, company_id, messages: list[dict], project_id=None,
-                     user_id=None, today: date | None = None):
+                     user_id=None, today: date | None = None, scope: str | None = None):
     """Streaming variant of run_agent (CR-011-A §1.1): yields delta/step/final
     events for the SSE endpoint. The final event carries the identical structured
-    payload as run_agent (charts/citations/log), finalized at stream end."""
+    payload as run_agent (charts/citations/log), finalized at stream end.
+    ``scope`` (CR-011-B) narrows the agent to a domain as in run_agent."""
     yield from _agent_events(db, company_id, messages, project_id, user_id,
-                             today or date.today(), stream=True)
+                             today or date.today(), stream=True, scope=scope)
 
 
 def sse_event(ev: dict) -> str:

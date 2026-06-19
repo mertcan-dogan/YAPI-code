@@ -46,6 +46,10 @@ class AgentMessage(BaseModel):
 class AgentRequest(BaseModel):
     messages: list[AgentMessage]
     project_id: uuid.UUID | None = None
+    # CR-011-B §2.1 — optional domain scope (gider|gelir|finans|hakedis|belge).
+    # null/unknown = the general agent. Validated leniently: an unknown value is
+    # treated as genel rather than rejected.
+    scope: str | None = None
 
 
 def _active_projects(db: Session, company_id):
@@ -125,10 +129,12 @@ def agent(
 
         company_id, uid, pid = user.company_id, user.id, payload.project_id
 
+        scope = payload.scope
+
         def event_stream():
             try:
                 for ev in agent_service.run_agent_stream(
-                    db, company_id, messages, project_id=pid, user_id=uid
+                    db, company_id, messages, project_id=pid, user_id=uid, scope=scope
                 ):
                     yield agent_service.sse_event(ev)
             except ai_service.AIUnavailable:
@@ -145,7 +151,8 @@ def agent(
 
     try:
         result = agent_service.run_agent(
-            db, user.company_id, messages, project_id=payload.project_id, user_id=user.id
+            db, user.company_id, messages, project_id=payload.project_id,
+            user_id=user.id, scope=payload.scope,
         )
     except ai_service.AIUnavailable:
         return success(agent_service.degraded_response())

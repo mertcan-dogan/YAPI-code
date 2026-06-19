@@ -23,15 +23,18 @@ land in CR-007-D and ``create_chart`` in CR-007-C; the shared helpers they need
 """
 import re
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.calculations.money import D, money
 from app.constants import COST_CATEGORIES, PROJECT_TYPES
+from app.models.ai_alert import AIAlert
+from app.models.budget_line_item import BudgetLineItem
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.models.equipment_log import EquipmentLog
 from app.models.project import Project
 from app.models.subcontractor import Subcontractor
 from app.models.vendor import Vendor, VendorAlias
@@ -121,6 +124,8 @@ def _deep_link(kind: str, project_id, record_id) -> str:
         return f"/projects/{pid}/dashboard?highlight={rid}"
     if kind == "subcontractor":
         return f"/projects/{pid}/subcontractors?highlight={rid}"
+    if kind == "equipment":
+        return f"/projects/{pid}/equipment?highlight={rid}"
     return f"/projects/{pid}/dashboard"
 
 
@@ -968,4 +973,309 @@ def compare_vendors(db: Session, company_id, *, date_from: date | None = None,
         "records": [],
         "row_count": len(top),
         "truncated": len(merged) > top_n,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# CR-011-B — new read-only tools (equipment, budget variance, retention,
+# assurance findings). Same contract: company-scoped, SQL-aggregated, returns
+# {summary, records, row_count, truncated}; records carry deep_links for
+# citation. The model still only narrates (§1.2).
+# --------------------------------------------------------------------------- #
+def get_equipment_utilisation(db: Session, company_id, *, project_id=None,
+                              ownership_type: str | None = None, today: date | None = None) -> dict:
+    """Equipment deployment & cost: per-machine deployment span, active/ended
+    status, estimated rental (rate × span for rented) + fuel/maintenance, with
+    portfolio totals by ownership. No work-hour log exists, so this reports
+    deployment/cost (not a fabricated idle %)."""
+    today = today or date.today()
+    conds = [EquipmentLog.company_id == company_id, EquipmentLog.is_deleted.is_(False)]
+    if project_id is not None:
+        conds.append(EquipmentLog.project_id == project_id)
+    if ownership_type in ("owned", "rented"):
+        conds.append(EquipmentLog.ownership_type == ownership_type)
+
+    rows = db.execute(
+        select(EquipmentLog).where(*conds)
+        .order_by(EquipmentLog.deployment_start.desc()).limit(MAX_RECORDS + 1)
+    ).scalars().all()
+    truncated = len(rows) > MAX_RECORDS
+    rows = rows[:MAX_RECORDS]
+
+    projects = _company_projects(db, company_id)
+    records: list[dict] = []
+    active_count = 0
+    tot_est = D(0)
+    tot_fuel = D(0)
+    by_owner: dict[str, dict] = {}
+    for e in rows:
+        is_active = e.deployment_end is None or e.deployment_end >= today
+        eff_end = e.deployment_end if (e.deployment_end is not None and e.deployment_end < today) else today
+        days = max((eff_end - e.deployment_start).days + 1, 0) if e.deployment_start else 0
+        rate = D(e.rate_try) if e.rate_try is not None else D(0)
+        # Only rented equipment accrues a rental rate; owned est rental = 0.
+        if e.ownership_type == "rented" and e.rate_unit == "day":
+            est = money(rate * D(days))
+        elif e.ownership_type == "rented" and e.rate_unit == "month":
+            est = money(rate * D(days) / D(30))
+        else:
+            est = D("0.00")
+        fuel = money(e.fuel_maintenance_try or 0)
+        total = money(D(est) + D(fuel))
+        if is_active:
+            active_count += 1
+        tot_est += D(est)
+        tot_fuel += D(fuel)
+        ob = by_owner.setdefault(e.ownership_type, {"count": 0, "est": D(0), "fuel": D(0)})
+        ob["count"] += 1
+        ob["est"] += D(est)
+        ob["fuel"] += D(fuel)
+        records.append({
+            "id": str(e.id),
+            "project_id": str(e.project_id),
+            "project_name": projects[e.project_id].name if e.project_id in projects else None,
+            "name": e.equipment_name,
+            "ownership_type": e.ownership_type,
+            "supplier_name": e.supplier_name,
+            "deployment_start": e.deployment_start.isoformat() if e.deployment_start else None,
+            "deployment_end": e.deployment_end.isoformat() if e.deployment_end else None,
+            "is_active": is_active,
+            "deployment_days": days,
+            "rate_try": _s(rate),
+            "rate_unit": e.rate_unit,
+            "estimated_rental_try": _s(est),
+            "fuel_maintenance_try": _s(fuel),
+            "total_cost_try": _s(total),
+            "deep_link": _deep_link("equipment", e.project_id, e.id),
+        })
+
+    return {
+        "summary": {
+            "equipment_count": len(records),
+            "active_count": active_count,
+            "ended_count": len(records) - active_count,
+            "total_estimated_rental_try": _s(tot_est),
+            "total_fuel_maintenance_try": _s(tot_fuel),
+            "total_cost_try": _s(D(tot_est) + D(tot_fuel)),
+            "by_ownership": {
+                k: {"count": v["count"], "estimated_rental_try": _s(v["est"]),
+                    "fuel_maintenance_try": _s(v["fuel"])}
+                for k, v in by_owner.items()
+            },
+        },
+        "records": records,
+        "row_count": len(records),
+        "truncated": truncated,
+    }
+
+
+def get_budget_variance(db: Session, company_id, *, project_id=None,
+                        cost_category: str | None = None) -> dict:
+    """Budget-vs-actual variance per project/category. Revised budget =
+    original_budget + approved_variations (budget_line_items); actual = VAT-
+    inclusive 'actual' cost entries (matching the dashboard's over-budget rule).
+    Variance = revised − actual (positive = under budget). Both sides summed in
+    SQL, then joined by (project, category)."""
+    bconds = [BudgetLineItem.company_id == company_id, BudgetLineItem.is_deleted.is_(False)]
+    aconds = [
+        CostEntry.company_id == company_id, CostEntry.is_deleted.is_(False),
+        CostEntry.pending_approval.is_(False), CostEntry.entry_type == "actual",
+    ]
+    if project_id is not None:
+        bconds.append(BudgetLineItem.project_id == project_id)
+        aconds.append(CostEntry.project_id == project_id)
+    if cost_category:
+        bconds.append(BudgetLineItem.cost_category == cost_category)
+        aconds.append(CostEntry.cost_category == cost_category)
+
+    budget_rows = db.execute(
+        select(
+            BudgetLineItem.project_id, BudgetLineItem.cost_category,
+            func.coalesce(func.sum(BudgetLineItem.original_budget_try), 0),
+            func.coalesce(func.sum(BudgetLineItem.approved_variations_try), 0),
+        ).where(*bconds).group_by(BudgetLineItem.project_id, BudgetLineItem.cost_category)
+    ).all()
+    actual_rows = db.execute(
+        select(
+            CostEntry.project_id, CostEntry.cost_category,
+            func.coalesce(func.sum(CostEntry.total_with_vat_try), 0),
+        ).where(*aconds).group_by(CostEntry.project_id, CostEntry.cost_category)
+    ).all()
+
+    merged: dict[tuple, dict] = {}
+    for pid, cat, orig, var in budget_rows:
+        m = merged.setdefault((pid, cat), {"budget": D(0), "actual": D(0)})
+        m["budget"] += D(orig) + D(var)
+    for pid, cat, act in actual_rows:
+        m = merged.setdefault((pid, cat), {"budget": D(0), "actual": D(0)})
+        m["actual"] += D(act)
+
+    projects = _company_projects(db, company_id)
+    records: list[dict] = []
+    tot_budget = D(0)
+    tot_actual = D(0)
+    over_count = 0
+    for (pid, cat), m in merged.items():
+        budget = money(m["budget"])
+        actual = money(m["actual"])
+        variance = money(D(budget) - D(actual))
+        over = D(actual) > D(budget)
+        if over:
+            over_count += 1
+        tot_budget += D(budget)
+        tot_actual += D(actual)
+        records.append({
+            "id": f"{pid}:{cat}",
+            "project_id": str(pid),
+            "project_name": projects[pid].name if pid in projects else None,
+            "cost_category": cat,
+            "cost_category_label": COST_CATEGORIES.get(cat, cat),
+            "revised_budget_try": _s(budget),
+            "actual_try": _s(actual),
+            "variance_try": _s(variance),
+            "variance_pct": _s((D(variance) / D(budget) * D(100)) if D(budget) > 0 else D(0)),
+            "over_budget": over,
+            # Category aggregate -> project deep_link (no single record to highlight).
+            "deep_link": _deep_link("project", pid, pid),
+        })
+
+    # Most over-budget (most negative variance) first.
+    records.sort(key=lambda r: D(r["variance_try"]))
+    return {
+        "summary": {
+            "category_count": len(records),
+            "total_revised_budget_try": _s(tot_budget),
+            "total_actual_try": _s(tot_actual),
+            "total_variance_try": _s(D(tot_budget) - D(tot_actual)),
+            "over_budget_category_count": over_count,
+            "over_budget": D(tot_actual) > D(tot_budget),
+        },
+        "records": records[:MAX_RECORDS],
+        "row_count": len(records),
+        "truncated": len(records) > MAX_RECORDS,
+    }
+
+
+def get_retention_summary(db: Session, company_id, *, project_id=None) -> dict:
+    """Teminat/retention held on hakediş (client invoices): outstanding retained
+    amounts, totalled in SQL and broken down per project, plus the underlying
+    invoices (cited). 'Outstanding' = retained amount held by the client (no
+    release ledger exists, so the held amount is the outstanding retention)."""
+    conds = [
+        ClientInvoice.company_id == company_id,
+        ClientInvoice.is_deleted.is_(False),
+        ClientInvoice.retention_amount_try > 0,
+    ]
+    if project_id is not None:
+        conds.append(ClientInvoice.project_id == project_id)
+
+    totals = db.execute(
+        select(
+            func.coalesce(func.sum(ClientInvoice.retention_amount_try), 0),
+            func.count(ClientInvoice.id),
+            func.count(func.distinct(ClientInvoice.project_id)),
+        ).where(*conds)
+    ).one()
+    by_project_rows = db.execute(
+        select(
+            ClientInvoice.project_id,
+            func.coalesce(func.sum(ClientInvoice.retention_amount_try), 0),
+            func.count(ClientInvoice.id),
+        ).where(*conds).group_by(ClientInvoice.project_id)
+    ).all()
+    projects = _company_projects(db, company_id)
+    by_project = [{
+        "project_id": str(r[0]),
+        "project_name": projects[r[0]].name if r[0] in projects else str(r[0]),
+        "retention_held_try": _s(r[1]),
+        "invoice_count": int(r[2]),
+    } for r in by_project_rows]
+
+    rows = db.execute(
+        select(ClientInvoice).where(*conds)
+        .order_by(ClientInvoice.retention_amount_try.desc()).limit(MAX_RECORDS + 1)
+    ).scalars().all()
+    truncated = len(rows) > MAX_RECORDS
+    records = [{
+        "id": str(i.id),
+        "project_id": str(i.project_id),
+        "invoice_number": i.invoice_number,
+        "invoice_date": i.invoice_date.isoformat() if i.invoice_date else None,
+        "retention_amount_try": _s(i.retention_amount_try),
+        "total_with_vat_try": _s(i.total_with_vat_try),
+        "net_due_try": _s(i.net_due_try),
+        "payment_status": i.payment_status,
+        "deep_link": _deep_link("client_invoice", i.project_id, i.id),
+    } for i in rows[:MAX_RECORDS]]
+
+    return {
+        "summary": {
+            "total_retention_held_try": _s(totals[0]),
+            "invoice_count": int(totals[1]),
+            "project_count": int(totals[2]),
+            "by_project": by_project,
+        },
+        "records": records,
+        "row_count": len(records),
+        "truncated": truncated,
+    }
+
+
+def get_assurance_findings(db: Session, company_id, *, project_id=None,
+                           severity: str | None = None) -> dict:
+    """Open CR-022 Finans Güvence (assurance) findings — anomaly AIAlerts
+    (dedup_key set) that are not actively dismissed — so the agent can answer
+    'hangi faturaları/maliyetleri incelemeliyim?' with deep-links to the flagged
+    source record."""
+    now = datetime.now(timezone.utc)
+    conds = [AIAlert.company_id == company_id, AIAlert.dedup_key.is_not(None)]
+    if project_id is not None:
+        conds.append(AIAlert.project_id == project_id)
+    if severity in ("high", "medium", "low"):
+        conds.append(AIAlert.severity == severity)
+
+    rows = db.execute(
+        select(AIAlert).where(*conds).order_by(AIAlert.created_at.desc())
+    ).scalars().all()
+    projects = _company_projects(db, company_id)
+    records: list[dict] = []
+    by_sev: dict[str, int] = {}
+    for a in rows:
+        # Open = not dismissed, or the 7-day dismissal window has elapsed
+        # (mirrors GET /ai/alerts). Normalise naive timestamps (SQLite) to UTC so
+        # the comparison is valid on both dialects.
+        du = a.dismissed_until
+        if du is not None and du.tzinfo is None:
+            du = du.replace(tzinfo=timezone.utc)
+        if a.is_dismissed and (du is None or du > now):
+            continue
+        by_sev[a.severity] = by_sev.get(a.severity, 0) + 1
+        link = ""
+        if a.source_type and a.source_id and a.project_id:
+            link = _deep_link(a.source_type, a.project_id, a.source_id)
+        elif a.project_id:
+            link = _deep_link("project", a.project_id, a.project_id)
+        records.append({
+            "id": str(a.id),
+            "project_id": str(a.project_id) if a.project_id else None,
+            "project_name": projects[a.project_id].name if a.project_id in projects else None,
+            "alert_type": a.alert_type,
+            "severity": a.severity,
+            "title": a.title_tr,
+            "body": a.body_tr,
+            "recommended_action": a.recommended_action,
+            "source_type": a.source_type,
+            "source_id": str(a.source_id) if a.source_id else None,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "deep_link": link,
+        })
+
+    return {
+        "summary": {
+            "finding_count": len(records),
+            "by_severity": by_sev,
+        },
+        "records": records[:MAX_RECORDS],
+        "row_count": len(records),
+        "truncated": len(records) > MAX_RECORDS,
     }
