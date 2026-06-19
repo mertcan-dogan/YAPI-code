@@ -93,11 +93,21 @@ def assistant(payload: AssistantQuestion, user: CurrentUser, db: Session = Depen
 
 
 @router.post("/agent")
-def agent(payload: AgentRequest, user: CurrentUser, db: Session = Depends(get_db)):
+def agent(
+    payload: AgentRequest,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+    stream: int = Query(0),
+):
     """CR-007-B/E: agentic tool-use loop. The model calls read-only, company-scoped
     tools (which compute via SQL) and narrates the results in Turkish. Rate-limited
     to 10 req/min/user; one ai_query_log row per successful request; graceful
-    degradation on Claude error/timeout."""
+    degradation on Claude error/timeout.
+
+    CR-011-A §1.1: ``?stream=1`` returns an SSE stream — incremental ``delta`` text
+    events + ``step`` events as tools run + one ``final`` event carrying the same
+    structured payload (charts/citations/log). On any streaming error it falls back
+    so the answer is never lost; with no model available it emits a degraded final."""
     from app.config import settings
     from app.middleware.limits import enforce_user_limit
     from app.services import agent as agent_service
@@ -109,6 +119,30 @@ def agent(payload: AgentRequest, user: CurrentUser, db: Session = Depends(get_db
     enforce_user_limit(user.id, "ai_agent", settings.ai_agent_rate_per_minute)
 
     messages = [{"role": m.role, "content": m.content} for m in payload.messages]
+
+    if stream:
+        from fastapi.responses import StreamingResponse
+
+        company_id, uid, pid = user.company_id, user.id, payload.project_id
+
+        def event_stream():
+            try:
+                for ev in agent_service.run_agent_stream(
+                    db, company_id, messages, project_id=pid, user_id=uid
+                ):
+                    yield agent_service.sse_event(ev)
+            except ai_service.AIUnavailable:
+                # Never lose the answer: emit a degraded final event (§1.1 fallback).
+                yield agent_service.sse_event(
+                    {"type": "final", "data": agent_service.degraded_response()}
+                )
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     try:
         result = agent_service.run_agent(
             db, user.company_id, messages, project_id=payload.project_id, user_id=user.id

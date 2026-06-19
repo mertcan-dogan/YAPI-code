@@ -1,11 +1,14 @@
-"""CR-007 date grounding — the agent must resolve relative time phrases ("son 6
-ay") against the real server date, not a guessed year.
+"""CR-007-K / CR-011-A — date grounding: the agent must resolve relative time
+phrases ("son 6 ay") against the real server date, not a guessed year.
 
-Bug: run_agent never told the model today's date, so "son 6 ayda" on 2026-06-15
-was resolved to Jul–Dec 2024 (18 months off) and returned empty. Fix injects
-"BUGÜN: <today>" into the system prompt.
+Original CR-007-K bug: run_agent never told the model today's date, so "son 6
+ayda" on 2026-06-15 resolved to Jul–Dec 2024 (18 months off) and returned empty.
+The stopgap injected "BUGÜN: <today>" and let the MODEL compute the window.
+
+CR-011-A §1.2 removes that stopgap: the SERVER now resolves relative windows. The
+model passes a named ``relative_window`` and ``resolve_window`` turns it into
+literal ISO dates — the model never does date math.
 """
-import re
 from datetime import date
 
 from app.constants import ROLE_DIRECTOR
@@ -50,12 +53,13 @@ def _patch(monkeypatch, responder):
 
 
 # --------------------------------------------------------------------------- #
-# Unit: the date string is injected into the system prompt
+# Unit: date guidance is grounding context only — NO model date math
 # --------------------------------------------------------------------------- #
-def test_date_grounding_contains_today():
-    s = agent_service._date_grounding(date(2026, 6, 15))
+def test_date_guidance_contains_today_and_forbids_math():
+    s = agent_service._date_guidance(date(2026, 6, 15))
     assert "BUGÜN: 2026-06-15" in s
-    assert "tahmin etme" in s  # explicit "never guess the year"
+    assert "relative_window" in s            # relative periods routed to the server
+    assert "HESABI YAPMA" in s               # the model must not compute dates
 
 
 def test_run_agent_injects_today_into_system_prompt(db, seed, monkeypatch):
@@ -76,17 +80,40 @@ def test_run_agent_defaults_today_to_server_date(db, seed, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Loop: a correctly-grounded model derives "son 6 ay" in the right year
+# Unit: server-side window resolution (the model never computes)
 # --------------------------------------------------------------------------- #
-def test_son_6_ay_resolves_to_correct_year(db, seed, monkeypatch):
-    """Simulate a model that reads the injected BUGÜN, computes a 6-month window,
-    and calls get_vendor_spend. Assert the tool receives dates in 2025/2026 — the
-    correct year — not 2024."""
+def test_resolve_window_rolling_and_calendar():
+    today = date(2026, 6, 15)
+    # Rolling "last 6 months" counts back from today.
+    assert agent_service.resolve_window("son_6_ay", today) == (date(2025, 12, 15), today)
+    assert agent_service.resolve_window("son_3_ay", today) == (date(2026, 3, 15), today)
+    # Calendar windows align to boundaries.
+    assert agent_service.resolve_window("bu_ay", today) == (date(2026, 6, 1), today)
+    assert agent_service.resolve_window("gecen_ay", today) == (date(2026, 5, 1), date(2026, 5, 31))
+    assert agent_service.resolve_window("bu_yil", today) == (date(2026, 1, 1), today)
+    assert agent_service.resolve_window("gecen_yil", today) == (date(2025, 1, 1), date(2025, 12, 31))
+    assert agent_service.resolve_window("bu_ceyrek", today) == (date(2026, 4, 1), today)
+    assert agent_service.resolve_window("gecen_ceyrek", today) == (date(2026, 1, 1), date(2026, 3, 31))
+    # Unknown window leaves dates to the caller.
+    assert agent_service.resolve_window("bilinmeyen", today) == (None, None)
+
+
+def test_resolve_window_year_boundary_clamps_day():
+    # Jan 31 minus 6 calendar months → Jul 31 of the prior year (no Feb-30 crash).
+    today = date(2026, 1, 31)
+    df, dt = agent_service.resolve_window("son_6_ay", today)
+    assert (df, dt) == (date(2025, 7, 31), today)
+
+
+# --------------------------------------------------------------------------- #
+# Loop: a model that passes relative_window gets literal, correct-year dates
+# --------------------------------------------------------------------------- #
+def test_son_6_ay_resolved_server_side_to_correct_year(db, seed, monkeypatch):
+    """The model passes ``relative_window='son_6_ay'`` (no date math). The server
+    resolves it so the vendor tool receives 2025-12-15 .. 2026-06-15 — never 2024."""
     cid = seed["a"]["company"].id
     today = date(2026, 6, 15)
 
-    # Capture the params that actually reach the vendor tool (execute_tool has
-    # already coerced ISO strings to date objects by then).
     captured: dict = {}
 
     def fake_vendor(db_, company_id_, **params):
@@ -102,16 +129,9 @@ def test_son_6_ay_resolves_to_correct_year(db, seed, monkeypatch):
 
     def responder(call, kw):
         if call == 0:
-            # A correct model copies BUGÜN from the system prompt and subtracts 6 months.
-            m = re.search(r"BUGÜN: (\d{4})-(\d{2})-(\d{2})", kw["system"])
-            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            idx = (y * 12 + (mo - 1)) - 6
-            fy, fm = idx // 12, idx % 12 + 1
-            date_from = f"{fy:04d}-{fm:02d}-{d:02d}"
-            date_to = f"{y:04d}-{mo:02d}-{d:02d}"
             return _Resp("tool_use", [_Block(type="tool_use", name="get_vendor_spend",
                                              input={"vendor_name": "Bozkurt beton",
-                                                    "date_from": date_from, "date_to": date_to}, id="t0")])
+                                                    "relative_window": "son_6_ay"}, id="t0")])
         return _Resp("end_turn", [_Block(type="text", text="Sonuç hazır.")])
 
     _patch(monkeypatch, responder)
@@ -125,3 +145,38 @@ def test_son_6_ay_resolves_to_correct_year(db, seed, monkeypatch):
     assert captured["date_from"] == date(2025, 12, 15)
     assert captured["date_to"] == date(2026, 6, 15)
     assert captured["date_from"].year != 2024
+    # The tool never sees the raw relative_window token — only literal dates.
+    assert "relative_window" not in captured
+
+
+def test_explicit_dates_win_over_relative_window(db, seed, monkeypatch):
+    """If the model passes explicit dates (user gave them), the server keeps them
+    and does not overwrite with a relative window."""
+    cid = seed["a"]["company"].id
+    captured: dict = {}
+
+    def fake_vendor(db_, company_id_, **params):
+        captured.update(params)
+        return {"summary": {}, "records": [], "row_count": 0, "truncated": False}
+
+    monkeypatch.setitem(
+        agent_service.TOOL_REGISTRY, "get_vendor_spend",
+        (fake_vendor, agent_service.TOOL_REGISTRY["get_vendor_spend"][1]),
+    )
+
+    agent_service.execute_tool(
+        db, cid, "get_vendor_spend",
+        {"vendor_name": "X", "date_from": "2026-02-01", "date_to": "2026-02-28",
+         "relative_window": "son_6_ay"},
+        [], [], set(), date(2026, 6, 15),
+    )
+    assert captured["date_from"] == date(2026, 2, 1)
+    assert captured["date_to"] == date(2026, 2, 28)
+
+
+def test_relative_window_in_date_tool_schemas():
+    """The four date-aware tools expose relative_window; non-date tools do not."""
+    schemas = {t["name"]: t for t in agent_service.build_tool_schemas()}
+    for name in ("query_cost_entries", "query_client_invoices", "get_vendor_spend", "compare_vendors"):
+        assert "relative_window" in schemas[name]["input_schema"]["properties"], name
+    assert "relative_window" not in schemas["list_projects"]["input_schema"]["properties"]

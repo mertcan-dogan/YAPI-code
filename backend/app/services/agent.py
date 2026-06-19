@@ -8,10 +8,11 @@ fixed, read-only tools (which compute via SQL) and narrates the results. There i
 no raw-SQL tool, and ``company_id`` is injected here from the authenticated user,
 never taken from tool input.
 """
+import calendar
 import json
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -56,15 +57,69 @@ SYSTEM_PROMPT = (
 )
 
 
-def _date_grounding(today: date) -> str:
-    """Today's server date, appended to the system prompt so relative-time phrases
-    resolve to the correct year. The model must COPY literal ISO dates derived from
-    this context into date_from/date_to — it must not invent a year (§1.2)."""
+# --------------------------------------------------------------------------- #
+# Server-resolved relative date windows (CR-011-A §1.2 / §0.2.5)
+# The model NEVER does date math: for a relative period it passes a named
+# `relative_window`; the server resolves it to literal ISO start/end from the
+# real `today` before the tool runs. Explicit dates from the user are still
+# copied verbatim by the model. Replaces the CR-007-K "BUGÜN: model-computes-it"
+# stopgap (A1).
+# --------------------------------------------------------------------------- #
+RELATIVE_WINDOWS = (
+    "bu_ay", "gecen_ay", "son_3_ay", "son_6_ay", "son_12_ay",
+    "bu_yil", "gecen_yil", "bu_ceyrek", "gecen_ceyrek",
+)
+
+
+def _add_months(d: date, months: int) -> date:
+    """Shift a date by N calendar months, clamping the day to the target month."""
+    idx = d.month - 1 + months
+    y = d.year + idx // 12
+    m = idx % 12 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def resolve_window(name: str, today: date) -> tuple[date | None, date | None]:
+    """Resolve a named relative window to literal (date_from, date_to) on the
+    server (§1.2). Rolling windows ("son N ay") count back from today; calendar
+    windows ("bu/geçen ay·yıl·çeyrek") align to month/year/quarter boundaries.
+    Unknown names resolve to (None, None) so the tool keeps any explicit dates."""
+    if name == "bu_ay":
+        return date(today.year, today.month, 1), today
+    if name == "gecen_ay":
+        last_prev = date(today.year, today.month, 1) - timedelta(days=1)
+        return date(last_prev.year, last_prev.month, 1), last_prev
+    if name == "son_3_ay":
+        return _add_months(today, -3), today
+    if name == "son_6_ay":
+        return _add_months(today, -6), today
+    if name == "son_12_ay":
+        return _add_months(today, -12), today
+    if name == "bu_yil":
+        return date(today.year, 1, 1), today
+    if name == "gecen_yil":
+        return date(today.year - 1, 1, 1), date(today.year - 1, 12, 31)
+    if name == "bu_ceyrek":
+        q = (today.month - 1) // 3
+        return date(today.year, q * 3 + 1, 1), today
+    if name == "gecen_ceyrek":
+        start_this_q = date(today.year, ((today.month - 1) // 3) * 3 + 1, 1)
+        last_prev_q = start_this_q - timedelta(days=1)
+        pq = (last_prev_q.month - 1) // 3
+        return date(last_prev_q.year, pq * 3 + 1, 1), last_prev_q
+    return None, None
+
+
+def _date_guidance(today: date) -> str:
+    """System-prompt date rules (§0.2.5): today's date is grounding context only —
+    the model must NOT do date math. Relative periods go through the tools'
+    `relative_window` parameter, which the server resolves to literal ISO dates."""
     return (
-        f"\n\nBUGÜN: {today:%Y-%m-%d}. Göreli tarih ifadelerini (son 6 ay, bu yıl, "
-        "geçen ay, son çeyrek, geçen yıl) DAİMA bu tarihe göre hesapla; yılı asla "
-        "tahmin etme. Araçlara verdiğin date_from/date_to değerleri, bu BUGÜN "
-        "bilgisinden türetilmiş birebir ISO tarihleri (YYYY-MM-DD) olmalı."
+        f"\n\nBUGÜN: {today:%Y-%m-%d} (yalnızca bağlam; tarih HESABI YAPMA). Göreli "
+        "bir dönem için (son 6 ay, geçen ay, bu yıl, son çeyrek, geçen yıl...) "
+        "araçların `relative_window` parametresini kullan — sunucu bunu birebir ISO "
+        "tarihlerine çevirir. date_from/date_to'yu yalnızca kullanıcı AÇIK bir tarih "
+        "verdiğinde, o tarihi kopyalayarak ver. Tarihleri kendin hesaplama."
     )
 
 
@@ -99,6 +154,15 @@ def build_tool_schemas() -> list[dict]:
     group_by_inv = {"type": "string", "enum": ["month", "type", "status", "project"]}
     date_s = {"type": "string", "description": "YYYY-MM-DD"}
     pid = {"type": "string", "description": "Proje UUID"}
+    # CR-011-A §1.2 — relative period; the SERVER resolves it to literal ISO dates.
+    # Use this instead of computing date_from/date_to yourself.
+    rel_window = {
+        "type": "string", "enum": list(RELATIVE_WINDOWS),
+        "description": (
+            "Göreli dönem (sunucu birebir ISO tarihlere çevirir). Açık tarih "
+            "verilmediyse göreli dönemler için bunu kullan; tarihi kendin hesaplama."
+        ),
+    }
 
     return [
         {
@@ -118,6 +182,7 @@ def build_tool_schemas() -> list[dict]:
             "description": "Maliyet (tedarikçi) kayıtlarını ve toplamlarını döndürür; group_by ile aylık/kategori/tedarikçi/proje kırılımı.",
             "input_schema": {"type": "object", "properties": {
                 "project_id": pid, "date_from": date_s, "date_to": date_s,
+                "relative_window": rel_window,
                 "cost_category": {"type": "string"}, "supplier_name": {"type": "string"},
                 "subcontractor_id": {"type": "string"}, "payment_status": {"type": "string"},
                 "entry_type": {"type": "string"}, "group_by": group_by_cost,
@@ -128,6 +193,7 @@ def build_tool_schemas() -> list[dict]:
             "description": "Hakediş / işveren faturalarını ve toplamlarını döndürür; group_by ile kırılım.",
             "input_schema": {"type": "object", "properties": {
                 "project_id": pid, "date_from": date_s, "date_to": date_s,
+                "relative_window": rel_window,
                 "payment_status": {"type": "string"}, "invoice_type": {"type": "string"},
                 "group_by": group_by_inv,
             }},
@@ -144,13 +210,14 @@ def build_tool_schemas() -> list[dict]:
             "description": "Bir tedarikçi ile TÜM portföyde yapılan harcamayı ay ve kategori bazında döndürür (çapraz proje).",
             "input_schema": {"type": "object", "properties": {
                 "vendor_name": {"type": "string"}, "date_from": date_s, "date_to": date_s,
+                "relative_window": rel_window,
             }, "required": ["vendor_name"]},
         },
         {
             "name": "compare_vendors",
             "description": "Bir dönemde tedarikçi başına toplam harcamayı sıralı (en yüksekten) döndürür.",
             "input_schema": {"type": "object", "properties": {
-                "date_from": date_s, "date_to": date_s,
+                "date_from": date_s, "date_to": date_s, "relative_window": rel_window,
                 "top_n": {"type": "integer"}, "cost_category": {"type": "string"},
             }},
         },
@@ -274,10 +341,27 @@ def _add_citations(result: dict, citations: list, seen: set) -> None:
             return
 
 
+def _apply_relative_window(allowed: set[str], raw: dict, params: dict, today: date) -> None:
+    """CR-011-A §1.2 — resolve a model-supplied `relative_window` to literal
+    date_from/date_to on the SERVER. Only applies to date-aware tools and never
+    overrides explicit dates the model already passed (user-given dates win)."""
+    rw = (raw or {}).get("relative_window")
+    if not rw or not (_DATE_PARAMS & allowed):
+        return
+    if "date_from" in params or "date_to" in params:
+        return
+    df, dt = resolve_window(rw, today or date.today())
+    if df is not None:
+        params["date_from"] = df
+    if dt is not None:
+        params["date_to"] = dt
+
+
 def execute_tool(db: Session, company_id, name: str, tool_input: dict,
-                 charts: list, citations: list, seen: set) -> dict:
+                 charts: list, citations: list, seen: set, today: date | None = None) -> dict:
     """Run one tool with company_id injected server-side. Never raises — returns
-    an error dict so the model can recover within the loop."""
+    an error dict so the model can recover within the loop. A relative date window
+    (if any) is resolved to literal ISO dates here (§1.2), never by the model."""
     if name == "create_chart":
         try:
             spec = tools.create_chart(**(tool_input or {}))
@@ -291,6 +375,7 @@ def execute_tool(db: Session, company_id, name: str, tool_input: dict,
         return {"error": f"Bilinmeyen araç: {name}"}
     func, allowed = entry
     params = _coerce_params(allowed, tool_input)
+    _apply_relative_window(allowed, tool_input, params, today)
     try:
         result = func(db, company_id, **params)
     except tools.ToolError as exc:
@@ -308,26 +393,55 @@ def _text_of(content) -> str:
     return "".join(b.text for b in content if getattr(b, "type", "") == "text").strip()
 
 
-def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None,
-              today: date | None = None) -> dict:
-    """Execute the tool-use loop and return the structured response (§3.1).
+# CR-011-A §4.1 — real-time step labels (Turkish), driven by the stream's `step`
+# events so the UI indicator reflects what the agent is actually doing.
+_STEP_LABELS = {
+    "list_projects": "Projeler taranıyor…",
+    "get_project_financials": "Proje finansalları inceleniyor…",
+    "query_cost_entries": "Maliyet kayıtları inceleniyor…",
+    "query_client_invoices": "Hakedişler inceleniyor…",
+    "query_subcontractors": "Alt yükleniciler inceleniyor…",
+    "get_vendor_spend": "Tedarikçi harcamaları inceleniyor…",
+    "compare_vendors": "Tedarikçiler karşılaştırılıyor…",
+    "get_cashflow": "Nakit akışı hesaplanıyor…",
+    "get_overdue_payments": "Vadesi geçmiş ödemeler taranıyor…",
+    "create_chart": "Grafik hazırlanıyor…",
+}
 
-    Raises ai_service.AIUnavailable if the model cannot be reached or the 60s
-    server-side budget is exceeded; callers (api/ai.py) translate that into the
-    graceful Turkish degradation response. On success, writes one ai_query_log
-    row (§6.1) when user_id is supplied.
 
-    ``today`` (default date.today()) grounds relative date phrases ("son 6 ay",
-    "bu yıl") so the model resolves them against the real server date instead of
-    guessing a year. Injected, not computed — the model copies literal ISO dates
-    from this context into tool params (§1.2: the model never computes).
-    """
+def _step_label(name: str) -> str:
+    return _STEP_LABELS.get(name, "Veriler inceleniyor…")
+
+
+def _build_system(today: date | None, project_id) -> str:
+    """Assemble the system prompt (base + server-date rules + active project).
+    Factored so CR-011-B can layer a domain `scope` preamble on top."""
+    system = SYSTEM_PROMPT + _date_guidance(today or date.today())
+    if project_id is not None:
+        system += (
+            f"\n\nAKTİF PROJE BAĞLAMI: Kullanıcı şu an proje {project_id} bağlamında "
+            "çalışıyor. Aksi belirtilmedikçe bu projeyi varsay."
+        )
+    return system
+
+
+def _agent_events(db: Session, company_id, messages: list[dict], project_id, user_id,
+                  today: date, stream: bool):
+    """Shared tool-use loop, expressed as an event generator (CR-011-A §1.1).
+
+    Yields ``{"type": "delta", "text": ...}`` for live answer tokens (streaming
+    only), ``{"type": "step", "tool": ..., "label": ...}`` before each tool runs,
+    and finally exactly one ``{"type": "final", "data": <result>}`` carrying the
+    SAME structured payload the non-stream path has always returned (charts,
+    citations, tools_used, row_counts, query_log_id, generated_at).
+
+    Raises ai_service.AIUnavailable on a true outage / budget overrun (callers
+    degrade gracefully). When ``stream`` is True a streaming call that fails mid
+    flight falls back to a single non-stream call so the answer is never lost
+    (§4.4 / §1.1)."""
     client = ai_service._client()  # raises AIUnavailable when no key/SDK
     tool_schemas = build_tool_schemas()
-
-    system = SYSTEM_PROMPT + _date_grounding(today or date.today())
-    if project_id is not None:
-        system += f"\n\nAKTİF PROJE BAĞLAMI: Kullanıcı şu an proje {project_id} bağlamında çalışıyor. Aksi belirtilmedikçe bu projeyi varsay."
+    system = _build_system(today, project_id)
 
     convo: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     tools_used: list[str] = []
@@ -347,21 +461,19 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
             raise ai_service.AIUnavailable("timeout")
 
         force_final = i == MAX_ITERATIONS - 1
-        try:
-            resp = client.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=settings.ai_agent_max_tokens,
-                system=system,
-                tools=tool_schemas,
-                tool_choice={"type": "none"} if force_final else {"type": "auto"},
-                messages=convo,
-                timeout=timeout,
-            )
-        except ai_service.AIUnavailable:
-            raise
-        except Exception as exc:  # network / timeout / API error -> degrade
-            logger.warning("Agent Claude call failed: %s: %s", type(exc).__name__, exc)
-            raise ai_service.AIUnavailable("Claude error") from exc
+        call_kw = dict(
+            model=settings.anthropic_model,
+            max_tokens=settings.ai_agent_max_tokens,
+            system=system,
+            tools=tool_schemas,
+            tool_choice={"type": "none"} if force_final else {"type": "auto"},
+            messages=convo,
+            timeout=timeout,
+        )
+        if stream:
+            resp = yield from _stream_call(client, call_kw)
+        else:
+            resp = _create_call(client, call_kw)
 
         if resp.stop_reason != "tool_use":
             break
@@ -373,8 +485,12 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
             if getattr(block, "type", "") != "tool_use":
                 continue
             tools_used.append(block.name)
+            if stream:
+                # Real-time step indicator (§4.1): the UI clears any preamble
+                # preview on a step and shows the tool's Turkish label.
+                yield {"type": "step", "tool": block.name, "label": _step_label(block.name)}
             result = execute_tool(db, company_id, block.name, dict(block.input or {}),
-                                  charts, citations, seen_citation_ids)
+                                  charts, citations, seen_citation_ids, today)
             if isinstance(result, dict) and "row_count" in result:
                 row_counts[block.name] = row_counts.get(block.name, 0) + int(result["row_count"])
             results_block.append({
@@ -387,11 +503,12 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
     answer = _text_of(resp.content) if resp is not None else ""
 
     # CR-024-A: capture the log row id so the answer can be linked to feedback.
+    # Finalized at stream end — same data as the non-stream path (§1.1).
     query_log_id = None
     if user_id is not None:
         query_log_id = _log_query(db, company_id, user_id, messages, tools_used, row_counts)
 
-    return {
+    yield {"type": "final", "data": {
         "answer_markdown": answer,
         "charts": charts,
         "citations": citations,
@@ -402,7 +519,81 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
         # above so the frontend explainability panel / feedback can use real data.
         "query_log_id": str(query_log_id) if query_log_id else None,
         "row_counts": row_counts,
-    }
+    }}
+
+
+def _create_call(client, call_kw):
+    """One non-stream model call; transport errors -> AIUnavailable (degrade)."""
+    try:
+        return client.messages.create(**call_kw)
+    except ai_service.AIUnavailable:
+        raise
+    except Exception as exc:  # network / timeout / API error -> degrade
+        logger.warning("Agent Claude call failed: %s: %s", type(exc).__name__, exc)
+        raise ai_service.AIUnavailable("Claude error") from exc
+
+
+def _stream_call(client, call_kw):
+    """One streaming model call: yields ``{"type": "delta", "text": ...}`` for each
+    text chunk and returns the final assembled Message (with tool_use blocks) so
+    the loop can continue. If streaming fails before completing, falls back to a
+    single non-stream call so the answer is never lost (§1.1)."""
+    try:
+        with client.messages.stream(**call_kw) as s:
+            for chunk in s.text_stream:
+                if chunk:
+                    yield {"type": "delta", "text": chunk}
+            return s.get_final_message()
+    except ai_service.AIUnavailable:
+        raise
+    except Exception as exc:  # streaming transport error -> non-stream fallback
+        logger.warning("Agent stream failed, falling back to non-stream: %s: %s",
+                       type(exc).__name__, exc)
+        return _create_call(client, call_kw)
+
+
+def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None,
+              today: date | None = None) -> dict:
+    """Execute the tool-use loop (non-stream) and return the structured response
+    (§3.1) — the long-standing entry point, unchanged for callers/tests.
+
+    Raises ai_service.AIUnavailable if the model cannot be reached or the 60s
+    server-side budget is exceeded; callers (api/ai.py) translate that into the
+    graceful Turkish degradation response. On success, writes one ai_query_log
+    row (§6.1) when user_id is supplied.
+
+    ``today`` (default date.today()) is grounding context for relative date
+    phrases; the server — not the model — resolves them to literal ISO dates via
+    each tool's ``relative_window`` parameter (§1.2: the model never computes)."""
+    final = None
+    for ev in _agent_events(db, company_id, messages, project_id, user_id,
+                            today or date.today(), stream=False):
+        if ev.get("type") == "final":
+            final = ev["data"]
+    return final if final is not None else degraded_response()
+
+
+def run_agent_stream(db: Session, company_id, messages: list[dict], project_id=None,
+                     user_id=None, today: date | None = None):
+    """Streaming variant of run_agent (CR-011-A §1.1): yields delta/step/final
+    events for the SSE endpoint. The final event carries the identical structured
+    payload as run_agent (charts/citations/log), finalized at stream end."""
+    yield from _agent_events(db, company_id, messages, project_id, user_id,
+                             today or date.today(), stream=True)
+
+
+def sse_event(ev: dict) -> str:
+    """Serialize one agent event to a Server-Sent-Events frame (§1.1)."""
+    etype = ev.get("type", "message")
+    if etype == "final":
+        data = ev.get("data", {})
+    elif etype == "delta":
+        data = {"text": ev.get("text", "")}
+    elif etype == "step":
+        data = {"tool": ev.get("tool"), "label": ev.get("label")}
+    else:
+        data = ev
+    return f"event: {etype}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 def _log_query(db: Session, company_id, user_id, messages, tools_used, row_counts):
