@@ -1,11 +1,14 @@
 import { Lock } from "lucide-react";
 import { Link } from "react-router-dom";
 
-// CR-024-B — single source of truth for the read-only trust claim (§0.2.1).
-// If the agent ever gains write actions (CR-011 write-with-approval), change this
-// copy to "onay ister" HERE and the claim updates everywhere it is shown.
+// CR-024-B / CR-011-D §4.1 — single source of truth for the agent trust claim
+// (§0.2.1, §0.2.2). Now that the agent can PROPOSE writes (CR-011-C), the claim
+// flipped from "salt-okunur" to "önerir, siz onaylarsınız": the agent never
+// writes directly — every change is a proposal a human approves. One edit here
+// updates the claim everywhere it is shown.
 export const TRUST_BADGE_FULL =
-  "Salt-okunur · verilerinizi yalnızca okur, onayınız olmadan değişiklik yapmaz.";
+  "Önerir, siz onaylarsınız · onaysız hiçbir şey yazmaz — her değişiklik onayınızdan geçer.";
+export const TRUST_BADGE_COMPACT = "Önerir, siz onaylarsınız";
 
 /**
  * Always-visible trust pill shown on every agent surface. Links to the AI
@@ -25,7 +28,7 @@ export function AiTrustBadge({ compact = false, className = "" }: { compact?: bo
     >
       <Lock className="h-3 w-3 shrink-0 text-brand" />
       <span className={compact ? "" : "truncate"}>
-        {compact ? "Salt-okunur" : TRUST_BADGE_FULL}
+        {compact ? TRUST_BADGE_COMPACT : TRUST_BADGE_FULL}
       </span>
     </Link>
   );

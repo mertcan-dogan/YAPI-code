@@ -1,3 +1,4 @@
+import { ScopedAgentDock } from "@/components/dashboard/ScopedAgentDock";
 import { Badge, Menu, MenuItem } from "@/components/ui";
 import type { AIAlert } from "@/types";
 import { ArrowRight, ClipboardList, Copy, FileText, MoreVertical, PlusSquare, Tag, type LucideIcon } from "lucide-react";
@@ -121,9 +122,16 @@ export function RightRail({ alerts, approvalsByKind }: { alerts: AIAlert[]; appr
     <>
       <AiActionQueue alerts={alerts} approvalsByKind={approvalsByKind} />
 
-      {/* §11.2 Phase-2 (CR-011/012): real grid lands when the engines ship. */}
-      <RailCard title="AI Beceriler & Otomasyonlar" right={<span className="text-xs text-text-faint">Yönet</span>}>
-        <ComingSoon />
+      {/* §11.2 — CR-011-D: the "Beceriler" half is live (scoped-agent dock);
+          "Otomasyonlar" stays "yakında" until CR-012. */}
+      <RailCard title="AI Beceriler & Otomasyonlar" right={<span className="text-xs text-text-faint">Beceriler</span>}>
+        <div className="border-t border-border">
+          <ScopedAgentDock />
+        </div>
+        <div className="border-t border-border px-3.5 py-2.5">
+          <p className="text-[11px] font-medium text-text-secondary">Otomasyonlar</p>
+          <p className="mt-0.5 text-xs text-text-muted">Otomatik iş akışları yakında (CR-012).</p>
+        </div>
       </RailCard>
 
       {/* §11.3 Phase-2 (new collaboration backend). */}

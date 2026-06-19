@@ -17,6 +17,15 @@ export const TOOL_LABELS: Record<string, string> = {
   get_cashflow: "Nakit akışı hesaplandı",
   get_overdue_payments: "Vadesi geçmiş ödemeler tarandı",
   create_chart: "Grafik oluşturuldu",
+  // CR-011-B — new read-only tools.
+  get_equipment_utilisation: "Ekipman kullanımı incelendi",
+  get_budget_variance: "Bütçe-gerçekleşen sapması hesaplandı",
+  get_retention_summary: "Teminat kesintileri incelendi",
+  get_assurance_findings: "Finans Güvence bulguları okundu",
+  // CR-011-C — propose-only action tools (each creates a pending approval).
+  propose_reminder: "Hatırlatıcı önerisi oluşturuldu",
+  propose_flag_invoice: "İnceleme işareti önerisi oluşturuldu",
+  propose_followup_task: "Görev önerisi oluşturuldu",
 };
 
 export function toolLabel(name: string): string {

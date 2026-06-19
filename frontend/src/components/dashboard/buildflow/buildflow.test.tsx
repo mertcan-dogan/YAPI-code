@@ -74,7 +74,11 @@ describe("RightRail / AiActionQueue (CR-029-F)", () => {
     expect(screen.getByText("Hazır rapor talepleri")).toBeInTheDocument();
     expect(screen.getByText("AI Beceriler & Otomasyonlar")).toBeInTheDocument();
     expect(screen.getByText("Ekip Akışı")).toBeInTheDocument();
-    expect(screen.getAllByText("Bu özellik yakında tüm kullanıcılara sunulacak.").length).toBe(2);
+    // CR-011-D: the "Beceriler" slot is now live (scoped-agent dock), so only the
+    // Ekip Akışı slot remains "yakında". The dock exposes the five domain agents.
+    expect(screen.getAllByText("Bu özellik yakında tüm kullanıcılara sunulacak.").length).toBe(1);
+    expect(screen.getByLabelText("Gider Agent")).toBeInTheDocument();
+    expect(screen.getByLabelText("Finans Agent")).toBeInTheDocument();
   });
 });
 

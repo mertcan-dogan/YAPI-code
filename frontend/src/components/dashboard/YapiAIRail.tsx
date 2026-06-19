@@ -1,45 +1,66 @@
-import { SideDrawer } from "@/components/SideDrawer";
+import { AgentAnswerBody } from "@/components/ai/AgentAnswerBody";
 import { AiTrustBadge } from "@/components/ai/AiTrustBadge";
+import { SideDrawer } from "@/components/SideDrawer";
 import { AIDisclaimer } from "@/components/ui";
-import { apiPost } from "@/lib/api";
-import { ChevronRight, Loader2, Send, Sparkles } from "lucide-react";
+import { streamAgent } from "@/lib/agentStream";
+import type { AgentResponse } from "@/types/agent";
+import { ChevronRight, Send, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-interface ChatMsg {
-  role: "user" | "ai";
-  text: string;
+// CR-011-D §4.1 — unify the rail onto the CITED agent (POST /ai/agent): real
+// token streaming + a real-time step indicator, plus the CR-024 treatment
+// (trust badge + citations + "AI nasıl çalıştı?" + feedback) and CR-011-C
+// proposed-action cards. Replaces the legacy uncited POST /ai/assistant.
+interface Turn {
+  id: number;
+  question: string;
+  res: AgentResponse | null;
+  live: string;
+  streaming: boolean;
+  step: string;
+  error: boolean;
 }
 
 interface RailProps {
   onGoToTasks: () => void;
 }
 
+let _turnSeq = 0;
+
 function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose?: () => void; hideHeader?: boolean }) {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
-  const [asking, setAsking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const busy = turns.some((t) => t.streaming);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, asking]);
+    // Optional-call: jsdom (tests) doesn't implement Element.scrollTo.
+    scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [turns]);
 
-  const ask = async (text: string) => {
+  const patch = (id: number, p: Partial<Turn>) =>
+    setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...p } : t)));
+
+  const ask = (text: string) => {
     const q = text.trim();
-    if (!q || asking) return;
+    if (!q || busy) return;
     setInput("");
-    setMessages((m) => [...m, { role: "user", text: q }]);
-    setAsking(true);
-    try {
-      const res = await apiPost<{ answer: string; generated_at: string }>("/ai/assistant", { question: q, project_id: null });
-      setMessages((m) => [...m, { role: "ai", text: res.answer }]);
-    } catch (e: any) {
-      setMessages((m) => [...m, { role: "ai", text: e?.message ?? "AI şu an kullanılamıyor." }]);
-    } finally {
-      setAsking(false);
-    }
+    const id = ++_turnSeq;
+    setTurns((ts) => [
+      ...ts,
+      { id, question: q, res: null, live: "", streaming: true, step: "Soru anlaşılıyor…", error: false },
+    ]);
+    streamAgent(
+      { messages: [{ role: "user", content: q }], project_id: null },
+      {
+        onDelta: (t) => setTurns((ts) => ts.map((x) => (x.id === id ? { ...x, live: x.live + t } : x))),
+        onStep: (label) => patch(id, { live: "", step: label || "Veriler inceleniyor…" }),
+        onFinal: (r) => patch(id, { res: r, streaming: false }),
+        onError: () => patch(id, { error: true, streaming: false }),
+      }
+    );
   };
 
   return (
@@ -60,44 +81,50 @@ function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose
         </div>
       )}
 
-      {/* CR-024-B: always-visible compact read-only trust badge (both rail + drawer). */}
+      {/* CR-024-B / CR-011-D: always-visible trust badge (now "önerir, siz onaylarsınız"). */}
       <div className="border-b border-border px-4 py-2">
         <AiTrustBadge compact />
       </div>
 
-      {/* Large, modern chat */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {messages.length === 0 ? (
+        {turns.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand to-brand-2 text-white shadow-sm">
               <Sparkles className="h-6 w-6" />
             </span>
             <p className="text-sm font-semibold text-primary">Yapı AI'ya sorun</p>
-            <p className="mt-1 max-w-[240px] text-xs text-text-secondary">Projeleriniz, marjlar, hakedişler ve nakit akışı hakkında her şeyi sorun — yanıtlar şirket verilerinize dayanır.</p>
+            <p className="mt-1 max-w-[240px] text-xs text-text-secondary">
+              Projeleriniz, marjlar, hakedişler ve nakit akışı hakkında sorun — yanıtlar şirket
+              verilerinize dayanır ve kaynak gösterilir.
+            </p>
           </div>
         ) : (
           <>
-            {messages.map((m, i) =>
-              m.role === "user" ? (
-                <div key={i} className="flex justify-end">
-                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-brand px-3 py-2 text-[13px] text-white">{m.text}</div>
+            {turns.map((t) => (
+              <div key={t.id} className="space-y-1.5">
+                <div className="flex justify-end">
+                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-brand px-3 py-2 text-[13px] text-white">
+                    {t.question}
+                  </div>
                 </div>
-              ) : (
-                <div key={i} className="flex items-start gap-2">
+                <div className="flex items-start gap-2">
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-brand to-brand-2 text-white">
                     <Sparkles className="h-3.5 w-3.5" />
                   </span>
-                  <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-bg px-3 py-2 text-[13px] leading-snug text-text-primary">
-                    <p className="whitespace-pre-wrap">{m.text}</p>
+                  <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-bg px-3 py-2">
+                    <AgentAnswerBody
+                      res={t.res}
+                      liveText={t.live}
+                      streaming={t.streaming}
+                      step={t.step}
+                      error={t.error}
+                      question={t.question}
+                      onNavigate={(to) => navigate(to)}
+                    />
                   </div>
                 </div>
-              )
-            )}
-            {asking && (
-              <div className="flex items-center gap-2 text-[13px] text-text-secondary">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Yanıtlanıyor…
               </div>
-            )}
+            ))}
             <AIDisclaimer short />
           </>
         )}
@@ -112,7 +139,7 @@ function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose
         >
           <div className="flex items-end gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 focus-within:border-brand">
             <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Yapı AI'ya bir şey sorun…" className="flex-1 bg-transparent py-1.5 text-sm outline-none" />
-            <button type="submit" disabled={!input.trim() || asking} className="mb-0.5 flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-white disabled:opacity-40" aria-label="Gönder">
+            <button type="submit" disabled={!input.trim() || busy} className="mb-0.5 flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-white disabled:opacity-40" aria-label="Gönder">
               <Send className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -122,7 +149,6 @@ function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose
         </button>
       </div>
 
-      {/* CTA → full tool-using agent (Yapı Agent). */}
       <div className="border-t border-border bg-bg/50 p-3">
         <button
           onClick={() => navigate("/ai-assistant")}
