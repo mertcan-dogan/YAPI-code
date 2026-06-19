@@ -2,11 +2,14 @@ import { AskAgentDrawer } from "@/components/dashboard/AskAgentDrawer";
 import { PriorityBriefingDrawer } from "@/components/dashboard/PriorityBriefingDrawer";
 import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { BriefingHero, type RiskChips } from "@/components/dashboard/buildflow/BriefingHero";
+import { KpiCards } from "@/components/dashboard/buildflow/KpiCards";
+import { DashboardCharts } from "@/components/dashboard/buildflow/DashboardCharts";
 import { CurrencyToggle } from "@/components/currency";
 import { LoadError } from "@/components/EmptyState";
 import { Menu, MenuItem, Modal } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
+import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import type { AIAlert } from "@/types";
 import { formatCurrency, formatPct, toNumber } from "@/utils/format";
@@ -26,6 +29,7 @@ interface DashboardData {
   kpi_trends?: Record<string, { series: number[]; delta_pct: number | null }>;
   exec_kpis?: { backlog_try: string; projected_profit_try: string; total_receivables_try: string; net_cash_position_try: string };
   portfolio_budget?: { contract_try: string; revised_budget_try: string; committed_try: string; actual_try: string; forecast_final_cost_try: string };
+  portfolio_performance?: { project: string; contract_try: string; actual_try: string; forecast_final_try: string }[];
   cash_forecast?: { months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
   margin_fade?: { has_targets: boolean; weighted_target_pct: string; weighted_current_pct: string; projects: { name: string; target_pct: string; current_pct: string }[] };
 }
@@ -71,6 +75,12 @@ export default function DashboardPage() {
   const params = useMemo(() => rangeToParams(range), [range]);
   const { data, loading, error, refetch } = useFetch<DashboardData>("/dashboard", params);
   const { data: alerts } = useFetch<AIAlert[]>("/ai/alerts");
+  const isDirector = useAuth((s) => s.user?.role === "director");
+  const [approvalsCount, setApprovalsCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isDirector) return; // /approvals is director-scoped → others see "—"
+    apiGet<any[]>("/approvals").then((r) => setApprovalsCount(r.data?.length ?? 0)).catch(() => setApprovalsCount(null));
+  }, [isDirector]);
 
   // CR-029 §6: cached daily briefing (no fresh agent call per load).
   const [briefing, setBriefing] = useState<BriefingItem[]>([]);
@@ -238,7 +248,9 @@ export default function DashboardPage() {
               onDetail={() => setBriefingOpen(true)}
               onInfo={() => setInfoOpen(true)}
             />
-            {/* CR-029-D/E: KPI cards, charts, project-risk table, reports & decks. */}
+            <KpiCards data={data} approvalsCount={approvalsCount} loading={loading} />
+            <DashboardCharts data={data} loading={loading} />
+            {/* CR-029-E: project-risk table, reports & decks. */}
           </div>
 
           {/* right rail — CR-029-F: action queue, skills, feed. */}
