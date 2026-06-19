@@ -7,17 +7,18 @@ import { DashboardCharts } from "@/components/dashboard/buildflow/DashboardChart
 import { ProjectRiskTable } from "@/components/dashboard/buildflow/ProjectRiskTable";
 import { ReportsPanel } from "@/components/dashboard/buildflow/ReportsPanel";
 import { RightRail } from "@/components/dashboard/buildflow/RightRail";
-import { CurrencyToggle } from "@/components/currency";
 import { LoadError } from "@/components/EmptyState";
-import { Menu, MenuItem, Modal } from "@/components/ui";
+import { Modal } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
+import { useDashboardFilters } from "@/store/dashboardFilters";
 import type { AIAlert } from "@/types";
 import { formatCurrency, formatPct, toNumber } from "@/utils/format";
-import { ArrowUp, CalendarRange, Filter as FilterIcon, FolderKanban, Settings2, Sparkles } from "lucide-react";
+import { ArrowUp, Filter as FilterIcon, Settings2, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 // ---- dashboard data shape (subset used here; full payload from GET /dashboard) ----
 interface DashboardData {
@@ -36,13 +37,6 @@ interface DashboardData {
   cash_forecast?: { months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
   margin_fade?: { has_targets: boolean; weighted_target_pct: string; weighted_current_pct: string; projects: { name: string; target_pct: string; current_pct: string }[] };
 }
-
-const RANGE_LABELS: Record<string, string> = {
-  all: "Tüm Zamanlar",
-  this_month: "Bu Ay",
-  last_3_months: "Son 3 Ay",
-  this_year: "Bu Yıl",
-};
 
 function rangeToParams(range: string): Record<string, string> {
   if (range === "all") return {};
@@ -74,15 +68,27 @@ function composeBriefing(data: DashboardData | null, items: BriefingItem[]): str
 }
 
 export default function DashboardPage() {
-  const [range, setRange] = useState<string>("all");
+  const navigate = useNavigate();
+  const { range } = useDashboardFilters(); // fix #1: date range now lives in the top header
   const params = useMemo(() => rangeToParams(range), [range]);
   const { data, loading, error, refetch } = useFetch<DashboardData>("/dashboard", params);
   const { data: alerts } = useFetch<AIAlert[]>("/ai/alerts");
   const isDirector = useAuth((s) => s.user?.role === "director");
+  // fix #5: split /approvals by kind so the action queue gets real faturalar + ek iş counts.
   const [approvalsCount, setApprovalsCount] = useState<number | null>(null);
+  const [approvalsByKind, setApprovalsByKind] = useState<{ faturalar: number; ekIsler: number } | null>(null);
   useEffect(() => {
     if (!isDirector) return; // /approvals is director-scoped → others see "—"
-    apiGet<any[]>("/approvals").then((r) => setApprovalsCount(r.data?.length ?? 0)).catch(() => setApprovalsCount(null));
+    apiGet<any[]>("/approvals")
+      .then((r) => {
+        const items = (r.data ?? []) as { kind?: string }[];
+        setApprovalsCount(items.length);
+        setApprovalsByKind({
+          faturalar: items.filter((i) => i.kind === "cost_entry").length,
+          ekIsler: items.filter((i) => i.kind === "variation").length,
+        });
+      })
+      .catch(() => { setApprovalsCount(null); setApprovalsByKind(null); });
   }, [isDirector]);
 
   // CR-029 §6: cached daily briefing (no fresh agent call per load).
@@ -136,7 +142,8 @@ export default function DashboardPage() {
   const [cmd, setCmd] = useState("");
   const [askQuestion, setAskQuestion] = useState<string | null>(null);
   const [briefingOpen, setBriefingOpen] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false); // hero info → "brifing nasıl üretildi"
+  const [customiseOpen, setCustomiseOpen] = useState(false); // fix #2 → personalisation panel
   const cmdRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -193,46 +200,16 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Filters & Customise (combined control) */}
-        <Menu
-          align="right"
-          triggerClassName="ctrl hidden h-9 items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] text-text-secondary transition-colors hover:bg-surface-hover lg:flex"
-          triggerLabel="Filtreler ve özelleştir"
-          width={240}
-          trigger={
-            <>
-              <FilterIcon className="h-4 w-4 text-text-muted" />
-              <Settings2 className="h-4 w-4 text-text-muted" />
-              <span>Filtreler &amp; Özelleştir</span>
-            </>
-          }
+        {/* Filters & Customise — opens the personalisation panel (fix #2). Date /
+            project / currency now live in the top header (fix #1). */}
+        <button
+          onClick={() => setCustomiseOpen(true)}
+          className="focus-ring hidden h-9 items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] text-text-secondary transition-colors hover:bg-surface-hover lg:flex"
         >
-          {(close) => (
-            <>
-              <div className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-faint">
-                <span className="inline-flex items-center gap-1.5"><CalendarRange className="h-3.5 w-3.5" /> Tarih Aralığı</span>
-              </div>
-              {Object.entries(RANGE_LABELS).map(([k, label]) => (
-                <MenuItem key={k} onClick={() => { setRange(k); close(); }}>
-                  <span className={range === k ? "font-semibold text-brand" : ""}>{label}</span>
-                </MenuItem>
-              ))}
-              <div className="my-1 border-t border-border" />
-              <div className="px-3 py-1.5 text-[11px] text-text-muted">Widget ekle/çıkar &amp; yeniden düzenle — yakında.</div>
-            </>
-          )}
-        </Menu>
-
-        {/* Project + currency filters (header-level in the mockup; dashboard-scoped here) */}
-        <Menu
-          align="right"
-          triggerClassName="ctrl hidden h-9 items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] text-text-secondary transition-colors hover:bg-surface-hover xl:flex"
-          triggerLabel="Proje filtresi"
-          trigger={<><FolderKanban className="h-4 w-4 text-text-muted" /><span>Tüm Projeler</span></>}
-        >
-          {() => <div className="px-3 py-1.5 text-[11px] text-text-muted">Proje filtresi — tüm aktif projeler gösteriliyor.</div>}
-        </Menu>
-        <div className="hidden xl:block"><CurrencyToggle /></div>
+          <FilterIcon className="h-4 w-4 text-text-muted" />
+          <Settings2 className="h-4 w-4 text-text-muted" />
+          <span>Filtreler &amp; Özelleştir</span>
+        </button>
       </div>
 
       {error && !loading ? (
@@ -248,6 +225,7 @@ export default function DashboardPage() {
               loading={loading || briefingState === "loading"}
               error={briefingState === "error"}
               chips={chips}
+              onChipClick={() => navigate("/ai-alerts")}
               onDetail={() => setBriefingOpen(true)}
               onInfo={() => setInfoOpen(true)}
             />
@@ -266,17 +244,17 @@ export default function DashboardPage() {
               <ReportsPanel />
             </div>
 
-            {/* Custom layout hint (§12) */}
+            {/* Custom layout hint (§12) → personalisation panel (fix #2). */}
             <div className="flex items-center gap-2 px-1 pt-1 text-[11.5px] text-text-muted">
               <Settings2 className="h-3.5 w-3.5" />
               Widget'ları sürükleyerek yeniden düzenleyin • Widget ekley/çıkarın:&nbsp;
-              <button className="focus-ring font-medium text-brand hover:underline" onClick={() => setInfoOpen(true)}>Özel düzen</button>
+              <button className="focus-ring font-medium text-brand hover:underline" onClick={() => setCustomiseOpen(true)}>Özel düzen</button>
             </div>
           </div>
 
           {/* right rail — CR-029-F: action queue, skills, feed. */}
           <div className="flex flex-col gap-3">
-            <RightRail alerts={alerts ?? []} approvalsCount={approvalsCount} />
+            <RightRail alerts={alerts ?? []} approvalsByKind={approvalsByKind} />
           </div>
         </div>
       )}
@@ -293,6 +271,13 @@ export default function DashboardPage() {
         <div className="space-y-2 text-sm text-text-secondary">
           <p>Yapı AI Brifingi, panodaki gerçek verilerinizden (aktif projeler, hedef-altı marjlar, öngörülen portföy marjı, nakit projeksiyonu) ve günlük AI brifingindeki risk maddelerinden derlenir.</p>
           <p>Yalnızca okur; hiçbir finansal veriyi değiştirmez. Sayılar mevcut verilerinizle birebir uyumludur — eksik alanlar uydurulmaz.</p>
+        </div>
+      </Modal>
+      {/* fix #2: the personalisation/customise panel (NOT the briefing explainer). */}
+      <Modal open={customiseOpen} title="Panoyu Özelleştir" onClose={() => setCustomiseOpen(false)} size="md">
+        <div className="space-y-2 text-sm text-text-secondary">
+          <p>Bu panelden pano widget'larını <span className="font-medium text-text-primary">ekleyebilir, çıkarabilir ve yeniden düzenleyebilirsiniz</span>; tarih aralığı, proje ve para birimi filtreleri üst çubukta yer alır.</p>
+          <p>Sürükle-bırak ile yeniden düzenleme ve widget aç/kapa: <span className="font-medium text-text-primary">Bu özellik yakında tüm kullanıcılara sunulacak.</span></p>
         </div>
       </Modal>
     </div>

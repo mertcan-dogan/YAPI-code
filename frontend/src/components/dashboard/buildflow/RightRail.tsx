@@ -1,6 +1,6 @@
 import { Badge, Menu, MenuItem } from "@/components/ui";
 import type { AIAlert } from "@/types";
-import { ArrowRight, ClipboardList, Coins, Copy, MoreVertical, Percent, Tag, TrendingUp, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardList, Copy, FileText, MoreVertical, PlusSquare, ScanLine, Tag, type LucideIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -24,11 +24,12 @@ function ComingSoon() {
   );
 }
 
-// CR-029-F §11.1: AI Action Queue — rows derived from REAL sources (approvals +
-// CR-022 assurance finding types). Counts are real; rows with 0 are hidden. (The
-// mockup's document-capture/variations/reports rows await count endpoints — wired
-// when those land; nothing fabricated.)
-interface QueueRow {
+// CR-029-F §11.1 (fix #5): AI Action Queue. Count rows come from REAL sources —
+// approvals split by kind (faturalar / ek işler) + CR-022 finding types; rows
+// with 0 are hidden. The two sources without a count endpoint (document-capture
+// low-confidence, hazır raporlar) render as navigational links (no fabricated
+// number), per founder decision.
+interface CountRow {
   icon: LucideIcon;
   label: string;
   count: number;
@@ -42,22 +43,26 @@ const PRIORITY_VARIANT: Record<string, "danger" | "warning" | "success"> = {
   Düşük: "success",
 };
 
-export function AiActionQueue({ alerts, approvalsCount }: { alerts: AIAlert[]; approvalsCount: number | null }) {
+export function AiActionQueue({ alerts, approvalsByKind }: { alerts: AIAlert[]; approvalsByKind: { faturalar: number; ekIsler: number } | null }) {
   const navigate = useNavigate();
-  const rows = useMemo<QueueRow[]>(() => {
+  const countRows = useMemo<CountRow[]>(() => {
     const byType = (t: string) => alerts.filter((a) => a.alert_type === t).length;
-    const candidates: QueueRow[] = [
-      { icon: ClipboardList, label: "Onay bekleyenler", count: approvalsCount ?? 0, priority: "Yüksek", to: "/approvals" },
+    const candidates: CountRow[] = [
+      { icon: ClipboardList, label: "Onay bekleyen faturalar", count: approvalsByKind?.faturalar ?? 0, priority: "Yüksek", to: "/approvals" },
+      { icon: PlusSquare, label: "İncelenecek ek işler", count: approvalsByKind?.ekIsler ?? 0, priority: "Yüksek", to: "/approvals" },
       { icon: Copy, label: "Olası yinelenen faturalar", count: byType("duplicate_cost") + byType("duplicate_invoice"), priority: "Yüksek", to: "/ai-alerts" },
-      { icon: Percent, label: "KDV / tutar tutarsızlıkları", count: byType("kdv_mismatch"), priority: "Yüksek", to: "/ai-alerts" },
       { icon: Tag, label: "Atanmamış maliyetler", count: byType("unlinked_vendor"), priority: "Orta", to: "/ai-alerts" },
-      { icon: TrendingUp, label: "Olağandışı maliyetler", count: byType("cost_outlier"), priority: "Orta", to: "/ai-alerts" },
-      { icon: Coins, label: "Eksik kur (USD) bilgisi", count: byType("missing_fx"), priority: "Düşük", to: "/ai-alerts" },
     ];
     return candidates.filter((r) => r.count > 0);
-  }, [alerts, approvalsCount]);
+  }, [alerts, approvalsByKind]);
 
-  const total = rows.reduce((s, r) => s + r.count, 0);
+  // Navigational rows — no backend count yet (founder decision: link, no number).
+  const navRows: { icon: LucideIcon; label: string; to: string }[] = [
+    { icon: ScanLine, label: "Düşük güvenli çıkarımlar", to: "/document-capture" },
+    { icon: FileText, label: "Hazır rapor talepleri", to: "/reports" },
+  ];
+
+  const total = countRows.reduce((s, r) => s + r.count, 0);
 
   return (
     <RailCard
@@ -71,24 +76,33 @@ export function AiActionQueue({ alerts, approvalsCount }: { alerts: AIAlert[]; a
         </>
       }
     >
-      {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-xs text-text-muted">Bekleyen aksiyon yok. 👍</div>
-      ) : (
-        rows.map((r) => (
-          <button
-            key={r.label}
-            onClick={() => navigate(r.to)}
-            className="flex w-full items-center gap-2.5 border-t border-border px-3.5 py-2.5 text-left transition-colors hover:bg-surface-hover"
-          >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-border bg-surface-soft text-text-secondary">
-              <r.icon className="h-[15px] w-[15px]" />
-            </span>
-            <span className="flex-1 text-xs">{r.label}</span>
-            <span className="tabular text-xs font-semibold">{r.count}</span>
-            <Badge variant={PRIORITY_VARIANT[r.priority]}>{r.priority}</Badge>
-          </button>
-        ))
-      )}
+      {countRows.map((r) => (
+        <button
+          key={r.label}
+          onClick={() => navigate(r.to)}
+          className="flex w-full items-center gap-2.5 border-t border-border px-3.5 py-2.5 text-left transition-colors hover:bg-surface-hover"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-border bg-surface-soft text-text-secondary">
+            <r.icon className="h-[15px] w-[15px]" />
+          </span>
+          <span className="flex-1 text-xs">{r.label}</span>
+          <span className="tabular text-xs font-semibold">{r.count}</span>
+          <Badge variant={PRIORITY_VARIANT[r.priority]}>{r.priority}</Badge>
+        </button>
+      ))}
+      {navRows.map((r) => (
+        <button
+          key={r.label}
+          onClick={() => navigate(r.to)}
+          className="flex w-full items-center gap-2.5 border-t border-border px-3.5 py-2.5 text-left transition-colors hover:bg-surface-hover"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-border bg-surface-soft text-text-secondary">
+            <r.icon className="h-[15px] w-[15px]" />
+          </span>
+          <span className="flex-1 text-xs">{r.label}</span>
+          <ArrowRight className="h-3.5 w-3.5 text-text-faint" />
+        </button>
+      ))}
       <div className="flex items-center border-t border-border px-3.5 py-2.5">
         <button onClick={() => navigate("/ai-alerts")} className="focus-ring inline-flex items-center gap-1 text-xs font-medium text-brand hover:underline">
           AI Kuyruğunda tümünü gör <ArrowRight className="h-3.5 w-3.5" />
@@ -98,10 +112,10 @@ export function AiActionQueue({ alerts, approvalsCount }: { alerts: AIAlert[]; a
   );
 }
 
-export function RightRail({ alerts, approvalsCount }: { alerts: AIAlert[]; approvalsCount: number | null }) {
+export function RightRail({ alerts, approvalsByKind }: { alerts: AIAlert[]; approvalsByKind: { faturalar: number; ekIsler: number } | null }) {
   return (
     <>
-      <AiActionQueue alerts={alerts} approvalsCount={approvalsCount} />
+      <AiActionQueue alerts={alerts} approvalsByKind={approvalsByKind} />
 
       {/* §11.2 Phase-2 (CR-011/012): real grid lands when the engines ship. */}
       <RailCard title="AI Beceriler & Otomasyonlar" right={<span className="text-xs text-text-faint">Yönet</span>}>

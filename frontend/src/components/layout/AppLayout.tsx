@@ -2,9 +2,11 @@ import { cn } from "@/lib/cn";
 import { useAuth } from "@/store/auth";
 import {
   BarChart3,
+  Banknote,
   Bell,
   Building2,
   Calculator,
+  CalendarRange,
   ChevronDown,
   ClipboardCheck,
   FileBarChart,
@@ -12,6 +14,7 @@ import {
   FolderKanban,
   HelpCircle,
   History,
+  Layers,
   LayoutDashboard,
   LayoutGrid,
   LogOut,
@@ -20,14 +23,17 @@ import {
   PlusSquare,
   Plus,
   RefreshCw,
+  Rss,
   Search,
   Settings,
   ScanLine,
   ShieldCheck,
+  Sparkles,
   TrendingUp,
   Users,
   Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import * as React from "react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
@@ -35,11 +41,17 @@ import { apiGet } from "@/lib/api";
 import { useProjectStore } from "@/store/project";
 import { NotificationBell } from "@/components/NotificationBell";
 import { CommandPalette } from "@/components/CommandPalette";
+import { CurrencyToggle } from "@/components/currency";
 import { Avatar, Menu, MenuItem, Modal } from "@/components/ui";
 import { ROLE_LABELS } from "@/constants";
+import { toast } from "@/store/toast";
+import { RANGE_LABELS, useDashboardFilters } from "@/store/dashboardFilters";
 
-// CR-029-B §3.2: grouped nav → real YAPI routes (light BuildFlow shell).
-const NAV_GROUPS: { group: string; items: { icon: any; label: string; to: string; directorOnly?: boolean }[] }[] = [
+// CR-029-B §3.2 + fix #3: grouped nav → real YAPI routes, blended with the mockup's
+// items; mockup pages we don't have yet are "coming soon" (muted + 'yakında' tag,
+// click shows a toast). Grouped to resemble the mockup.
+type NavEntry = { icon: any; label: string; to: string; directorOnly?: boolean; comingSoon?: boolean };
+const NAV_GROUPS: { group: string; items: NavEntry[] }[] = [
   {
     group: "Genel",
     items: [
@@ -52,6 +64,8 @@ const NAV_GROUPS: { group: string; items: { icon: any; label: string; to: string
     group: "Portföy",
     items: [
       { icon: FolderKanban, label: "Projeler", to: "/projects" },
+      { icon: Layers, label: "Portföy", to: "#portfolio", comingSoon: true },
+      { icon: Banknote, label: "Nakit Akışı", to: "#cashflow", comingSoon: true },
       { icon: Building2, label: "Tedarikçiler", to: "/vendors" },
     ],
   },
@@ -71,6 +85,15 @@ const NAV_GROUPS: { group: string; items: { icon: any; label: string; to: string
     ],
   },
   {
+    group: "AI & Ekip",
+    items: [
+      { icon: Sparkles, label: "AI Beceriler", to: "#skills", comingSoon: true },
+      { icon: Zap, label: "Otomasyonlar", to: "#automations", comingSoon: true },
+      { icon: Rss, label: "Ekip Akışı", to: "#feed", comingSoon: true },
+      { icon: Users, label: "Ekip", to: "#team", comingSoon: true },
+    ],
+  },
+  {
     group: "Yönetim",
     items: [
       { icon: Settings, label: "Ayarlar", to: "/settings" },
@@ -78,6 +101,8 @@ const NAV_GROUPS: { group: string; items: { icon: any; label: string; to: string
     ],
   },
 ];
+
+const SOON_MSG = "Bu özellik yakında tüm kullanıcılara sunulacak.";
 
 const PROJECT_NAV = (id: string) => [
   { icon: BarChart3, label: "Proje Özeti", to: `/projects/${id}/dashboard` },
@@ -90,7 +115,22 @@ const PROJECT_NAV = (id: string) => [
 ];
 
 // CR-029-B: light nav item — active = blue-soft bg + blue text (mockup .nav-i.on).
-function NavItem({ icon: Icon, label, to, active, onNavigate, right }: any) {
+// fix #3: comingSoon items are muted, carry a 'yakında' tag, and toast on click.
+function NavItem({ icon: Icon, label, to, active, onNavigate, right, comingSoon }: any) {
+  if (comingSoon) {
+    return (
+      <button
+        type="button"
+        onClick={() => toast.info(SOON_MSG)}
+        title={SOON_MSG}
+        className="focus-ring flex h-10 w-full items-center gap-2.5 rounded-control px-3 text-[13px] text-text-faint transition-colors hover:bg-surface-hover"
+      >
+        <Icon className="h-[18px] w-[18px] shrink-0 text-text-faint" />
+        <span className="flex-1 truncate text-left">{label}</span>
+        <span className="rounded-sm bg-surface-hover px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-text-faint">yakında</span>
+      </button>
+    );
+  }
   return (
     <Link
       to={to}
@@ -185,7 +225,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   icon={n.icon}
                   label={n.label}
                   to={n.to}
-                  active={n.to === "/dashboard" ? pathname === n.to : pathname.startsWith(n.to)}
+                  comingSoon={n.comingSoon}
+                  active={n.comingSoon ? false : n.to === "/dashboard" ? pathname === n.to : pathname.startsWith(n.to)}
                   onNavigate={onNavigate}
                   right={
                     n.to === "/approvals" && approvalCount > 0 ? (
@@ -353,9 +394,64 @@ function WorkspaceSelector() {
   );
 }
 
+// CR-029 fix #1: dashboard-scoped header controls — date range (drives the fetch
+// via the shared store), project filter (→ project dashboard), currency toggle.
+// Rendered only on /dashboard so other pages keep a clean header.
+function DashboardHeaderControls() {
+  const navigate = useNavigate();
+  const { range, setRange } = useDashboardFilters();
+  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([]);
+  React.useEffect(() => {
+    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+      .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active").map((p) => ({ id: p.id, name: p.name }))))
+      .catch(() => setProjects([]));
+  }, []);
+  const ctrl = "ctrl flex h-9 items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] text-text-secondary transition-colors hover:bg-surface-hover";
+  return (
+    <>
+      <Menu
+        align="right"
+        triggerLabel="Tarih aralığı"
+        triggerClassName={cn(ctrl, "hidden md:flex")}
+        trigger={<><CalendarRange className="h-4 w-4 text-text-muted" /><span>{RANGE_LABELS[range]}</span><ChevronDown className="h-4 w-4 text-text-muted" /></>}
+      >
+        {(close) => (
+          <>
+            {(Object.keys(RANGE_LABELS) as (keyof typeof RANGE_LABELS)[]).map((k) => (
+              <MenuItem key={k} onClick={() => { setRange(k); close(); }}>
+                <span className={range === k ? "font-semibold text-brand" : ""}>{RANGE_LABELS[k]}</span>
+              </MenuItem>
+            ))}
+          </>
+        )}
+      </Menu>
+      <Menu
+        align="right"
+        triggerLabel="Proje filtresi"
+        triggerClassName={cn(ctrl, "hidden lg:flex")}
+        width={240}
+        trigger={<><FolderKanban className="h-4 w-4 text-text-muted" /><span>Tüm Projeler</span><ChevronDown className="h-4 w-4 text-text-muted" /></>}
+      >
+        {(close) => (
+          <>
+            <MenuItem onClick={() => { close(); navigate("/dashboard"); }}><span className="font-semibold text-brand">Tüm Projeler</span></MenuItem>
+            {projects.length === 0 && <div className="px-3 py-1.5 text-[11px] text-text-muted">Aktif proje yok</div>}
+            {projects.map((p) => (
+              <MenuItem key={p.id} onClick={() => { close(); navigate(`/projects/${p.id}/dashboard`); }}>{p.name}</MenuItem>
+            ))}
+          </>
+        )}
+      </Menu>
+      <div className="hidden lg:block"><CurrencyToggle /></div>
+    </>
+  );
+}
+
 function TopNav({ onMenu }: { onMenu: () => void }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isDashboard = pathname === "/dashboard";
   const [cmdOpen, setCmdOpen] = React.useState(false);
   const [helpOpen, setHelpOpen] = React.useState(false);
   const roleLabel = user?.role ? ROLE_LABELS[user.role] ?? user.role : null;
@@ -388,6 +484,7 @@ function TopNav({ onMenu }: { onMenu: () => void }) {
         <span className="ml-auto rounded-[5px] border border-border px-1.5 py-px text-[11px] text-text-muted">⌘K</span>
       </button>
       <div className="flex-1" />
+      {isDashboard && <DashboardHeaderControls />}
       <NotificationBell />
       <Menu
         triggerLabel="Kullanıcı menüsü"

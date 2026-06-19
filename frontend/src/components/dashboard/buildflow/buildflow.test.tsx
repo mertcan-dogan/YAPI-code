@@ -64,11 +64,15 @@ describe("RightRail / AiActionQueue (CR-029-F)", () => {
     { id: "1", project_id: null, alert_type: "duplicate_cost", severity: "high", title_tr: "", body_tr: "", reasoning: null, recommended_action: null, is_actioned: false, created_at: "", dedup_key: "d:1" },
     { id: "2", project_id: null, alert_type: "duplicate_cost", severity: "high", title_tr: "", body_tr: "", reasoning: null, recommended_action: null, is_actioned: false, created_at: "", dedup_key: "d:2" },
   ];
-  it("maps real counts, hides zero rows, and shows Phase-2 'yakında' slots", () => {
-    wrap(<RightRail alerts={alerts} approvalsCount={3} />);
-    expect(screen.getByText("Olası yinelenen faturalar")).toBeInTheDocument();
-    expect(screen.getByText("Onay bekleyenler")).toBeInTheDocument();
-    expect(screen.queryByText("Eksik kur (USD) bilgisi")).not.toBeInTheDocument(); // 0 → hidden
+  it("maps real counts, hides zero rows, shows nav links + Phase-2 'yakında' slots", () => {
+    wrap(<RightRail alerts={alerts} approvalsByKind={{ faturalar: 3, ekIsler: 0 }} />);
+    expect(screen.getByText("Olası yinelenen faturalar")).toBeInTheDocument(); // 2 dup findings
+    expect(screen.getByText("Onay bekleyen faturalar")).toBeInTheDocument(); // faturalar=3
+    expect(screen.queryByText("İncelenecek ek işler")).not.toBeInTheDocument(); // ekIsler=0 → hidden
+    expect(screen.queryByText("Atanmamış maliyetler")).not.toBeInTheDocument(); // 0 → hidden
+    // Navigational rows (no count) always present:
+    expect(screen.getByText("Düşük güvenli çıkarımlar")).toBeInTheDocument();
+    expect(screen.getByText("Hazır rapor talepleri")).toBeInTheDocument();
     expect(screen.getByText("AI Beceriler & Otomasyonlar")).toBeInTheDocument();
     expect(screen.getByText("Ekip Akışı")).toBeInTheDocument();
     expect(screen.getAllByText("Bu özellik yakında tüm kullanıcılara sunulacak.").length).toBe(2);

@@ -86,7 +86,7 @@ export function ProjectRiskTable({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-hidden">
         {loading ? (
           <div className="space-y-2 p-3.5">
             {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-6 w-full" />)}
@@ -94,20 +94,35 @@ export function ProjectRiskTable({
         ) : rows.length === 0 ? (
           <div className="px-3.5 py-10 text-center text-sm text-text-muted">Aktif proje bulunmuyor.</div>
         ) : (
-          <table className="w-full border-collapse">
+          // fix #7: table-fixed + colgroup widths → all 11 columns fit the card,
+          // no horizontal scroll, AI İçgörü + Durum always visible.
+          <table className="w-full table-fixed border-collapse">
+            <colgroup>
+              <col style={{ width: "13%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "6%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "6%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "10%" }} />
+            </colgroup>
             <thead>
-              <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-text-muted">
-                <th className="px-2 py-2 font-semibold">Proje</th>
-                <th className="px-2 py-2 font-semibold">İlerleme</th>
-                <th className="px-2 py-2 text-right font-semibold">Sözleşme</th>
-                <th className="px-2 py-2 text-right font-semibold">Gerçekleşen</th>
-                <th className="px-2 py-2 text-right font-semibold">Taahhüt</th>
-                <th className="px-2 py-2 text-right font-semibold">Tahmini Mal.</th>
-                <th className="px-2 py-2 text-right font-semibold">Hedef Marj</th>
-                <th className="px-2 py-2 text-right font-semibold">Tahmini Marj</th>
-                <th className="px-2 py-2 text-right font-semibold">Nakit Riski</th>
-                <th className="px-2 py-2 font-semibold">AI İçgörü</th>
-                <th className="px-2 py-2 font-semibold">Durum</th>
+              <tr className="border-b border-border text-left text-[9.5px] uppercase tracking-tight text-text-muted">
+                <th className="px-1.5 py-2 font-semibold">Proje</th>
+                <th className="px-1.5 py-2 font-semibold">İler.</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Sözleşme</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Gerçek.</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Taah.</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Tah.Mal.</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Hedef</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Tah.Marj</th>
+                <th className="px-1.5 py-2 text-right font-semibold">Nakit</th>
+                <th className="px-1.5 py-2 font-semibold">AI İçgörü</th>
+                <th className="px-1.5 py-2 font-semibold">Durum</th>
               </tr>
             </thead>
             <tbody>
@@ -115,36 +130,36 @@ export function ProjectRiskTable({
                 <tr
                   key={r.id}
                   onClick={() => navigate(`/projects/${r.id}/dashboard`)}
-                  className="cursor-pointer border-b border-border text-[11.5px] transition-colors last:border-0 hover:bg-surface-hover"
+                  className="cursor-pointer border-b border-border text-[11px] transition-colors last:border-0 hover:bg-surface-hover"
                 >
-                  <td className="px-2 py-2 font-semibold" style={{ borderLeft: `3px solid ${r.rag.bar}` }}>{r.name}</td>
-                  <td className="px-2 py-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="h-[5px] w-[46px] overflow-hidden rounded-sm bg-surface-hover">
+                  <td className="truncate px-1.5 py-1.5 font-semibold" style={{ boxShadow: `inset 3px 0 0 ${r.rag.bar}` }} title={r.name}>{r.name}</td>
+                  <td className="px-1.5 py-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className="h-[5px] w-[34px] shrink-0 overflow-hidden rounded-sm bg-surface-hover">
                         <span className="block h-full rounded-sm" style={{ width: `${r.progress}%`, background: r.rag.bar }} />
                       </span>
-                      <span className="tabular text-text-secondary">{r.progress}%</span>
+                      <span className="tabular text-[10px] text-text-secondary">{r.progress}%</span>
                     </div>
                   </td>
-                  <td className="px-2 py-2 text-right tabular">{formatCurrencyAbbrev(r.contract)}</td>
-                  <td className="px-2 py-2 text-right tabular">{r.actual != null ? formatCurrencyAbbrev(r.actual) : "—"}</td>
-                  <td className="px-2 py-2 text-right tabular text-text-faint" title="CR-023 ile gelecek">—</td>
-                  <td className="px-2 py-2 text-right tabular">{r.forecast != null ? formatCurrencyAbbrev(r.forecast) : "—"}</td>
-                  <td className="px-2 py-2 text-right tabular">{r.target != null ? formatPct(r.target) : "—"}</td>
-                  <td className="px-2 py-2 text-right tabular">
+                  <td className="truncate px-1.5 py-1.5 text-right tabular">{formatCurrencyAbbrev(r.contract)}</td>
+                  <td className="truncate px-1.5 py-1.5 text-right tabular">{r.actual != null ? formatCurrencyAbbrev(r.actual) : "—"}</td>
+                  <td className="px-1.5 py-1.5 text-right tabular text-text-faint" title="CR-023 ile gelecek">—</td>
+                  <td className="truncate px-1.5 py-1.5 text-right tabular">{r.forecast != null ? formatCurrencyAbbrev(r.forecast) : "—"}</td>
+                  <td className="px-1.5 py-1.5 text-right tabular">{r.target != null ? formatPct(r.target) : "—"}</td>
+                  <td className="truncate px-1.5 py-1.5 text-right tabular">
                     {formatPct(r.margin)}
                     {r.pp != null && (
-                      <span className={cn("ml-1 text-[10px]", r.pp >= 0 ? "text-success" : "text-danger")}>
-                        {r.pp >= 0 ? "↑" : "↓"} {Math.abs(r.pp).toFixed(1)} pp
+                      <span className={cn("ml-0.5 text-[9px]", r.pp >= 0 ? "text-success" : "text-danger")}>
+                        {r.pp >= 0 ? "↑" : "↓"}{Math.abs(r.pp).toFixed(1)}
                       </span>
                     )}
                   </td>
-                  <td className="px-2 py-2 text-right tabular">
-                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle" style={{ background: r.netCash < 0 ? "var(--color-danger)" : r.netCash < toNumber(r.contract) * 0.02 ? "var(--color-warning)" : "var(--color-success)" }} />
+                  <td className="truncate px-1.5 py-1.5 text-right tabular">
+                    <span className="mr-1 inline-block h-2 w-2 rounded-full align-middle" style={{ background: r.netCash < 0 ? "var(--color-danger)" : r.netCash < toNumber(r.contract) * 0.02 ? "var(--color-warning)" : "var(--color-success)" }} />
                     {formatCurrencyAbbrev(r.netCash)}
                   </td>
-                  <td className="max-w-[200px] truncate px-2 py-2 text-text-secondary" title={r.insight ?? undefined}>{r.insight ?? "—"}</td>
-                  <td className="px-2 py-2"><Badge variant={r.rag.variant}>{r.rag.label}</Badge></td>
+                  <td className="truncate px-1.5 py-1.5 text-text-secondary" title={r.insight ?? undefined}>{r.insight ?? "—"}</td>
+                  <td className="px-1.5 py-1.5"><Badge variant={r.rag.variant}>{r.rag.label}</Badge></td>
                 </tr>
               ))}
             </tbody>

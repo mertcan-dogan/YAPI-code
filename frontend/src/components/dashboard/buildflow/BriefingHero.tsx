@@ -26,6 +26,7 @@ export function BriefingHero({
   loading,
   error,
   chips,
+  onChipClick,
   onDetail,
   onInfo,
 }: {
@@ -33,6 +34,7 @@ export function BriefingHero({
   loading?: boolean;
   error?: boolean;
   chips: RiskChips;
+  onChipClick?: (key: keyof RiskChips) => void;
   onDetail?: () => void;
   onInfo?: () => void;
 }) {
@@ -71,18 +73,22 @@ export function BriefingHero({
         <AIDisclaimer short className="max-w-[520px]" />
       </div>
 
-      {/* Risk chips — desktop only (absolute positions assume the wide hero). */}
+      {/* Risk chips — clickable (fix #4) → matching severity bucket. Desktop only
+          (absolute positions assume the wide hero); connector lines kept. */}
       <div className="pointer-events-none absolute inset-0 z-[3] hidden xl:block">
         {CHIPS.map((c) => (
-          <div
+          <button
             key={c.key}
-            className="absolute rounded-lg border border-border bg-surface px-[11px] py-[7px] text-center shadow-pop"
+            type="button"
+            onClick={() => onChipClick?.(c.key)}
+            title={`${c.label} öğelerini incele`}
+            className="pointer-events-auto focus-ring absolute cursor-pointer rounded-lg border border-border bg-surface px-[11px] py-[7px] text-center shadow-pop transition-transform hover:-translate-y-0.5 hover:border-brand"
             style={c.style}
           >
             <div className="text-[10px] font-semibold" style={{ color: c.color }}>{c.label}</div>
             <div className="text-[15px] font-semibold leading-tight tabular">{chips[c.key]}</div>
             <span className="absolute left-1/2 top-full h-[18px] w-px opacity-50" style={{ background: c.color }} />
-          </div>
+          </button>
         ))}
       </div>
     </div>
