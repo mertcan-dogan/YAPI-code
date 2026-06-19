@@ -71,11 +71,28 @@ export function BriefingHero({
           )}
         </div>
         <AIDisclaimer short className="max-w-[520px]" />
+
+        {/* Inline risk chips for narrower widths (≤2xl) — keeps the counts visible
+            in normal flow so they never overlap the briefing text (fix #4). */}
+        <div className="mt-2 flex flex-wrap gap-1.5 2xl:hidden">
+          {CHIPS.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => onChipClick?.(c.key)}
+              title={`${c.label} öğelerini incele`}
+              className="focus-ring inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-[11px] transition-colors hover:border-brand"
+            >
+              <span className="font-semibold" style={{ color: c.color }}>{c.label}</span>
+              <span className="tabular font-semibold">{chips[c.key]}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Risk chips — clickable (fix #4) → matching severity bucket. Desktop only
-          (absolute positions assume the wide hero); connector lines kept. */}
-      <div className="pointer-events-none absolute inset-0 z-[3] hidden xl:block">
+      {/* Floating risk chips with connector lines — only at 2xl (≥1536px) where the
+          hero is wide enough that they never overlap the briefing text (fix #4). */}
+      <div className="pointer-events-none absolute inset-0 z-[3] hidden 2xl:block">
         {CHIPS.map((c) => (
           <button
             key={c.key}

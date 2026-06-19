@@ -70,8 +70,7 @@ describe("RightRail / AiActionQueue (CR-029-F)", () => {
     expect(screen.getByText("Onay bekleyen faturalar")).toBeInTheDocument(); // faturalar=3
     expect(screen.queryByText("İncelenecek ek işler")).not.toBeInTheDocument(); // ekIsler=0 → hidden
     expect(screen.queryByText("Atanmamış maliyetler")).not.toBeInTheDocument(); // 0 → hidden
-    // Navigational rows (no count) always present:
-    expect(screen.getByText("Düşük güvenli çıkarımlar")).toBeInTheDocument();
+    // Navigational row (no count) always present:
     expect(screen.getByText("Hazır rapor talepleri")).toBeInTheDocument();
     expect(screen.getByText("AI Beceriler & Otomasyonlar")).toBeInTheDocument();
     expect(screen.getByText("Ekip Akışı")).toBeInTheDocument();
@@ -83,8 +82,9 @@ describe("BriefingHero (CR-029-C)", () => {
   it("renders the briefing text + the four risk chip counts", () => {
     wrap(<BriefingHero text="3 proje hedef marjın altında." chips={{ kritik: 3, izle: 5, firsat: 4, hazir: 6 }} />);
     expect(screen.getByText("3 proje hedef marjın altında.")).toBeInTheDocument();
-    expect(screen.getByText("Kritik")).toBeInTheDocument();
-    expect(screen.getByText("İncelemeye Hazır")).toBeInTheDocument();
+    // Chips render in both the inline (≤2xl) and floating (2xl) variants.
+    expect(screen.getAllByText("Kritik").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("İncelemeye Hazır").length).toBeGreaterThan(0);
   });
 });
 

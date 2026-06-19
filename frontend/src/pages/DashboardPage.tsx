@@ -36,6 +36,8 @@ interface DashboardData {
   portfolio_performance?: { project: string; contract_try: string; actual_try: string; forecast_final_try: string }[];
   cash_forecast?: { months: { month: string; inflow_try: string; outflow_try: string; net_try: string; cumulative_try: string }[]; min_cash_try: string; min_cash_month: string | null; shortfall: boolean };
   margin_fade?: { has_targets: boolean; weighted_target_pct: string; weighted_current_pct: string; projects: { name: string; target_pct: string; current_pct: string }[] };
+  // CR-014 portfolio USD snapshot totals (the only USD figures the payload exposes).
+  usd?: { costs: { amount_usd: string | null; usd_missing_count: number }; invoices: { amount_usd: string | null; usd_missing_count: number } };
 }
 
 function rangeToParams(range: string): Record<string, string> {
@@ -48,22 +50,31 @@ function rangeToParams(range: string): Record<string, string> {
   return { date_from: iso(from), date_to: iso(now) };
 }
 
-/** Compose the briefing paragraph from REAL dashboard data + the cached daily
- *  briefing (no fabricated numbers; "—"-safe). */
-function composeBriefing(data: DashboardData | null, items: BriefingItem[]): string {
+/** Compose the briefing paragraph from the SAME dashboard payload the KPI cards
+ *  use (kpis.weighted_avg_margin_pct, exec_kpis.net_cash_position_try) so the
+ *  narrative and the KPIs can never contradict (fix #2). Risk drivers come from
+ *  the dashboard project list (lowest margin), consistent with the table — not
+ *  from a separate AI computation. No fabricated numbers; "—"-safe. */
+function composeBriefing(data: DashboardData | null): string {
   if (!data) return "";
-  const active = data.kpis?.active_project_count ?? 0;
+  const k = data.kpis;
+  const ex = data.exec_kpis;
   const mf = data.margin_fade;
-  const below = mf?.projects?.filter((p) => toNumber(p.current_pct) < toNumber(p.target_pct)).length ?? 0;
-  const portfolioMargin = mf?.weighted_current_pct ?? data.kpis?.weighted_avg_margin_pct;
   const fc = data.cash_forecast;
-  const parts: string[] = [];
-  parts.push(`${active} aktif projeden ${below}'i hedef marjın altında`);
-  if (portfolioMargin != null && portfolioMargin !== "") parts.push(`öngörülen portföy marjı %${formatPct(portfolioMargin).replace("%", "")}`);
-  if (fc?.shortfall) parts.push(`önümüzdeki dönemde ${formatCurrency(fc.min_cash_try)} en düşük öngörülen nakit ile açık riski görünüyor`);
+  const active = k?.active_project_count ?? 0;
+  const below = mf?.projects?.filter((p) => toNumber(p.current_pct) < toNumber(p.target_pct)).length ?? 0;
+  const parts: string[] = [`${active} aktif proje`];
+  if (below > 0) parts.push(`${below}'i hedef marjın altında`);
+  if (k?.weighted_avg_margin_pct != null && k.weighted_avg_margin_pct !== "") parts.push(`öngörülen portföy marjı ${formatPct(k.weighted_avg_margin_pct)}`);
+  if (ex?.net_cash_position_try != null && ex.net_cash_position_try !== "") parts.push(`net nakit pozisyonu ${formatCurrency(ex.net_cash_position_try)}`);
   let s = parts.join("; ") + ".";
-  const risks = (items ?? []).slice(0, 3).map((b) => b.issue).filter(Boolean);
-  if (risks.length) s += ` Başlıca riskler: ${risks.join("; ")}.`;
+  if (fc?.shortfall) s += ` Önümüzdeki dönemde en düşük öngörülen nakit ${formatCurrency(fc.min_cash_try)}${fc.min_cash_month ? ` (${fc.min_cash_month})` : ""} — nakit açığı riski.`;
+  const risky = [...(data.projects ?? [])]
+    .sort((a, b) => toNumber(a.margin_pct) - toNumber(b.margin_pct))
+    .slice(0, 3)
+    .map((p) => p.name)
+    .filter(Boolean);
+  if (risky.length) s += ` Öne çıkan riskli projeler: ${risky.join(", ")}.`;
   return s;
 }
 
@@ -164,7 +175,7 @@ export default function DashboardPage() {
   };
 
   // ---- briefing text + risk chips (real data) ----
-  const briefingText = useMemo(() => composeBriefing(data ?? null, briefing), [data, briefing]);
+  const briefingText = useMemo(() => composeBriefing(data ?? null), [data]);
   const chips: RiskChips = useMemo(() => {
     const a = alerts ?? [];
     return {

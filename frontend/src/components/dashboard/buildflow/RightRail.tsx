@@ -1,6 +1,6 @@
 import { Badge, Menu, MenuItem } from "@/components/ui";
 import type { AIAlert } from "@/types";
-import { ArrowRight, ClipboardList, Copy, FileText, MoreVertical, PlusSquare, ScanLine, Tag, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardList, Copy, FileText, MoreVertical, PlusSquare, Tag, type LucideIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -57,8 +57,9 @@ export function AiActionQueue({ alerts, approvalsByKind }: { alerts: AIAlert[]; 
   }, [alerts, approvalsByKind]);
 
   // Navigational rows — no backend count yet (founder decision: link, no number).
+  // "Düşük güvenli çıkarımlar" omitted: extraction confidence isn't persisted, so
+  // there's no low-confidence review list/count to link to honestly (yet).
   const navRows: { icon: LucideIcon; label: string; to: string }[] = [
-    { icon: ScanLine, label: "Düşük güvenli çıkarımlar", to: "/document-capture" },
     { icon: FileText, label: "Hazır rapor talepleri", to: "/reports" },
   ];
 
@@ -76,6 +77,9 @@ export function AiActionQueue({ alerts, approvalsByKind }: { alerts: AIAlert[]; 
         </>
       }
     >
+      {countRows.length === 0 && (
+        <div className="border-t border-border px-3.5 py-2.5 text-xs text-text-muted">Şu an bekleyen aksiyon yok.</div>
+      )}
       {countRows.map((r) => (
         <button
           key={r.label}

@@ -1,6 +1,7 @@
 import { Skeleton, Sparkline } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { formatCurrencyAbbrev, formatCurrency, formatPct, toNumber } from "@/utils/format";
+import { useCurrency } from "@/store/currency";
+import { formatCurrencyAbbrev, formatCurrency, formatPct, formatUSD, toNumber } from "@/utils/format";
 import { Briefcase, Calculator, ClipboardList, FileText, Folder, Landmark, LineChart, Percent, type LucideIcon } from "lucide-react";
 
 interface Trend {
@@ -18,6 +19,9 @@ interface KpiDef {
   soft: string; // CSS var (soft bg)
   trend?: Trend;
   placeholder?: boolean; // CR-023 — no data yet
+  // CR-014 USD snapshot (fix #3): only figures with a real amount_usd switch on
+  // the $ / İkisi toggle. Others stay ₺ (no USD snapshot → never fabricated).
+  usd?: { amountUsd: string | null; missing: number };
 }
 
 // CR-029-D §7: 8 KPI cards. Real data from /dashboard (exec_kpis/kpis/kpi_trends)
@@ -28,6 +32,8 @@ export function KpiCards({ data, approvalsCount, loading }: { data: any; approva
   const ex = data?.exec_kpis;
   const pb = data?.portfolio_budget;
   const tr = data?.kpi_trends ?? {};
+  const mode = useCurrency((s) => s.mode); // fix #3: ₺ / $ / İkisi
+  const showUsd = mode !== "try";
 
   const moneyTrend = (key: string, unit: "%" | "₺"): Trend | undefined => {
     const t = tr[key];
@@ -71,6 +77,8 @@ export function KpiCards({ data, approvalsCount, loading }: { data: any; approva
       icon: Calculator,
       color: "var(--color-purple)",
       soft: "var(--color-purple-soft)",
+      // Backed by a CR-014 USD snapshot (portfolio cost USD sum) → switches on $.
+      usd: { amountUsd: data?.usd?.costs?.amount_usd ?? null, missing: data?.usd?.costs?.usd_missing_count ?? 0 },
     },
     {
       label: "Taahhüt Edilen Maliyet",
@@ -139,10 +147,26 @@ export function KpiCards({ data, approvalsCount, loading }: { data: any; approva
             </span>
           </div>
           <div
-            title={c.placeholder ? "CR-023 ile gelecek" : c.valueTitle}
+            title={
+              c.placeholder
+                ? "CR-023 ile gelecek"
+                : showUsd && c.usd && c.usd.missing > 0
+                  ? `${c.usd.missing} kayıt için kur bulunamadı; USD toplamı eksik olabilir`
+                  : c.valueTitle
+            }
             className={cn("mt-1.5 text-[21px] font-semibold leading-none tabular", c.placeholder && "text-text-faint")}
           >
-            {c.value}
+            {showUsd && c.usd ? (
+              c.usd.amountUsd == null ? (
+                <span className="text-text-faint">—</span>
+              ) : mode === "both" ? (
+                <span>{c.value}<span className="ml-1 text-[13px] font-medium text-text-muted">· {formatUSD(c.usd.amountUsd)}</span></span>
+              ) : (
+                formatUSD(c.usd.amountUsd)
+              )
+            ) : (
+              c.value
+            )}
           </div>
           <div className="mt-1 h-[14px] text-[11px]">
             {c.placeholder ? (

@@ -9,7 +9,8 @@ const OPTIONS: { key: CurrencyMode; label: string; title: string }[] = [
   { key: "both", label: "İkisi de", title: "TRY ve USD birlikte" },
 ];
 
-/** Three-way ₺ / $ / İkisi de display toggle (per-user, persisted). */
+/** Three-way ₺ / $ / İkisi de display toggle (per-user, persisted). £ (GBP) is
+ *  shown disabled ("yakında") — GBP isn't tracked yet (separate CR). */
 export function CurrencyToggle() {
   const { mode, setMode } = useCurrency();
   return (
@@ -27,6 +28,14 @@ export function CurrencyToggle() {
           {o.label}
         </button>
       ))}
+      <button
+        disabled
+        title="GBP (£) — yakında"
+        aria-label="GBP yakında"
+        className="cursor-not-allowed rounded px-2.5 py-1 text-sm text-text-disabled"
+      >
+        £
+      </button>
     </div>
   );
 }
