@@ -6,6 +6,7 @@ import { KpiCards } from "@/components/dashboard/buildflow/KpiCards";
 import { DashboardCharts } from "@/components/dashboard/buildflow/DashboardCharts";
 import { ProjectRiskTable } from "@/components/dashboard/buildflow/ProjectRiskTable";
 import { ReportsPanel } from "@/components/dashboard/buildflow/ReportsPanel";
+import { RightRail } from "@/components/dashboard/buildflow/RightRail";
 import { CurrencyToggle } from "@/components/currency";
 import { LoadError } from "@/components/EmptyState";
 import { Menu, MenuItem, Modal } from "@/components/ui";
@@ -274,7 +275,9 @@ export default function DashboardPage() {
           </div>
 
           {/* right rail — CR-029-F: action queue, skills, feed. */}
-          <div className="flex flex-col gap-3" />
+          <div className="flex flex-col gap-3">
+            <RightRail alerts={alerts ?? []} approvalsCount={approvalsCount} />
+          </div>
         </div>
       )}
 
