@@ -1,30 +1,30 @@
-import { AskAgentDrawer } from "@/components/dashboard/AskAgentDrawer";
+import { ScopedAgentDrawer } from "@/components/dashboard/ScopedAgentDrawer";
 import type { AgentScope } from "@/types/agent";
 import { Coins, FileText, LineChart, Receipt, ShieldCheck, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 // CR-011-D §4.1 — the scoped-agent launcher (the "Beceriler" half of the CR-029
 // "AI Beceriler & Otomasyonlar" slot). Each round launcher opens the SAME agent
-// engine scoped to a domain (one engine, many scopes) in a SideDrawer, seeded
-// with a domain-appropriate starter question. "Otomasyonlar" stays "yakında"
-// until CR-012.
+// engine scoped to a domain (one engine, many scopes) in a SideDrawer.
+// CR-011 follow-up (Item 1): opening a domain shows an EMPTY composer (with
+// suggested-prompt chips) — it does NOT auto-submit/auto-answer. "Otomasyonlar"
+// stays "yakında" until CR-012.
 interface Skill {
   scope: AgentScope;
   label: string;
   icon: LucideIcon;
-  starter: string;
 }
 
 const SKILLS: Skill[] = [
-  { scope: "gider", label: "Gider", icon: Receipt, starter: "Bu yıl en yüksek gider kalemlerim neler?" },
-  { scope: "gelir", label: "Gelir", icon: Coins, starter: "Açık alacaklarımın ve tahsilatlarımın durumu nedir?" },
-  { scope: "finans", label: "Finans", icon: LineChart, starter: "Genel finansal durumum ve nakit akışım nasıl?" },
-  { scope: "hakedis", label: "Hakediş", icon: FileText, starter: "Hakediş ve teminat (teminat kesintisi) durumum nedir?" },
-  { scope: "belge", label: "Belge", icon: ShieldCheck, starter: "İncelemem gereken faturalar veya güvence bulguları var mı?" },
+  { scope: "gider", label: "Gider", icon: Receipt },
+  { scope: "gelir", label: "Gelir", icon: Coins },
+  { scope: "finans", label: "Finans", icon: LineChart },
+  { scope: "hakedis", label: "Hakediş", icon: FileText },
+  { scope: "belge", label: "Belge", icon: ShieldCheck },
 ];
 
 export function ScopedAgentDock() {
-  const [active, setActive] = useState<Skill | null>(null);
+  const [active, setActive] = useState<AgentScope | null>(null);
 
   return (
     <div className="px-3.5 py-3">
@@ -36,7 +36,7 @@ export function ScopedAgentDock() {
         {SKILLS.map((s) => (
           <button
             key={s.scope}
-            onClick={() => setActive(s)}
+            onClick={() => setActive(s.scope)}
             aria-label={`${s.label} Agent`}
             className="focus-ring group flex flex-col items-center gap-1.5 rounded-control py-2 transition-colors hover:bg-surface-hover"
           >
@@ -48,11 +48,7 @@ export function ScopedAgentDock() {
         ))}
       </div>
 
-      <AskAgentDrawer
-        question={active?.starter ?? null}
-        scope={active?.scope ?? null}
-        onClose={() => setActive(null)}
-      />
+      <ScopedAgentDrawer scope={active} open={active !== null} onClose={() => setActive(null)} />
     </div>
   );
 }

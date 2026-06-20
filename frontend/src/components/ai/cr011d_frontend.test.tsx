@@ -99,10 +99,30 @@ describe("AskAgentDrawer streaming (CR-011-D)", () => {
   });
 });
 
-describe("ScopedAgentDock (CR-011-D)", () => {
-  it("opens the agent scoped to the chosen domain", () => {
+describe("ScopedAgentDock (CR-011-D / Item 1)", () => {
+  it("opens an empty composer scoped to the domain WITHOUT auto-asking", () => {
     wrap(<ScopedAgentDock />);
     fireEvent.click(screen.getByLabelText("Gider Agent"));
+    // No auto-submit / auto-answer on open.
+    expect(streamCalls).toHaveLength(0);
+    expect(screen.getByPlaceholderText("Gider Agent'a sorun…")).toBeInTheDocument();
+    expect(screen.getByText("Örnek sorular:")).toBeInTheDocument();
+  });
+
+  it("submitting a typed question streams scoped to the domain", () => {
+    wrap(<ScopedAgentDock />);
+    fireEvent.click(screen.getByLabelText("Finans Agent"));
+    fireEvent.change(screen.getByPlaceholderText("Finans Agent'a sorun…"), { target: { value: "nakit?" } });
+    fireEvent.click(screen.getByLabelText("Gönder"));
+    expect(streamCalls).toHaveLength(1);
+    expect(streamCalls[0].body.scope).toBe("finans");
+    expect(streamCalls[0].body.messages[0].content).toBe("nakit?");
+  });
+
+  it("clicking a suggestion chip asks scoped (explicit user action)", () => {
+    wrap(<ScopedAgentDock />);
+    fireEvent.click(screen.getByLabelText("Gider Agent"));
+    fireEvent.click(screen.getByText("Hangi tedarikçiye en çok ödedim?"));
     expect(streamCalls).toHaveLength(1);
     expect(streamCalls[0].body.scope).toBe("gider");
   });
