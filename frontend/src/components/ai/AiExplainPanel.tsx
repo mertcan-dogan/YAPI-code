@@ -64,7 +64,7 @@ export function AiExplainPanel({ toolsUsed = [], rowCounts = {}, citationCount =
               </ul>
             ) : (
               // Honest empty state for degraded / no-tool answers (§0.2.2).
-              <p className="mt-1">Bu yanıt için araç kullanılmadı.</p>
+              <p className="mt-1">Bu yanıt için veri aracı kullanılmadı.</p>
             )}
           </div>
 

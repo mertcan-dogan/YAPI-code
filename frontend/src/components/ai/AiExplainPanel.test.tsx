@@ -27,7 +27,7 @@ describe("AiExplainPanel", () => {
       <AiExplainPanel toolsUsed={[]} rowCounts={{}} generatedAt="2026-06-18T09:00:00Z" />
     );
     expand();
-    expect(container.textContent).toContain("Bu yanıt için araç kullanılmadı.");
+    expect(container.textContent).toContain("Bu yanıt için veri aracı kullanılmadı.");
     // no fabricated row-count line
     expect(container.textContent).not.toContain("kayıt okundu");
   });
