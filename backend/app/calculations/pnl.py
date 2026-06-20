@@ -17,6 +17,7 @@ from app.calculations.money import D, money, pct, safe_div
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
+_DAYS_PER_YEAR = 365.0
 
 
 # --------------------------------------------------------------------------- #
@@ -201,6 +202,119 @@ def fx_effect(cost_try_original, cost_usd, today_rate) -> dict:
         "fx_effect_try": str(effect),
         "fx_effect_pct": str(effect_pct) if effect_pct is not None else None,
     }
+
+
+# --------------------------------------------------------------------------- #
+# CR-031-D — IRR (XIRR over irregular dates) / ROI
+# --------------------------------------------------------------------------- #
+def _xnpv(rate: float, flows: list[tuple[date, float]], t0: date) -> float:
+    """Net present value of dated cash flows at an annual ``rate`` (Actual/365)."""
+    return sum(cf / (1.0 + rate) ** ((d - t0).days / _DAYS_PER_YEAR) for d, cf in flows)
+
+
+def xirr(cashflows: list[tuple]) -> float | None:
+    """Internal rate of return over irregular dates (XIRR), as an annual fraction.
+
+    Pure Python (no SciPy). Robust bisection on a bracket found by expanding the
+    upper bound until ``xnpv`` changes sign — Newton-free so it never diverges.
+    Returns None (never raises) when a root cannot exist: fewer than 2 flows, or
+    the amounts don't include BOTH a positive and a negative (no sign change → an
+    all-inflow or all-outflow series has no IRR).
+    """
+    flows = sorted(((d, float(a)) for d, a in cashflows), key=lambda x: x[0])
+    amts = [a for _, a in flows]
+    if len(flows) < 2 or not (any(a > 0 for a in amts) and any(a < 0 for a in amts)):
+        return None
+    t0 = flows[0][0]
+    f = lambda r: _xnpv(r, flows, t0)  # noqa: E731
+
+    lo, hi = -0.999999, 1.0
+    flo, fhi = f(lo), f(hi)
+    tries = 0
+    while flo * fhi > 0 and hi < 1e7 and tries < 80:
+        hi *= 2.0
+        fhi = f(hi)
+        tries += 1
+    if flo * fhi > 0:
+        return None  # no bracket → no real root in range
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        fm = f(mid)
+        if abs(fm) < 1e-9 or (hi - lo) < 1e-12:
+            return mid
+        if flo * fm < 0:
+            hi, fhi = mid, fm
+        else:
+            lo, flo = mid, fm
+    return (lo + hi) / 2.0
+
+
+def _irr_pct(cashflows: list[tuple]):
+    """XIRR as a 2dp percentage Decimal, or None for a degenerate series."""
+    r = xirr(cashflows)
+    return pct(D(r) * HUNDRED) if r is not None else None
+
+
+def investment_return(
+    try_flows: list[tuple], usd_flows: list[tuple], *,
+    revenue_try, cost_try, start_date, last_date, net_m2=None, unit_count=None,
+) -> dict:
+    """IRR (TRY & USD) + ROI + duration + m²-başı getiri (§4.1).
+
+    ``*_flows`` are [(date, signed_amount)] — outflows negative (cost), inflows
+    positive (sell-side sales+landowner OR hakediş, per revenue_model). IRR is
+    null for a degenerate (single-sign) series. ROI = (revenue−cost)/cost; all
+    guarded. Duration = whole months start→last cash-flow.
+    """
+    rev, cost = D(revenue_try), D(cost_try)
+    net_profit = money(rev - cost)
+    roi_pct = pct(safe_div(net_profit, cost) * HUNDRED) if cost > ZERO else None
+
+    duration_months = None
+    if start_date is not None and last_date is not None and last_date >= start_date:
+        duration_months = (last_date.year - start_date.year) * 12 + (last_date.month - start_date.month)
+
+    per_net_m2 = str(money(safe_div(net_profit, D(net_m2)))) if net_m2 and D(net_m2) > ZERO else None
+    per_unit = str(money(safe_div(net_profit, D(unit_count)))) if unit_count else None
+
+    irr_try = _irr_pct(try_flows)
+    irr_usd = _irr_pct(usd_flows)
+    return {
+        "irr_try_pct": str(irr_try) if irr_try is not None else None,
+        "irr_usd_pct": str(irr_usd) if irr_usd is not None else None,
+        "roi_pct": str(roi_pct) if roi_pct is not None else None,
+        "net_profit_try": str(net_profit),
+        "total_cost_try": str(money(cost)),
+        "duration_months": duration_months,
+        "profit_per_net_m2_try": per_net_m2,
+        "profit_per_unit_try": per_unit,
+    }
+
+
+def yearly_cashflow_rows(try_flows: list[tuple], usd_flows: list[tuple]) -> list[dict]:
+    """Per-year inflow/outflow/net (TRY & USD), mirroring the workbook's IRR feed
+    table. Years are taken from the union of both series, ascending."""
+    by_year: dict[int, dict] = {}
+    for flows, suffix in ((try_flows, "try"), (usd_flows, "usd")):
+        for d, amt in flows:
+            a = D(amt)
+            y = by_year.setdefault(d.year, {"inflow_try": ZERO, "outflow_try": ZERO,
+                                            "inflow_usd": ZERO, "outflow_usd": ZERO})
+            key = ("inflow_" if a >= ZERO else "outflow_") + suffix
+            y[key] += a if a >= ZERO else -a
+    rows = []
+    for y in sorted(by_year):
+        b = by_year[y]
+        rows.append({
+            "year": y,
+            "inflow_try": str(money(b["inflow_try"])),
+            "outflow_try": str(money(b["outflow_try"])),
+            "net_try": str(money(b["inflow_try"] - b["outflow_try"])),
+            "inflow_usd": str(money(b["inflow_usd"])),
+            "outflow_usd": str(money(b["outflow_usd"])),
+            "net_usd": str(money(b["inflow_usd"] - b["outflow_usd"])),
+        })
+    return rows
 
 
 def _sales_totals(rows: list[dict], basis: str) -> dict:

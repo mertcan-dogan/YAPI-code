@@ -245,30 +245,23 @@ def _floor_count(db: Session, project: Project) -> int:
     ).scalar() or 0)
 
 
-def project_pnl(db: Session, project: Project, today: date | None = None) -> dict:
-    """The revenue-model-aware Project P&L block (§3) assembled onto the payload.
+def revenue_cost_totals(db: Session, project: Project, today: date | None = None) -> dict:
+    """The single revenue-model-aware revenue/cost selection (§0.2) — the ONE
+    place the no-double-count rule lives, shared by the P&L (§3) and IRR/ROI (§4).
 
-    REVENUE (§0.2, never double-counted):
-      - sell-side (kat_karsiligi/yap_sat/hasilat_paylasimi) → Σ unit_sales + Σ
-        landowner_payments;
-      - hakedis/maliyet_kar → client_invoices (the existing rollup, reused).
-    COST is read from the authoritative CR-007/014 rollup. FINANCING is a
-    separable CR-015 overlay (excl/incl both exposed). m² analizi + kur-etkisi are
-    derived at read-time from today's rate; nothing is written back.
+    REVENUE: sell-side (kat_karsiligi/yap_sat/hasilat_paylasimi) → Σ unit_sales +
+    Σ landowner_payments; hakedis/maliyet_kar → client_invoices (existing rollup).
+    The two sources are NEVER summed. COST is the authoritative CR-007/014 rollup.
     """
     from app.constants import SELL_SIDE_REVENUE_MODELS
     from app.services import financials as fin_service
-    from app.services import financing as financing_service
 
     f = fin_service.project_financials(db, project, today=today)
     usd = fin_service.project_usd_totals(db, project)
     cost_try = money(f["forecast_final_cost_try"])
     cost_usd = money(D(usd["costs"]["amount_usd"]))
 
-    model = project.revenue_model
-    sell_side = model in SELL_SIDE_REVENUE_MODELS
-
-    if sell_side:
+    if project.revenue_model in SELL_SIDE_REVENUE_MODELS:
         sales = sales_revenue_totals(db, project)
         land = landowner_rollup(db, project)
         revenue_try = money(sales["total_try"] + D(land["total_try"]))
@@ -291,6 +284,30 @@ def project_pnl(db: Session, project: Project, today: date | None = None) -> dic
             "unit_sales_try": "0.00",
             "landowner_try": "0.00",
         }
+    return {
+        "revenue_try": revenue_try, "revenue_usd": revenue_usd,
+        "cost_try": cost_try, "cost_usd": cost_usd,
+        "revenue_source": revenue_source, "revenue_breakdown": breakdown,
+        "usd_missing_count": usd["costs"]["usd_missing_count"],
+    }
+
+
+def project_pnl(db: Session, project: Project, today: date | None = None) -> dict:
+    """The revenue-model-aware Project P&L block (§3) assembled onto the payload.
+
+    REVENUE (§0.2, never double-counted): see ``revenue_cost_totals``. COST is the
+    authoritative CR-007/014 rollup. FINANCING is a separable CR-015 overlay
+    (excl/incl both exposed). m² analizi + kur-etkisi are derived at read-time from
+    today's rate; nothing is written back.
+    """
+    from app.services import financing as financing_service
+
+    rc = revenue_cost_totals(db, project, today=today)
+    revenue_try, revenue_usd = rc["revenue_try"], rc["revenue_usd"]
+    cost_try, cost_usd = rc["cost_try"], rc["cost_usd"]
+    revenue_source, breakdown = rc["revenue_source"], rc["revenue_breakdown"]
+    sell_side = revenue_source == "sales"
+    model = project.revenue_model
 
     fin = financing_service.compute_financing_cost(db, project, today=today)
     statement = pnl_calc.pnl_statement(
@@ -315,7 +332,7 @@ def project_pnl(db: Session, project: Project, today: date | None = None) -> dic
         "revenue_source": revenue_source,
         "revenue_breakdown": breakdown,
         **statement,
-        "usd_missing_count": usd["costs"]["usd_missing_count"],
+        "usd_missing_count": rc["usd_missing_count"],
         "m2_analysis": m2,
         "fx_effect": kur,
     }
@@ -351,3 +368,81 @@ def _contractor_split(db: Session, project: Project, cost_try) -> dict:
             "allocated_cost_try": str(landowner_cost) if landowner_cost is not None else None,
         },
     }
+
+
+# --------------------------------------------------------------------------- #
+# CR-031-D — dated net-cash-flow series → IRR / ROI
+# --------------------------------------------------------------------------- #
+def cashflow_series(db: Session, project: Project) -> tuple[list, list]:
+    """Dated, signed net-cash-flow series in TRY and USD (§4.1). Outflows = cost
+    entries (by entry_date, NEGATIVE); inflows = the revenue-model-aware lane
+    (POSITIVE): sell-side → unit_sales (sale_date) + landowner (payment_date);
+    hakedis/maliyet_kar → client_invoices (invoice_date, matching the accrual P&L).
+
+    USD rows are included only where a CR-014 snapshot exists (null USD is skipped
+    so a missing rate never poisons the USD IRR). Returns (try_flows, usd_flows).
+    """
+    from app.constants import SELL_SIDE_REVENUE_MODELS
+    from app.models.client_invoice import ClientInvoice
+    from app.models.cost_entry import CostEntry
+
+    try_flows: list[tuple] = []
+    usd_flows: list[tuple] = []
+
+    def add(d, amt_try, amt_usd, sign):
+        if d is None:
+            return
+        if amt_try is not None:
+            try_flows.append((d, sign * D(amt_try)))
+        if amt_usd is not None:
+            usd_flows.append((d, sign * D(amt_usd)))
+
+    # Outflows — authoritative cost rows (live, non-pending), VAT-inclusive TRY.
+    costs = db.execute(
+        select(CostEntry.entry_date, CostEntry.total_with_vat_try, CostEntry.amount_usd).where(
+            CostEntry.project_id == project.id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+        )
+    ).all()
+    for entry_date, twv, amt_usd in costs:
+        add(entry_date, twv, amt_usd, D(-1))
+
+    # Inflows — revenue-model-aware.
+    if project.revenue_model in SELL_SIDE_REVENUE_MODELS:
+        for s in list_unit_sales(db, project):
+            add(s.sale_date, s.sale_price_try, s.sale_price_usd, D(1))
+        for p in list_landowner_payments(db, project):
+            add(p.payment_date, p.amount_try, p.amount_usd, D(1))
+    else:
+        invs = db.execute(
+            select(ClientInvoice.invoice_date, ClientInvoice.amount_try, ClientInvoice.amount_usd).where(
+                ClientInvoice.project_id == project.id,
+                ClientInvoice.is_deleted.is_(False),
+            )
+        ).all()
+        for inv_date, amt_try, amt_usd in invs:
+            add(inv_date, amt_try, amt_usd, D(1))
+
+    return try_flows, usd_flows
+
+
+def investment_return(db: Session, project: Project, today: date | None = None) -> dict:
+    """IRR/ROI investment-return block (§4): XIRR (TRY & USD) over the dated
+    series + ROI + duration + per-m²/unit getiri + yearly summary rows. Degenerate
+    (single-sign) series → null IRR, never an exception."""
+    rc = revenue_cost_totals(db, project, today=today)
+    try_flows, usd_flows = cashflow_series(db, project)
+
+    all_dates = [d for d, _ in try_flows]
+    last_date = max(all_dates) if all_dates else None
+
+    block = pnl_calc.investment_return(
+        try_flows, usd_flows,
+        revenue_try=rc["revenue_try"], cost_try=rc["cost_try"],
+        start_date=project.start_date, last_date=last_date,
+        net_m2=project.construction_net_m2, unit_count=project.unit_count,
+    )
+    block["revenue_source"] = rc["revenue_source"]
+    block["yearly"] = pnl_calc.yearly_cashflow_rows(try_flows, usd_flows)
+    return block

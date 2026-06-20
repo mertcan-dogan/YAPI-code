@@ -188,6 +188,9 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
             # revenue_model — NEVER both (§0.2). Cost is read-only; financing stays
             # a separable overlay (net excl/incl both present).
             "pnl": sales_service.project_pnl(db, project),
+            # CR-031-D: IRR (XIRR, TRY & USD) / ROI / süre + yearly cash-flow feed.
+            # Dated series over the same lanes; degenerate series → null IRR.
+            "investment_return": sales_service.investment_return(db, project),
         }
     )
 
