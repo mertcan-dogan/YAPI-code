@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatDateTime } from "@/utils/format";
 import { toolLabel } from "./toolLabels";
 
@@ -24,6 +24,18 @@ export function AiExplainPanel({ toolsUsed = [], rowCounts = {}, citationCount =
   const totalRows = Object.values(rowCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
   const hasTools = toolsUsed.length > 0;
 
+  // Collapse repeated identical tool calls into one line with a count
+  // (e.g. the same tool called 6× → "… ×6"), preserving first-use order.
+  const groupedTools = useMemo(() => {
+    const order: string[] = [];
+    const counts: Record<string, number> = {};
+    for (const t of toolsUsed) {
+      if (!(t in counts)) order.push(t);
+      counts[t] = (counts[t] ?? 0) + 1;
+    }
+    return order.map((name) => ({ name, count: counts[name] }));
+  }, [toolsUsed]);
+
   return (
     <div className="mt-2 rounded-lg border border-border bg-bg/50">
       <button
@@ -43,8 +55,11 @@ export function AiExplainPanel({ toolsUsed = [], rowCounts = {}, citationCount =
             <div className="font-medium text-text-primary">Kullanılan araçlar</div>
             {hasTools ? (
               <ul className="mt-1 space-y-0.5">
-                {toolsUsed.map((t, i) => (
-                  <li key={`${t}-${i}`}>• {toolLabel(t)}</li>
+                {groupedTools.map((t) => (
+                  <li key={t.name}>
+                    • {toolLabel(t.name)}
+                    {t.count > 1 && <span className="text-text-faint"> ×{t.count}</span>}
+                  </li>
                 ))}
               </ul>
             ) : (

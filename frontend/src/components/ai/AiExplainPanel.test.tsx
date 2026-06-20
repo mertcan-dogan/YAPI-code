@@ -37,4 +37,24 @@ describe("AiExplainPanel", () => {
     expand();
     expect(container.textContent).toContain("brand_new_tool");
   });
+
+  it("collapses repeated identical tool calls into one line with a count", () => {
+    const { container } = render(
+      <AiExplainPanel toolsUsed={Array(6).fill("get_overdue_payments")} generatedAt="2026-06-18T09:00:00Z" />
+    );
+    expand();
+    // One line, not six.
+    const items = container.querySelectorAll("li");
+    expect(items).toHaveLength(1);
+    expect(container.textContent).toContain("Vadesi geçmiş ödemeler tarandı");
+    expect(container.textContent).toContain("×6");
+  });
+
+  it("does not add a count for a single call", () => {
+    const { container } = render(
+      <AiExplainPanel toolsUsed={["get_vendor_spend"]} generatedAt="2026-06-18T09:00:00Z" />
+    );
+    expand();
+    expect(container.textContent).not.toContain("×1");
+  });
 });
