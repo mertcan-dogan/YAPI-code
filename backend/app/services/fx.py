@@ -223,3 +223,10 @@ def snapshot_unit_sale_usd(db: Session, sale) -> bool:
     return _apply_usd_snapshot_fields(
         db, sale, sale.sale_date, try_field="sale_price_try", usd_field="sale_price_usd"
     )
+
+
+def snapshot_landowner_payment_usd(db: Session, payment) -> bool:
+    """(Re)compute a landowner payment's USD snapshot at its ``payment_date``
+    (CR-031-B). Its TRY/USD columns are the ``amount_try``/``amount_usd`` pair, so
+    the cost/invoice helper applies directly."""
+    return _apply_usd_snapshot(db, payment, payment.payment_date)

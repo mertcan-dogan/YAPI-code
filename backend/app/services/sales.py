@@ -7,11 +7,12 @@ mutates budget/forecast/margin internals (§0.2).
 """
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.calculations import pnl as pnl_calc
-from app.calculations.money import D, money
+from app.calculations.money import D, money, safe_div
+from app.models.landowner_payment import LandownerPayment
 from app.models.project import Project
 from app.models.unit_sale import UnitSale
 
@@ -94,3 +95,95 @@ def unit_sales_pnl(db: Session, project: Project, today: date | None = None) -> 
     result["cost_total_usd"] = str(costs["total_usd"])
     result["usd_missing_count"] = costs["usd_missing_count"]
     return result
+
+
+def sales_revenue_totals(db: Session, project: Project) -> dict:
+    """SQL-side Σ of unit-sales revenue (TRY/USD) + count for a project. Pure
+    aggregation (no Python loop) — feeds the revenue-model-aware P&L (CR-031-C)."""
+    sum_try, sum_usd, cnt, missing = db.execute(
+        select(
+            func.coalesce(func.sum(UnitSale.sale_price_try), 0),
+            func.coalesce(func.sum(UnitSale.sale_price_usd), 0),
+            func.count(UnitSale.id),
+            func.coalesce(func.sum(_null_int(UnitSale.sale_price_usd)), 0),
+        ).where(UnitSale.project_id == project.id, UnitSale.is_deleted.is_(False))
+    ).one()
+    return {
+        "total_try": money(D(sum_try)),
+        "total_usd": money(D(sum_usd)),
+        "count": int(cnt),
+        "usd_missing_count": int(missing),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# CR-031-B — landowner payment ledger
+# --------------------------------------------------------------------------- #
+def _null_int(col):
+    """1 when the column is NULL else 0 — dialect-safe missing-USD counter for a
+    SUM (avoids FILTER, unsupported on older SQLite)."""
+    from sqlalchemy import case
+    return case((col.is_(None), 1), else_=0)
+
+
+def list_landowner_payments(db: Session, project: Project) -> list[LandownerPayment]:
+    return db.execute(
+        select(LandownerPayment)
+        .where(LandownerPayment.project_id == project.id, LandownerPayment.is_deleted.is_(False))
+        .order_by(LandownerPayment.payment_date.desc(), LandownerPayment.created_at.desc())
+    ).scalars().all()
+
+
+def _payment_dict(p: LandownerPayment) -> dict:
+    return {
+        "id": str(p.id),
+        "payer_name": p.payer_name,
+        "committed_total_try": _s(p.committed_total_try),
+        "payment_date": p.payment_date.isoformat() if p.payment_date else None,
+        "amount_try": _s(p.amount_try),
+        "amount_usd": _s(p.amount_usd),
+        "fx_rate_usd": _s(p.fx_rate_usd),
+        "payment_type": p.payment_type,
+        "description": p.description,
+        "notes": p.notes,
+    }
+
+
+def landowner_rollup(db: Session, project: Project) -> dict:
+    """SQL-side ledger rollup (§2.2): Σ amount_try/amount_usd, count, the header
+    commitment (max of the repeated value) and remaining-vs-committed. Pure
+    aggregation, no Python loop. NEVER feeds hakediş revenue."""
+    sum_try, sum_usd, cnt, committed, missing = db.execute(
+        select(
+            func.coalesce(func.sum(LandownerPayment.amount_try), 0),
+            func.coalesce(func.sum(LandownerPayment.amount_usd), 0),
+            func.count(LandownerPayment.id),
+            func.max(LandownerPayment.committed_total_try),
+            func.coalesce(func.sum(_null_int(LandownerPayment.amount_usd)), 0),
+        ).where(
+            LandownerPayment.project_id == project.id,
+            LandownerPayment.is_deleted.is_(False),
+        )
+    ).one()
+
+    paid_try = money(D(sum_try))
+    committed_d = money(D(committed)) if committed is not None else None
+    remaining_try = money(committed_d - paid_try) if committed_d is not None else None
+    pct_paid = (
+        str(money(safe_div(paid_try, committed_d) * 100)) if committed_d and committed_d > 0 else None
+    )
+    return {
+        "total_try": str(paid_try),
+        "total_usd": str(money(D(sum_usd))),
+        "count": int(cnt),
+        "committed_total_try": str(committed_d) if committed_d is not None else None,
+        "remaining_try": str(remaining_try) if remaining_try is not None else None,
+        "pct_paid": pct_paid,
+        "usd_missing_count": int(missing),
+    }
+
+
+def landowner_ledger(db: Session, project: Project) -> dict:
+    """Payments list + the SQL rollup — the GET payload (§2.2)."""
+    payments = [_payment_dict(p) for p in list_landowner_payments(db, project)]
+    return {"payments": payments, "rollup": landowner_rollup(db, project)}

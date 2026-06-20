@@ -25,6 +25,7 @@ from app.models.vendor import Vendor, VendorAlias
 from app.models.workspace_item import WorkspaceItem
 from app.models.fx_rate import FxRate
 from app.models.unit_sale import UnitSale
+from app.models.landowner_payment import LandownerPayment
 
 __all__ = [
     "Base",
@@ -54,4 +55,5 @@ __all__ = [
     "WorkspaceItem",
     "FxRate",
     "UnitSale",
+    "LandownerPayment",
 ]

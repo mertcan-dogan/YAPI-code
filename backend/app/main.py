@@ -49,6 +49,7 @@ from app.api import (
     equipment,
     imports,
     invoices,
+    landowner_payments,
     milestones,
     notifications,
     projects,
@@ -198,5 +199,6 @@ for r in (
     workspace.router,
     vendors.router,
     unit_sales.router,
+    landowner_payments.router,
 ):
     app.include_router(r, prefix=API_PREFIX)
