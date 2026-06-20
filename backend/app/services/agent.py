@@ -111,6 +111,28 @@ def resolve_window(name: str, today: date) -> tuple[date | None, date | None]:
     return None, None
 
 
+# CR-011 follow-up (Item 2) — named relative due-dates for reminders, resolved on
+# the SERVER (§0.2.5 — the model never computes dates).
+RELATIVE_DUE = ("bugun", "yarin", "gelecek_hafta", "iki_hafta", "ay_sonu", "gelecek_ay")
+
+
+def resolve_due(name: str, today: date) -> date | None:
+    """Resolve a named relative reminder due-date to a literal date. Unknown → None."""
+    if name == "bugun":
+        return today
+    if name == "yarin":
+        return today + timedelta(days=1)
+    if name == "gelecek_hafta":
+        return today + timedelta(days=7)
+    if name == "iki_hafta":
+        return today + timedelta(days=14)
+    if name == "ay_sonu":
+        return _add_months(date(today.year, today.month, 1), 1) - timedelta(days=1)
+    if name == "gelecek_ay":
+        return _add_months(today, 1)
+    return None
+
+
 def _date_guidance(today: date) -> str:
     """System-prompt date rules (§0.2.5): today's date is grounding context only —
     the model must NOT do date math. Relative periods go through the tools'
@@ -301,11 +323,16 @@ def build_tool_schemas() -> list[dict]:
             "name": "propose_reminder",
             "description": (
                 "ÖNERİ (doğrudan yazmaz): bir hatırlatıcı oluşturmayı önerir — onay "
-                "bekleyen bir talep açar. Kullanıcı açıkça hatırlatıcı isterse kullan."
+                "bekleyen bir talep açar. Kullanıcı bir hatırlatıcı isterse (öner/oluştur/"
+                "ekle/kur, 'bana ... hatırlat') MUTLAKA bunu çağır; serbest metinle geçme. "
+                "Somut bir title ver; vade için `due` kullan (tarihi kendin hesaplama)."
             ),
             "input_schema": {"type": "object", "properties": {
                 "title": {"type": "string"},
                 "note": {"type": "string"},
+                "due": {"type": "string", "enum": list(RELATIVE_DUE),
+                        "description": "Göreli vade; sunucu birebir ISO tarihe çevirir. "
+                                       "Açık tarih verilmediyse bunu kullan."},
                 "due_date": date_s,
                 "project_id": pid,
             }, "required": ["title"]},
@@ -554,6 +581,17 @@ def _add_citations(result: dict, citations: list, seen: set) -> None:
             return
 
 
+def _apply_relative_due(raw: dict, params: dict, today: date) -> None:
+    """CR-011 Item 2 — resolve a model-supplied named ``due`` to a literal ISO
+    ``due_date`` on the SERVER (§0.2.5). Never overrides an explicit due_date."""
+    due = (raw or {}).get("due")
+    if not due or params.get("due_date"):
+        return
+    d = resolve_due(due, today or date.today())
+    if d is not None:
+        params["due_date"] = d.isoformat()
+
+
 def _apply_relative_window(allowed: set[str], raw: dict, params: dict, today: date) -> None:
     """CR-011-A §1.2 — resolve a model-supplied `relative_window` to literal
     date_from/date_to on the SERVER. Only applies to date-aware tools and never
@@ -595,6 +633,8 @@ def execute_tool(db: Session, company_id, name: str, tool_input: dict,
             return {"error": "Bu eylem için oturum bağlamı gerekli."}
         func, allowed = action
         params = _coerce_params(allowed, tool_input)
+        if name == "propose_reminder":
+            _apply_relative_due(tool_input, params, today)
         try:
             result = func(db, company_id, user_id, **params)
         except actions.ActionError as exc:
@@ -659,13 +699,25 @@ def _step_label(name: str) -> str:
 # CR-011-C — propose-only action guidance (always present; the agent has action
 # tools in every scope). Reinforces the §0.2.1 invariant in the model's own words.
 _ACTION_GUIDANCE = (
-    "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, "
-    "propose_followup_task): Bu araçlar HİÇBİR ŞEYİ DOĞRUDAN DEĞİŞTİRMEZ — yalnızca "
-    "ONAY BEKLEYEN bir öneri oluştururlar ve değişiklik ancak kullanıcı /approvals "
-    "sayfasından onaylarsa uygulanır. Bunları YALNIZCA kullanıcı açıkça bir eylem "
-    "(hatırlatıcı, işaretleme, görev) istediğinde çağır. Sonucu bildirirken ASLA "
-    "'yaptım/oluşturdum/işaretledim' deme; 'öneri oluşturuldu, onayınızı bekliyor' "
-    "de ve onay için /approvals sayfasına yönlendir."
+    "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, propose_followup_task): "
+    "Bu araçlar HİÇBİR ŞEYİ DOĞRUDAN DEĞİŞTİRMEZ — yalnızca ONAY BEKLEYEN bir öneri "
+    "oluştururlar; değişiklik ancak kullanıcı /approvals sayfasından onaylarsa uygulanır.\n"
+    "NE ZAMAN ÇAĞIRMALISIN (ZORUNLU): Kullanıcı somut bir EYLEM yapılmasını isterse, "
+    "serbest metinle yanıt verip geçme — ilgili aracı MUTLAKA çağır:\n"
+    "- 'hatırlatıcı öner/oluştur/ekle/kur', 'bana ... hatırlat', 'şunu hatırlat/unutturma' → "
+    "propose_reminder. Somut bir Türkçe title ver; vade için `due` parametresini kullan "
+    "(bugun/yarin/gelecek_hafta/iki_hafta/ay_sonu/gelecek_ay) — tarihi KENDİN HESAPLAMA. "
+    "Kullanıcı açık bir tarih verdiyse onu due_date olarak kopyala.\n"
+    "- 'şu faturayı/maliyeti incele(meye al)', '... incele olarak işaretle', 'flag' → "
+    "propose_flag_invoice (target_kind + target_id + reason). target_id'yi query_* / "
+    "get_assurance_findings sonuçlarından al.\n"
+    "- 'takip görevi oluştur', 'görev/yapılacak ekle' → propose_followup_task (somut title).\n"
+    "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
+    "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
+    "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "
+    "serbest metinle yanıtla.\n"
+    "Sonucu bildirirken ASLA 'yaptım/oluşturdum/işaretledim' deme; 'öneri oluşturuldu, "
+    "onayınızı bekliyor' de ve onay için /approvals sayfasına yönlendir."
 )
 
 
