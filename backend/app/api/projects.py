@@ -23,6 +23,7 @@ from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services import financials as fin_service
 from app.services import financing as financing_service
 from app.services import milestones as milestones_service
+from app.services import sales as sales_service
 from app.services import units as units_service
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
@@ -182,6 +183,11 @@ def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = De
             # deadline, overdue count, per-stage). Display + informs Proje
             # Sağlığı's "% Tamamlandı" ONLY — never feeds any money figure (§0.2).
             "milestones": milestones_service.compute_schedule_block(db, project.id, project.company_id),
+            # CR-031-C: revenue-model-aware Project P&L (Kar/Zarar) + m² analizi +
+            # kur-etkisi. Revenue is sell-side (sales+landowner) OR hakediş per
+            # revenue_model — NEVER both (§0.2). Cost is read-only; financing stays
+            # a separable overlay (net excl/incl both present).
+            "pnl": sales_service.project_pnl(db, project),
         }
     )
 

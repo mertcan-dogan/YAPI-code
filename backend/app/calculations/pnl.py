@@ -101,6 +101,108 @@ def allocate_unit_costs(
             "totals": _sales_totals(rows, basis)}
 
 
+def _div_or_none(value, divisor):
+    """Quantized value/divisor, or None when value is missing or divisor <= 0
+    (every m²/unit/floor KPI is guarded — §3.2)."""
+    if value is None:
+        return None
+    d = D(divisor)
+    if d <= ZERO:
+        return None
+    return str(money(safe_div(D(value), d)))
+
+
+# --------------------------------------------------------------------------- #
+# CR-031-C — revenue-model-aware P&L statement
+# --------------------------------------------------------------------------- #
+def pnl_statement(
+    revenue_try, revenue_usd, cost_try, cost_usd, financing_try, financing_usd
+) -> dict:
+    """Revenue − Cost (− Financing) net + margins, in TRY & USD (§3.1).
+
+    Financing stays a SEPARABLE overlay (§0.2): both ``net_excl_financing`` and
+    ``net_incl_financing`` are exposed; their difference is exactly the financing
+    total. Margins are on revenue, divide-by-zero guarded.
+    """
+    rev_try, rev_usd = D(revenue_try), D(revenue_usd)
+    cost_try_d, cost_usd_d = D(cost_try), D(cost_usd)
+    fin_try, fin_usd = D(financing_try), D(financing_usd)
+
+    net_excl_try = money(rev_try - cost_try_d)
+    net_incl_try = money(rev_try - cost_try_d - fin_try)
+    net_excl_usd = money(rev_usd - cost_usd_d)
+    net_incl_usd = money(rev_usd - cost_usd_d - fin_usd)
+
+    margin_excl = pct(safe_div(net_excl_try, rev_try) * HUNDRED) if rev_try > ZERO else None
+    margin_incl = pct(safe_div(net_incl_try, rev_try) * HUNDRED) if rev_try > ZERO else None
+
+    return {
+        "revenue_try": str(money(rev_try)),
+        "revenue_usd": str(money(rev_usd)),
+        "cost_try": str(money(cost_try_d)),
+        "cost_usd": str(money(cost_usd_d)),
+        "financing_try": str(money(fin_try)),
+        "financing_usd": str(money(fin_usd)),
+        "net_excl_financing_try": str(net_excl_try),
+        "net_incl_financing_try": str(net_incl_try),
+        "net_excl_financing_usd": str(net_excl_usd),
+        "net_incl_financing_usd": str(net_incl_usd),
+        "margin_pct": str(margin_excl) if margin_excl is not None else None,
+        "margin_incl_financing_pct": str(margin_incl) if margin_incl is not None else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# CR-031-C — m² maliyet analizi (§3.2)
+# --------------------------------------------------------------------------- #
+def m2_analysis(cost_try, cost_usd, today_rate, *, gross_m2, net_m2, unit_count, floor_count) -> dict:
+    """Cost per gross m² / net m² / unit / floor, in TRY, USD and today's-rate TRY
+    (= cost_usd × today_rate, the FX-revalued cost). Every figure guarded; null
+    when its divisor or the area/unit/rate is absent."""
+    cost_try_today = (D(cost_usd) * D(today_rate)) if today_rate is not None else None
+
+    def trio(divisor):
+        return {
+            "try": _div_or_none(D(cost_try), divisor),
+            "usd": _div_or_none(D(cost_usd), divisor),
+            "try_today": _div_or_none(cost_try_today, divisor) if cost_try_today is not None else None,
+        }
+
+    return {
+        "gross_m2": str(money(D(gross_m2))) if gross_m2 is not None else None,
+        "net_m2": str(money(D(net_m2))) if net_m2 is not None else None,
+        "unit_count": int(unit_count) if unit_count else None,
+        "floor_count": int(floor_count) if floor_count else None,
+        "per_gross_m2": trio(gross_m2),
+        "per_net_m2": trio(net_m2),
+        "per_unit": trio(unit_count),
+        "per_floor": trio(floor_count),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# CR-031-C — kur-etkisi (FX-effect) line (§3.3)
+# --------------------------------------------------------------------------- #
+def fx_effect(cost_try_original, cost_usd, today_rate) -> dict:
+    """Güncel TL − Orijinal TL: the gain/loss from revaluing the USD-snapshotted
+    cost at today's rate vs its original TRY (§3.3). DERIVED at read-time — never
+    written back to any cost row. Null when no today-rate is available."""
+    orig = D(cost_try_original)
+    if today_rate is None:
+        return {"today_rate": None, "cost_try_original": str(money(orig)),
+                "cost_try_today": None, "fx_effect_try": None, "fx_effect_pct": None}
+    today_try = money(D(cost_usd) * D(today_rate))
+    effect = money(today_try - orig)
+    effect_pct = pct(safe_div(effect, orig) * HUNDRED) if orig > ZERO else None
+    return {
+        "today_rate": str(D(today_rate)),
+        "cost_try_original": str(money(orig)),
+        "cost_try_today": str(today_try),
+        "fx_effect_try": str(effect),
+        "fx_effect_pct": str(effect_pct) if effect_pct is not None else None,
+    }
+
+
 def _sales_totals(rows: list[dict], basis: str) -> dict:
     """Σ sales TRY/USD, count, total m² (basis) and avg price/m² (§1.2)."""
     n = len(rows)

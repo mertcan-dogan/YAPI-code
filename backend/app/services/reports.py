@@ -105,6 +105,24 @@ def build_project_report_data(db: Session, project: Project, company: Company) -
         }
         for c in f["categories"]
     ]
+    # CR-031-C: revenue-model-aware Satışlar & Kar/Zarar summary, surfaced in the
+    # report data. Revenue is sell-side (sales+landowner) OR hakediş per
+    # revenue_model — never both (§0.2). Read-only over cost.
+    from app.services import sales as sales_service
+
+    p = sales_service.project_pnl(db, project)
+    kur = p["fx_effect"]
+    sales_pnl = {
+        "revenue_source": p["revenue_source"],
+        "revenue": format_currency_tr(p["revenue_try"]),
+        "cost": format_currency_tr(p["cost_try"]),
+        "financing": format_currency_tr(p["financing_try"]),
+        "net_excl_financing": format_currency_tr(p["net_excl_financing_try"]),
+        "net_incl_financing": format_currency_tr(p["net_incl_financing_try"]),
+        "margin_pct": format_pct_tr(p["margin_pct"]) if p["margin_pct"] is not None else "—",
+        "fx_effect": format_currency_tr(kur["fx_effect_try"]) if kur["fx_effect_try"] is not None else "—",
+    }
+
     return {
         "company_name": company.name,
         "logo_url": company.logo_url,
@@ -124,6 +142,7 @@ def build_project_report_data(db: Session, project: Project, company: Company) -
         "total_outstanding": format_currency_tr(f["total_outstanding_try"]),
         "total_retention": format_currency_tr(f["total_retention_try"]),
         "net_cash": format_currency_tr(f["net_cash_position_try"]),
+        "sales_pnl": sales_pnl,
     }
 
 

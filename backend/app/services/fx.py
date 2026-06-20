@@ -120,6 +120,13 @@ def _last_known(db: Session, on_or_before: date | None = None) -> Decimal | None
     return row.usd_try if row is not None else None
 
 
+def latest_rate(db: Session) -> Decimal | None:
+    """The most recent cached USD/TRY rate — "today's rate" for read-time
+    revaluation (CR-031 kur-etkisi / m² today-rate variants). None when the
+    fx_rates table is empty. Never fetches; a derived read only."""
+    return _last_known(db)
+
+
 def rate_as_of(db: Session, d: date, *, today: date | None = None) -> Decimal | None:
     """Return the USD/TRY rate effective for ``d`` (CR-014 §1.2, the core lookup).
 
