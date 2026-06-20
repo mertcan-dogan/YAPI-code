@@ -1,8 +1,9 @@
 """Load project-related rows and run the calculation engine (Section 7)."""
 import uuid
+from collections import defaultdict
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from app.calculations import compute_monthly_cashflow, compute_project_financials, opening_balance
@@ -53,7 +54,41 @@ def _invoice_dict(i: ClientInvoice) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Per-request input cache (perf). The same project's cost/invoice/budget rows are
+# loaded several times within one request — project_financials, project_cashflow,
+# forecast_at_completion and margin_bridge each call load_project_inputs, so the
+# single-project dashboard reloaded them 4× (12 queries). The company dashboard /
+# project list reloaded them once PER PROJECT (N+1). We memoise the loaded inputs
+# on the Session (db.info) keyed by project id: read endpoints reuse them for free
+# and ``prime_project_inputs`` batch-loads many projects in 3 queries. The cache
+# is correctness-safe — any flush of a CostEntry/ClientInvoice/BudgetLineItem
+# clears it (see the after_flush listener below), so a read-after-write in the
+# same session always recomputes from fresh rows.
+# --------------------------------------------------------------------------- #
+_CACHE_KEY = "_project_inputs_cache"
+_CACHED_MODELS = (CostEntry, ClientInvoice, BudgetLineItem)
+
+
+def _inputs_cache(db: Session) -> dict:
+    return db.info.setdefault(_CACHE_KEY, {})
+
+
+def _budget_dict(b: BudgetLineItem) -> dict:
+    return {
+        "cost_category": b.cost_category,
+        "original_budget_try": b.original_budget_try,
+        "approved_variations_try": b.approved_variations_try,
+        "forecast_final_try": b.forecast_final_try,
+    }
+
+
 def load_project_inputs(db: Session, project: Project) -> tuple[list[dict], list[dict], list[dict]]:
+    cache = _inputs_cache(db)
+    cached = cache.get(project.id)
+    if cached is not None:
+        return cached
+
     costs = db.execute(
         select(CostEntry).where(
             CostEntry.project_id == project.id,
@@ -72,18 +107,67 @@ def load_project_inputs(db: Session, project: Project) -> tuple[list[dict], list
         )
     ).scalars().all()
 
-    cost_dicts = [_cost_dict(c) for c in costs]
-    invoice_dicts = [_invoice_dict(i) for i in invoices]
-    budget_dicts = [
-        {
-            "cost_category": b.cost_category,
-            "original_budget_try": b.original_budget_try,
-            "approved_variations_try": b.approved_variations_try,
-            "forecast_final_try": b.forecast_final_try,
-        }
-        for b in budgets
-    ]
-    return cost_dicts, invoice_dicts, budget_dicts
+    result = (
+        [_cost_dict(c) for c in costs],
+        [_invoice_dict(i) for i in invoices],
+        [_budget_dict(b) for b in budgets],
+    )
+    cache[project.id] = result
+    return result
+
+
+def prime_project_inputs(db: Session, projects) -> None:
+    """Batch-load inputs for many projects in 3 queries (not 3×N) and populate the
+    per-session cache, so the following ``load_project_inputs``/``project_financials``
+    calls are query-free. Used by the project list + company dashboard to kill the
+    N+1. No-op for projects already cached."""
+    cache = _inputs_cache(db)
+    ids = [p.id for p in projects if p.id not in cache]
+    if not ids:
+        return
+
+    costs_by: dict = defaultdict(list)
+    for c in db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id.in_(ids),
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+        )
+    ).scalars().all():
+        costs_by[c.project_id].append(_cost_dict(c))
+
+    inv_by: dict = defaultdict(list)
+    for i in db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id.in_(ids), ClientInvoice.is_deleted.is_(False)
+        )
+    ).scalars().all():
+        inv_by[i.project_id].append(_invoice_dict(i))
+
+    bud_by: dict = defaultdict(list)
+    for b in db.execute(
+        select(BudgetLineItem).where(
+            BudgetLineItem.project_id.in_(ids), BudgetLineItem.is_deleted.is_(False)
+        )
+    ).scalars().all():
+        bud_by[b.project_id].append(_budget_dict(b))
+
+    for pid in ids:
+        cache[pid] = (costs_by.get(pid, []), inv_by.get(pid, []), bud_by.get(pid, []))
+
+
+@event.listens_for(Session, "after_flush")
+def _invalidate_project_inputs_cache(session: Session, flush_context) -> None:
+    """Clear the per-session input cache whenever a cost/invoice/budget row is
+    flushed, so any read-after-write in the same session recomputes from fresh
+    rows (the cache is purely a within-request read optimization)."""
+    cache = session.info.get(_CACHE_KEY)
+    if not cache:
+        return
+    for obj in (*session.new, *session.dirty, *session.deleted):
+        if isinstance(obj, _CACHED_MODELS):
+            cache.clear()
+            return
 
 
 def project_financials(

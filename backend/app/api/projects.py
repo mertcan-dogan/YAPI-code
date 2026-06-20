@@ -52,6 +52,9 @@ def _list_visible_projects(db: Session, user: CurrentUser, only_active: bool = F
 @router.get("/projects")
 def list_projects(user: CurrentUser, db: Session = Depends(get_db)):
     projects = _list_visible_projects(db, user)
+    # Perf: batch-load every project's cost/invoice/budget rows in 3 queries (not
+    # 3×N) — project_financials below then reads them from the per-session cache.
+    fin_service.prime_project_inputs(db, projects)
     out = []
     for p in projects:
         f = fin_service.project_financials(db, p)
@@ -500,6 +503,8 @@ def company_dashboard(
 
     # Compute financials once per project and apply the RAG filter here so every
     # downstream panel (KPIs, charts, tables) reflects the same filtered set.
+    # Perf: batch-load all visible projects' inputs in 3 queries (kills the N+1).
+    fin_service.prime_project_inputs(db, visible)
     pairs = []
     for p in visible:
         f = fin_service.project_financials(db, p)
