@@ -50,6 +50,10 @@ export interface Project {
   name: string;
   project_code: string;
   project_type: string;
+  // CR: revenue/billing model — hakedis | kat_karsiligi | yap_sat | hasilat_paylasimi | maliyet_kar
+  revenue_model: string;
+  contractor_share_pct: string | null;
+  unit_count: number | null;
   client_name: string;
   client_contact: string | null;
   contract_number: string | null;
@@ -163,6 +167,154 @@ export interface ClientInvoice {
   amount_received_try: string;
   outstanding_try: string;
   document_url: string | null;
+}
+
+// --- CR-031: Satışlar & Kar/Zarar (sell-side revenue lane) ---
+export interface UnitSale {
+  id: string;
+  project_id: string;
+  project_unit_id: string | null;
+  unit_label: string;
+  unit_type: string | null;
+  floor: string | null;
+  gross_m2: string | null;
+  net_m2: string | null;
+  buyer_name: string | null;
+  sale_price_try: string;
+  sale_date: string;
+  fx_rate_usd: string | null;
+  sale_price_usd: string | null;
+  payment_type: string | null;
+  installment_note: string | null;
+  deed_status: string | null;
+  deed_date: string | null;
+  owner_side: string;
+  notes: string | null;
+}
+
+// A unit_sales GET row: the sale fields + read-time cost-allocation P&L (CR-031-A).
+export interface UnitSaleAllocation extends UnitSale {
+  basis_m2: string | null;
+  unit_cost_try: string | null;
+  unit_cost_usd: string | null;
+  pnl_try: string | null;
+  pnl_usd: string | null;
+  margin_pct: string | null;
+}
+
+export interface UnitSalesPayload {
+  basis: "net" | "gross";
+  denom_m2: string;
+  allocations: UnitSaleAllocation[];
+  totals: {
+    count: number;
+    sale_price_try: string;
+    sale_price_usd: string;
+    cost_try: string;
+    cost_usd: string;
+    pnl_try: string;
+    pnl_usd: string;
+    total_m2: string;
+    avg_price_per_m2_try: string | null;
+    margin_pct: string | null;
+  };
+  cost_total_try: string;
+  cost_total_usd: string;
+  usd_missing_count: number;
+}
+
+export interface LandownerPayment {
+  id: string;
+  payer_name: string | null;
+  committed_total_try: string | null;
+  payment_date: string;
+  amount_try: string;
+  amount_usd: string | null;
+  fx_rate_usd: string | null;
+  payment_type: string | null;
+  description: string | null;
+  notes: string | null;
+}
+
+export interface LandownerLedger {
+  payments: LandownerPayment[];
+  rollup: {
+    total_try: string;
+    total_usd: string;
+    count: number;
+    committed_total_try: string | null;
+    remaining_try: string | null;
+    pct_paid: string | null;
+    usd_missing_count: number;
+  };
+}
+
+interface PnlTrio {
+  try: string | null;
+  usd: string | null;
+  try_today: string | null;
+}
+
+export interface ProjectPnl {
+  revenue_model: string;
+  revenue_source: "sales" | "hakedis";
+  revenue_breakdown: Record<string, string>;
+  revenue_try: string;
+  revenue_usd: string;
+  cost_try: string;
+  cost_usd: string;
+  financing_try: string;
+  financing_usd: string;
+  net_excl_financing_try: string;
+  net_incl_financing_try: string;
+  net_excl_financing_usd: string;
+  net_incl_financing_usd: string;
+  margin_pct: string | null;
+  margin_incl_financing_pct: string | null;
+  usd_missing_count: number;
+  m2_analysis: {
+    gross_m2: string | null;
+    net_m2: string | null;
+    unit_count: number | null;
+    floor_count: number | null;
+    per_gross_m2: PnlTrio;
+    per_net_m2: PnlTrio;
+    per_unit: PnlTrio;
+    per_floor: PnlTrio;
+  };
+  fx_effect: {
+    today_rate: string | null;
+    cost_try_original: string;
+    cost_try_today: string | null;
+    fx_effect_try: string | null;
+    fx_effect_pct: string | null;
+  };
+  split?: {
+    contractor_share_pct: string | null;
+    contractor: { sales_try: string; sales_usd: string; allocated_cost_try: string | null };
+    landowner: { sales_try: string; sales_usd: string; payments_try: string; payments_usd: string; allocated_cost_try: string | null };
+  };
+}
+
+export interface InvestmentReturn {
+  irr_try_pct: string | null;
+  irr_usd_pct: string | null;
+  roi_pct: string | null;
+  net_profit_try: string;
+  total_cost_try: string;
+  duration_months: number | null;
+  profit_per_net_m2_try: string | null;
+  profit_per_unit_try: string | null;
+  revenue_source: "sales" | "hakedis";
+  yearly: {
+    year: number;
+    inflow_try: string;
+    outflow_try: string;
+    net_try: string;
+    inflow_usd: string;
+    outflow_usd: string;
+    net_usd: string;
+  }[];
 }
 
 export interface Subcontractor {
