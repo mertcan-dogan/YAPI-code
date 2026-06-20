@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiPost } from "@/lib/api";
+import { cachedGet } from "@/lib/requestCache";
 import { useProjectStore } from "@/store/project";
 import { AIDisclaimer } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -41,7 +42,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     setQ("");
     setAnswer(null);
     setSel(0);
-    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+    cachedGet<{ id: string; name: string; status: string }[]>("/projects")
       .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active").map((p) => ({ id: p.id, name: p.name }))))
       .catch(() => setProjects([]));
     const t = setTimeout(() => inputRef.current?.focus(), 40);

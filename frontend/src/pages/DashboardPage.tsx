@@ -11,6 +11,7 @@ import { LoadError } from "@/components/EmptyState";
 import { Modal } from "@/components/ui";
 import { useFetch } from "@/hooks/useFetch";
 import { apiGet } from "@/lib/api";
+import { cachedGet } from "@/lib/requestCache";
 import { useAuth } from "@/store/auth";
 import { useAISummaryStore } from "@/store/aiSummary";
 import { useDashboardFilters } from "@/store/dashboardFilters";
@@ -90,7 +91,7 @@ export default function DashboardPage() {
   const [approvalsByKind, setApprovalsByKind] = useState<{ faturalar: number; ekIsler: number } | null>(null);
   useEffect(() => {
     if (!isDirector) return; // /approvals is director-scoped → others see "—"
-    apiGet<any[]>("/approvals")
+    cachedGet<any[]>("/approvals")
       .then((r) => {
         const items = (r.data ?? []) as { kind?: string }[];
         setApprovalsCount(items.length);

@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
-import { apiGet } from "@/lib/api";
+import { cachedGet } from "@/lib/requestCache";
 import { useProjectStore } from "@/store/project";
 import { NotificationBell } from "@/components/NotificationBell";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -168,11 +168,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     : activeProjectName ?? "Proje";
 
   React.useEffect(() => {
-    if (isDirector) apiGet<any[]>("/approvals").then(({ data }) => setApprovalCount(data?.length ?? 0)).catch(() => setApprovalCount(0));
+    if (isDirector) cachedGet<any[]>("/approvals").then(({ data }) => setApprovalCount(data?.length ?? 0)).catch(() => setApprovalCount(0));
   }, [isDirector, pathname]);
 
   React.useEffect(() => {
-    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+    cachedGet<{ id: string; name: string; status: string }[]>("/projects")
       .then(({ data }) => setProjects(data ?? []))
       .catch(() => setProjects([]));
   }, [params.id]);
@@ -402,7 +402,7 @@ function DashboardHeaderControls() {
   const { range, setRange } = useDashboardFilters();
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([]);
   React.useEffect(() => {
-    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+    cachedGet<{ id: string; name: string; status: string }[]>("/projects")
       .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active").map((p) => ({ id: p.id, name: p.name }))))
       .catch(() => setProjects([]));
   }, []);
