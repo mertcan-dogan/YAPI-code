@@ -199,3 +199,27 @@ def snapshot_invoice_usd(db: Session, inv) -> bool:
     """(Re)compute a hakediş's USD snapshot at its relevant date. Provisional until
     paid; re-snapshots at the receipt-date rate once paid (the lock)."""
     return _apply_usd_snapshot(db, inv, relevant_date_for_invoice(inv))
+
+
+def _apply_usd_snapshot_fields(
+    db: Session, obj, relevant: date, *, try_field: str, usd_field: str
+) -> bool:
+    """Like ``_apply_usd_snapshot`` but for rows whose TRY/USD columns are not the
+    cost/invoice ``amount_try``/``amount_usd`` pair (e.g. a unit sale's
+    ``sale_price_try``/``sale_price_usd``). Same rule: derive USD = TRY ÷ rate at
+    ``relevant``; leave USD untouched + never raise when no rate is available."""
+    rate = rate_as_of(db, relevant)
+    if rate is None or rate == 0:
+        return False
+    obj.fx_rate_usd = _q4(rate)
+    setattr(obj, usd_field, money(D(getattr(obj, try_field)) / rate))
+    return True
+
+
+def snapshot_unit_sale_usd(db: Session, sale) -> bool:
+    """(Re)compute a unit sale's USD snapshot at its ``sale_date`` (CR-031-A,
+    CR-014 pattern). A sale is a point-in-time event, so the rate is fixed at the
+    sale date (no later 'lock' like cost/invoice payment)."""
+    return _apply_usd_snapshot_fields(
+        db, sale, sale.sale_date, try_field="sale_price_try", usd_field="sale_price_usd"
+    )

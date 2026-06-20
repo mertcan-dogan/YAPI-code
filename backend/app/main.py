@@ -56,6 +56,7 @@ from app.api import (
     reports,
     settings as settings_router,
     subcontractors,
+    unit_sales,
     uploads,
     users,
     variations,
@@ -196,5 +197,6 @@ for r in (
     notifications.router,
     workspace.router,
     vendors.router,
+    unit_sales.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

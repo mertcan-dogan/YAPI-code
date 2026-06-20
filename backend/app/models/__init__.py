@@ -24,6 +24,7 @@ from app.models.ai_feedback import AIFeedback
 from app.models.vendor import Vendor, VendorAlias
 from app.models.workspace_item import WorkspaceItem
 from app.models.fx_rate import FxRate
+from app.models.unit_sale import UnitSale
 
 __all__ = [
     "Base",
@@ -52,4 +53,5 @@ __all__ = [
     "VendorAlias",
     "WorkspaceItem",
     "FxRate",
+    "UnitSale",
 ]

@@ -207,6 +207,18 @@ COST_PAYMENT_STATUSES = ["unpaid", "paid", "overdue", "partial"]
 INVOICE_PAYMENT_STATUSES = ["unpaid", "partial", "paid", "disputed"]
 INVOICE_TYPES = ["hakedis", "advance", "variation", "final"]
 SUBCONTRACTOR_STATUSES = ["active", "completed", "disputed", "terminated"]
+
+# CR-031-A: which side's unit a sale belongs to (sell-side revenue split).
+OWNER_SIDE_YUKLENICI = "yuklenici"
+OWNER_SIDE_ARSA_SAHIBI = "arsa_sahibi"
+OWNER_SIDES = [OWNER_SIDE_YUKLENICI, OWNER_SIDE_ARSA_SAHIBI]
+
+# CR-031: revenue models whose revenue is sell-side (unit sales + landowner
+# payments), NOT hakediş invoices (§0.2 — revenue is revenue-model-aware and
+# never summed across both sources).
+SELL_SIDE_REVENUE_MODELS = {"kat_karsiligi", "yap_sat", "hasilat_paylasimi"}
+# Landowner ledger is only meaningful for share models (kat karşılığı / hasılat).
+LANDOWNER_REVENUE_MODELS = {"kat_karsiligi", "hasilat_paylasimi"}
 OWNERSHIP_TYPES = ["owned", "rented"]
 RATE_UNITS = ["day", "month"]
 
@@ -243,4 +255,7 @@ AUDITED_TABLES = {
     "equipment_log",
     # CR-024-A: AI answer feedback (👍/👎) — append-only trust signal.
     "ai_feedback",
+    # CR-031: sell-side revenue lane (unit sales + landowner payments).
+    "unit_sales",
+    "landowner_payments",
 }
