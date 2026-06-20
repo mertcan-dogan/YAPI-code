@@ -125,23 +125,43 @@ def agent(
     messages = [{"role": m.role, "content": m.content} for m in payload.messages]
 
     if stream:
+        import anyio
         from fastapi.responses import StreamingResponse
 
         company_id, uid, pid = user.company_id, user.id, payload.project_id
-
         scope = payload.scope
 
-        def event_stream():
+        # ASYNC generator (CR-011 streaming fix): an async iterator is driven in
+        # the event loop, NOT via Starlette's iterate_in_threadpool — so it never
+        # parks a threadpool worker (a sync StreamingResponse generator can leak a
+        # worker when the client doesn't drain it). The blocking agent loop is
+        # pulled one event at a time off the loop via anyio.to_thread, keeping the
+        # loop responsive; the generator is always closed on completion/disconnect.
+        async def event_stream():
+            gen = agent_service.run_agent_stream(
+                db, company_id, messages, project_id=pid, user_id=uid, scope=scope
+            )
+            sentinel = object()
+
+            def _next():
+                try:
+                    return next(gen)
+                except StopIteration:
+                    return sentinel
+
             try:
-                for ev in agent_service.run_agent_stream(
-                    db, company_id, messages, project_id=pid, user_id=uid, scope=scope
-                ):
+                while True:
+                    ev = await anyio.to_thread.run_sync(_next)
+                    if ev is sentinel:
+                        break
                     yield agent_service.sse_event(ev)
             except ai_service.AIUnavailable:
                 # Never lose the answer: emit a degraded final event (§1.1 fallback).
                 yield agent_service.sse_event(
                     {"type": "final", "data": agent_service.degraded_response()}
                 )
+            finally:
+                gen.close()
 
         return StreamingResponse(
             event_stream(),
