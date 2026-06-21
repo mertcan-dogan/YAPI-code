@@ -23,35 +23,38 @@ _DAYS_PER_YEAR = 365.0
 # --------------------------------------------------------------------------- #
 # CR-031-A — per-unit cost allocation + P&L
 # --------------------------------------------------------------------------- #
-def _basis_for(units: list[dict]) -> str:
-    """Allocation basis is net m² when EVERY unit has a positive net m²; otherwise
-    fall back to gross m² for the whole project (§1.2 — one consistent basis)."""
-    if units and all(D(u.get("net_m2")) > ZERO for u in units):
-        return "net"
-    return "gross"
-
-
 def allocate_unit_costs(
-    units: list[dict], total_cost_try, total_cost_usd
+    units: list[dict], total_cost_try, total_cost_usd,
+    project_net_m2=None, project_gross_m2=None,
 ) -> dict:
-    """Allocate the authoritative construction cost across sold units by m² share
-    (§1.2): ``unit_cost = total_cost × unit_m2 / Σ units_m2``.
+    """Allocate the authoritative construction cost across SOLD units by each
+    unit's share of the PROJECT's total m² (§1.2):
+    ``unit_cost = total_cost × unit_m2 / project_total_m2``.
 
-    Basis = net m² (gross fallback when any net is missing). The quantized
-    per-unit costs sum EXACTLY to the total (the final unit carries the rounding
-    remainder), so the split is 100% of cost — never a penny over/under. Returns
-    each unit enriched with cost/pnl/margin plus the basis used and a totals row.
-    Degenerate input (no units / zero m²) → empty allocations, null totals.
+    The denominator is the PROJECT total (net m² preferred, gross fallback) — NOT
+    Σ of the sold units. So when units are still unsold, Σ(per-unit cost) is a
+    PROPER subset of the cost (== the total only when the sold units span the
+    whole project's m²); a single sale never absorbs 100% of cost. Net basis is
+    used when every sold unit has a positive net m² AND the project carries a net
+    total; otherwise gross. No remainder is redistributed — each unit gets exactly
+    its own m² share. Degenerate input (no units / no project area) → null
+    cost/pnl per unit, basis exposed.
     """
     total_try = D(total_cost_try)
     total_usd = D(total_cost_usd)
-    basis = _basis_for(units)
-    m2_key = "net_m2" if basis == "net" else "gross_m2"
+    net_total = D(project_net_m2) if project_net_m2 is not None else ZERO
+    gross_total = D(project_gross_m2) if project_gross_m2 is not None else ZERO
 
-    denom = sum((D(u.get(m2_key)) for u in units), ZERO)
+    # One consistent basis: net when every sold unit has net m² AND the project
+    # carries a net total to divide by; otherwise the project's gross total.
+    if units and net_total > ZERO and all(D(u.get("net_m2")) > ZERO for u in units):
+        basis, m2_key, denom = "net", "net_m2", net_total
+    else:
+        basis, m2_key, denom = "gross", "gross_m2", gross_total
+
     rows: list[dict] = []
     if not units or denom <= ZERO:
-        # Can't allocate (no area) — return units with null cost/pnl, basis exposed.
+        # Can't allocate (no project area) — null cost/pnl, basis exposed.
         for u in units:
             rows.append({**u, "basis_m2": None, "unit_cost_try": None,
                          "unit_cost_usd": None, "pnl_try": None, "pnl_usd": None,
@@ -59,21 +62,11 @@ def allocate_unit_costs(
         return {"basis": basis, "denom_m2": str(money(denom)), "allocations": rows,
                 "totals": _sales_totals(rows, basis)}
 
-    n = len(units)
-    acc_try = ZERO
-    acc_usd = ZERO
-    for i, u in enumerate(units):
+    for u in units:
         basis_m2 = D(u.get(m2_key))
         share = safe_div(basis_m2, denom)
-        if i < n - 1:
-            unit_cost_try = money(total_try * share)
-            unit_cost_usd = money(total_usd * share)
-        else:
-            # Last unit carries the remainder so Σ == total exactly.
-            unit_cost_try = money(total_try - acc_try)
-            unit_cost_usd = money(total_usd - acc_usd)
-        acc_try += unit_cost_try
-        acc_usd += unit_cost_usd
+        unit_cost_try = money(total_try * share)
+        unit_cost_usd = money(total_usd * share)
 
         sale_try = D(u.get("sale_price_try"))
         has_usd = u.get("sale_price_usd") is not None

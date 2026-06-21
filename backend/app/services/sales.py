@@ -81,17 +81,38 @@ def _sale_dict(s: UnitSale) -> dict:
     }
 
 
+def _project_total_m2(db: Session, project: Project) -> tuple:
+    """The PROJECT's total net & gross m² — the cost-allocation denominator (§1.2),
+    NOT Σ of the sold units. Prefer the headline ``construction_net_m2`` /
+    ``construction_gross_m2`` figures; fall back to the unit-schedule sum
+    (Σ net/gross_m2_each × count) only when a headline figure is absent."""
+    from app.services import units as units_service
+
+    agg = units_service.schedule_aggregates(project.units)
+    net = project.construction_net_m2
+    if net is None or D(net) <= 0:
+        net = agg["total_sellable_net_m2"]
+    gross = project.construction_gross_m2
+    if gross is None or D(gross) <= 0:
+        gross = agg["total_sellable_gross_m2"]
+    return net, gross
+
+
 def unit_sales_pnl(db: Session, project: Project, today: date | None = None) -> dict:
     """Per-unit cost allocation + P&L over the project's unit sales (§1.2).
 
     Reads the authoritative construction cost, allocates it across sold units by
-    m² share, returns each sale enriched with cost/pnl/margin + a totals row and
-    the basis used (net / gross). Empty sales → empty allocations, zeroed totals.
+    each unit's share of the PROJECT's total m² (not Σ sold units), returns each
+    sale enriched with cost/pnl/margin + a totals row and the basis used (net /
+    gross). Empty sales → empty allocations, zeroed totals.
     """
     sales = list_unit_sales(db, project)
     costs = construction_cost_totals(db, project, today=today)
     units = [_sale_dict(s) for s in sales]
-    result = pnl_calc.allocate_unit_costs(units, costs["total_try"], costs["total_usd"])
+    project_net_m2, project_gross_m2 = _project_total_m2(db, project)
+    result = pnl_calc.allocate_unit_costs(
+        units, costs["total_try"], costs["total_usd"], project_net_m2, project_gross_m2,
+    )
     result["cost_total_try"] = str(costs["total_try"])
     result["cost_total_usd"] = str(costs["total_usd"])
     result["usd_missing_count"] = costs["usd_missing_count"]
