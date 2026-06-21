@@ -397,16 +397,20 @@ def cashflow_series(db: Session, project: Project) -> tuple[list, list]:
         if amt_usd is not None:
             usd_flows.append((d, sign * D(amt_usd)))
 
-    # Outflows — authoritative cost rows (live, non-pending), VAT-inclusive TRY.
+    # Outflows — authoritative cost rows (live, non-pending). Uses ex-VAT
+    # ``amount_try`` so the dated series sums to the SAME basis as the P&L Maliyet
+    # (forecast_final_cost, built from ex-VAT ``amount_try``). Using the
+    # VAT-inclusive ``total_with_vat_try`` here overstated IRR outflows by the VAT
+    # rate vs. the P&L cost line (input VAT is recoverable / pass-through).
     costs = db.execute(
-        select(CostEntry.entry_date, CostEntry.total_with_vat_try, CostEntry.amount_usd).where(
+        select(CostEntry.entry_date, CostEntry.amount_try, CostEntry.amount_usd).where(
             CostEntry.project_id == project.id,
             CostEntry.is_deleted.is_(False),
             CostEntry.pending_approval.is_(False),
         )
     ).all()
-    for entry_date, twv, amt_usd in costs:
-        add(entry_date, twv, amt_usd, D(-1))
+    for entry_date, amt_try, amt_usd in costs:
+        add(entry_date, amt_try, amt_usd, D(-1))
 
     # Inflows — revenue-model-aware.
     if project.revenue_model in SELL_SIDE_REVENUE_MODELS:

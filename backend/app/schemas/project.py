@@ -219,6 +219,11 @@ class ProjectOut(ORMModel):
     project_code: str
     project_type: str
     custom_project_type: str | None
+    # CR-031: revenue/billing model drives the Satışlar & Kar/Zarar page's
+    # sell-side vs. hakediş gating (banner + editors). Must be serialized or the
+    # frontend silently defaults every project to "hakedis".
+    revenue_model: str
+    contractor_share_pct: Decimal | None = None
     client_name: str
     client_contact: str | None
     contract_number: str | None

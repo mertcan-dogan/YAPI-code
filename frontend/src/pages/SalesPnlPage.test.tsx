@@ -105,6 +105,20 @@ describe("SalesPnlPage — revenue-model awareness", () => {
     expect(screen.getByText("Kur Etkisi")).toBeInTheDocument();
   });
 
+  it("hakediş: P&L 'Gelir kaynağı' label reads Hakediş (maps from revenue_source)", () => {
+    setProject("hakedis");
+    h.dashboard = { data: { pnl: pnl("hakedis"), investment_return: { ...IR, revenue_source: "hakedis" } }, meta: null, loading: false, error: null, refetch: () => {} };
+    render(createElement(SalesPnlPage));
+    expect(screen.getByText("Gelir kaynağı: Hakediş")).toBeInTheDocument();
+    expect(screen.queryByText("Gelir kaynağı: Satış + Arsa Sahibi")).not.toBeInTheDocument();
+  });
+
+  it("sell-side: P&L 'Gelir kaynağı' label reads Satış + Arsa Sahibi", () => {
+    setProject("kat_karsiligi");
+    render(createElement(SalesPnlPage));
+    expect(screen.getByText("Gelir kaynağı: Satış + Arsa Sahibi")).toBeInTheDocument();
+  });
+
   it("colors per-unit profit green and loss red", () => {
     setProject("kat_karsiligi");
     render(createElement(SalesPnlPage));
