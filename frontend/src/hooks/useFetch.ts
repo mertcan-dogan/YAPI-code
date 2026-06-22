@@ -5,13 +5,18 @@ import { cachedGet } from "@/lib/requestCache";
 // Perf: the initial load goes through the shared request cache (so a page and the
 // global chrome that hit the same endpoint share ONE request). A user-triggered
 // refetch() forces a fresh fetch (and refreshes the cache).
-export function useFetch<T = any>(url: string | null, params?: Record<string, unknown>) {
+export function useFetch<T = any>(
+  url: string | null,
+  params?: Record<string, unknown>,
+  opts?: { timeout?: number }
+) {
   const [data, setData] = useState<T | null>(null);
   const [meta, setMeta] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const paramsKey = JSON.stringify(params ?? {});
+  const timeout = opts?.timeout;
 
   const load = useCallback(
     async (force: boolean) => {
@@ -19,7 +24,9 @@ export function useFetch<T = any>(url: string | null, params?: Record<string, un
       setLoading(true);
       setError(null);
       try {
-        const res = await cachedGet<T>(url, params, { force });
+        // `timeout` bounds a hanging request so the page can show LoadError+retry
+        // instead of an infinite skeleton (silent-load-failure).
+        const res = await cachedGet<T>(url, params, { force, timeout });
         setData(res.data);
         setMeta(res.meta ?? null);
       } catch (e: any) {
@@ -29,7 +36,7 @@ export function useFetch<T = any>(url: string | null, params?: Record<string, un
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [url, paramsKey]
+    [url, paramsKey, timeout]
   );
 
   useEffect(() => {

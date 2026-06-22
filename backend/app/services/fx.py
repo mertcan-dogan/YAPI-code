@@ -127,13 +127,19 @@ def latest_rate(db: Session) -> Decimal | None:
     return _last_known(db)
 
 
-def rate_as_of(db: Session, d: date, *, today: date | None = None) -> Decimal | None:
+def rate_as_of(db: Session, d: date, *, today: date | None = None, allow_fetch: bool = True) -> Decimal | None:
     """Return the USD/TRY rate effective for ``d`` (CR-014 §1.2, the core lookup).
 
     Walks back from ``d`` to the most recent business-day rate, fetching+caching
     lazily. On a fetch FAILURE, falls back to the last known cached rate and logs
     it — never raises, so callers' saves are never blocked. Returns None only when
     nothing is available at all (empty table + no reachable feed).
+
+    ``allow_fetch=False`` makes this CACHE-ONLY: it never touches the network and
+    so never blocks a web request on a synchronous TCMB call. A date with no cached
+    rate resolves to the most recent cached rate on/before it (``_last_known``).
+    Live TCMB fetching belongs to write-time snapshots and the FX-backfill job, NOT
+    read-path aggregations like the dashboard (CR-014 §1.2; perf).
     """
     cur = d
     for _ in range(MAX_WALK_BACK_DAYS + 1):
@@ -141,8 +147,9 @@ def rate_as_of(db: Session, d: date, *, today: date | None = None) -> Decimal | 
         if cached is not None:
             return cached
         # Live fetch is gated so tests never hit the network; the cache-based
-        # walk-back above still resolves seeded rates with it off.
-        if settings.fx_live_fetch:
+        # walk-back above still resolves seeded rates with it off. Cache-only
+        # callers (allow_fetch=False) skip the network entirely.
+        if allow_fetch and settings.fx_live_fetch:
             try:
                 fetched = _fetch_tcmb_rate(cur, today)
             except Exception as exc:  # noqa: BLE001 — degrade on ANY transport/parse error
@@ -158,9 +165,38 @@ def rate_as_of(db: Session, d: date, *, today: date | None = None) -> Decimal | 
 
     # Walked the whole window with no published rate — use the last known cache.
     fallback = _last_known(db, on_or_before=d)
-    logger.warning("No TCMB rate within %s days of %s; using last known %s",
-                   MAX_WALK_BACK_DAYS, d, fallback)
+    if allow_fetch:
+        logger.warning("No TCMB rate within %s days of %s; using last known %s",
+                       MAX_WALK_BACK_DAYS, d, fallback)
     return fallback
+
+
+def cached_rates_on_or_before(db: Session, dates) -> dict:
+    """Batched CACHE-ONLY rate resolution: for each date in ``dates`` return the
+    most recent cached USD/TRY rate on or before it. ONE query, never fetches —
+    equivalent to calling ``rate_as_of(..., allow_fetch=False)`` per date but
+    without the per-date round-trips (and without the day-by-day walk-back). A date
+    with no cached rate on/before it maps to ``None``.
+    """
+    import bisect
+
+    uniq = sorted({d for d in dates if d is not None})
+    if not uniq:
+        return {}
+    rows = db.execute(
+        select(FxRate.rate_date, FxRate.usd_try)
+        .where(FxRate.rate_date <= uniq[-1])
+        .order_by(FxRate.rate_date)
+    ).all()
+    rate_dates = [r[0] for r in rows]
+    rate_vals = [r[1] for r in rows]
+    out: dict = {}
+    for d in dates:
+        if d is None:
+            continue
+        i = bisect.bisect_right(rate_dates, d) - 1
+        out[d] = rate_vals[i] if i >= 0 else None
+    return out
 
 
 # --------------------------------------------------------------------------- #

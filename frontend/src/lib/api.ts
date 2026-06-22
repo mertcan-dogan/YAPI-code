@@ -35,7 +35,11 @@ api.interceptors.response.use(
   (res) => res,
   (error) => {
     const env = error.response?.data;
-    const message = env?.error?.message ?? "Beklenmeyen bir hata oluştu";
+    // A timeout/network abort has no response — give it a clear, retryable message.
+    const isTimeout = error.code === "ECONNABORTED" || /timeout/i.test(error.message ?? "");
+    const message =
+      env?.error?.message ??
+      (isTimeout ? "İstek zaman aşımına uğradı. Lütfen tekrar deneyin." : "Beklenmeyen bir hata oluştu");
     const field = env?.error?.field;
     const code = env?.error?.code;
     const status = error.response?.status;
@@ -51,9 +55,15 @@ api.interceptors.response.use(
   }
 );
 
-// Helper that unwraps { success, data, meta }.
-export async function apiGet<T = any>(url: string, params?: Record<string, unknown>): Promise<{ data: T; meta?: any }> {
-  const res = await api.get(url, { params });
+// Helper that unwraps { success, data, meta }. An optional `timeout` (ms) bounds
+// a hanging request so the caller can surface a retryable error instead of
+// spinning forever (axios rejects with ECONNABORTED on timeout).
+export async function apiGet<T = any>(
+  url: string,
+  params?: Record<string, unknown>,
+  config?: { timeout?: number }
+): Promise<{ data: T; meta?: any }> {
+  const res = await api.get(url, { params, ...config });
   return { data: res.data.data, meta: res.data.meta };
 }
 

@@ -169,6 +169,17 @@ describe("ProjectDashboardPage redesign", () => {
     expect(screen.getByText(/Maliyet dağılımı yüklenemedi/)).toBeInTheDocument();
   });
 
+  it("renders LoadError+retry (not an infinite skeleton) when the dashboard load fails/times out", () => {
+    const refetch = vi.fn();
+    h.dashboard = { data: null, meta: null, loading: false, error: "İstek zaman aşımına uğradı.", refetch };
+    render(createElement(ProjectDashboardPage));
+    // The retry affordance is shown; the normal story tables are NOT rendered.
+    expect(screen.getByText("Tekrar Dene")).toBeInTheDocument();
+    expect(screen.queryByText("Gelir & Tahsilat")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Tekrar Dene"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   // --- Display fixes: divide-by-zero + neutral health ---------------------- #
   it("renders '—' (not %0,0) in the % columns when the denominators are 0", () => {
     // Headline budget is 0 (real project): no Sözleşme/Revize base → no proportion.

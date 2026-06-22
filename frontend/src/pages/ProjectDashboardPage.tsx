@@ -119,8 +119,12 @@ export default function ProjectDashboardPage() {
     const t = setTimeout(() => setHighlightCostId(null), 2500);
     return () => clearTimeout(t);
   }, [searchParams, setSearchParams]);
-  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock; milestones?: MilestonesBlock }>(
-    `/projects/${id}/dashboard`
+  const { data, loading, error, refetch } = useFetch<{ project: Project; financials: ProjectFinancials; cashflow: any[]; forecast_at_completion: FAC; margin_bridge: Record<string, string>; usd?: UsdBlock; residential?: ResidentialAggregates; financing?: FinancingBlock; milestones?: MilestonesBlock; degraded_sections?: string[] }>(
+    `/projects/${id}/dashboard`,
+    undefined,
+    // Bound a hanging request so a stalled load shows LoadError+retry rather than
+    // an infinite skeleton (the silent-load-failure class).
+    { timeout: 20000 }
   );
   const showUsd = useShowUsd(); // CR-014-D
   const p = data?.project;
