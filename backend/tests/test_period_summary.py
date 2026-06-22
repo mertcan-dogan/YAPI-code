@@ -117,6 +117,31 @@ def test_dates_outside_range_excluded(client, seed, db):
     assert d["collected_try"] == "0.00"
 
 
+def test_committed_and_forecast_excluded_from_period_cost(client, seed, db):
+    # CR-023.1: "Maliyet (dönem)" is actual-only — a committed (or forecast) entry
+    # in the window must NOT inflate it (it equals Gerçekleşen Maliyet).
+    company, project = seed["a"]["company"], seed["a"]["project"]
+    _DIR_CACHE[company.id] = seed["a"]["users"][ROLE_DIRECTOR].id
+    pid = _login(client, seed)
+    _cost(db, project, company, entry_date=date(2025, 3, 10), twv="100000")  # actual
+    db.add(CostEntry(
+        project_id=project.id, company_id=company.id, created_by=_dir_id(company),
+        entry_date=date(2025, 3, 12), cost_category="other", entry_type="committed",
+        amount_try=Decimal("120000"), vat_rate=Decimal("0"), vat_amount_try=Decimal("0"),
+        total_with_vat_try=Decimal("120000"), payment_status="unpaid",
+    ))
+    db.add(CostEntry(
+        project_id=project.id, company_id=company.id, created_by=_dir_id(company),
+        entry_date=date(2025, 3, 14), cost_category="other", entry_type="forecast",
+        amount_try=Decimal("50000"), vat_rate=Decimal("0"), vat_amount_try=Decimal("0"),
+        total_with_vat_try=Decimal("50000"), payment_status="unpaid",
+    ))
+    db.commit()
+    d = _summary(client, pid, "2025-03-01", "2025-03-31").json()["data"]
+    assert d["cost_incurred_try"] == "100000.00"  # committed 120k + forecast 50k excluded
+    assert d["cost_count"] == 1
+
+
 def test_from_after_to_is_422(client, seed):
     pid = _login(client, seed)
     r = _summary(client, pid, "2025-06-01", "2025-03-01")

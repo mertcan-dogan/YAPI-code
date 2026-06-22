@@ -257,6 +257,9 @@ def period_summary(db: Session, project: Project, from_date: date, to_date: date
             CostEntry.company_id == project.company_id,
             CostEntry.is_deleted.is_(False),
             CostEntry.pending_approval.is_(False),  # match dashboard exclusion
+            # CR-023.1: actual-only, so "Maliyet (dönem)" equals Gerçekleşen Maliyet
+            # and never counts committed/forecast (those have their own figures).
+            CostEntry.entry_type == "actual",
             CostEntry.entry_date >= from_date,
             CostEntry.entry_date <= to_date,
         )

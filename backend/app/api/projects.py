@@ -639,11 +639,14 @@ def company_dashboard(
             }
         )
         # Per-project actual vs forecast vs contract (Portföy Performansı chart).
+        # CR-023.1: include open committed so the chart's Taahhüt series is real
+        # (matches the KPI headline = açık taahhüt).
         portfolio_performance.append(
             {
                 "project": p.name,
                 "contract_try": str(f["contract_value_try"]),
                 "actual_try": str(f["total_actual_try"]),
+                "committed_try": str(f["total_open_committed_try"]),
                 "forecast_final_try": str(f["forecast_final_cost_try"]),
             }
         )

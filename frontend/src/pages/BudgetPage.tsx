@@ -128,7 +128,11 @@ export default function BudgetPage() {
       align: "right",
       render: (r) => <EditableMoneyCell value={r.revised_budget_try} onSave={(v) => editRevised(r.cost_category, v)} />,
     },
-    { key: "committed_try", header: "Taahhüt", align: "right", render: (r) => formatCurrency(r.committed_try) },
+    // CR-023.1: "Taahhüt" = exposure (gerçekleşen + açık taahhüt), the textbook
+    // committed-cost figure. The row adds up: Taahhüt = Faturalanan + Açık Taahhüt
+    // (no double-count). The legacy gross committed_try stays in the payload for
+    // reports/agent_tools but is no longer displayed.
+    { key: "exposure_try", header: "Taahhüt", align: "right", render: (r) => formatCurrency(r.exposure_try ?? r.committed_try) },
     // CR-023: açık taahhüt = committed minus what's already been invoiced against it.
     { key: "open_committed_try", header: "Açık Taahhüt", align: "right", render: (r) => <span className="text-accent" title="Taahhüt edilen ama henüz faturalanmamış tutar">{formatCurrency(r.open_committed_try ?? "0")}</span> },
     { key: "invoiced_try", header: "Faturalanan", align: "right", render: (r) => formatCurrency(r.invoiced_try) },
@@ -388,8 +392,9 @@ export default function BudgetPage() {
         <div className="mt-1 flex flex-wrap items-center gap-x-8 gap-y-1 rounded-md bg-primary px-4 py-3 text-sm text-white">
           <span className="font-semibold">Toplam</span>
           <span className="tabular">Revize Bütçe: <b>{formatCurrency(budget.data.totals.revised_budget_try)}</b></span>
-          <span className="tabular">Taahhüt: <b>{formatCurrency(budget.data.totals.committed_try)}</b></span>
-          {/* CR-023: açık taahhüt (committed − faturalanmış) + toplam maruziyet. */}
+          {/* CR-023.1: Taahhüt total = exposure (gerçekleşen + açık) — reconciles
+              with Faturalanan + Açık Taahhüt, no double-count. */}
+          <span className="tabular">Taahhüt: <b>{formatCurrency(budget.data.totals.exposure_try ?? budget.data.totals.committed_try)}</b></span>
           <span className="tabular">Açık Taahhüt: <b>{formatCurrency(budget.data.totals.open_committed_try ?? "0")}</b></span>
           <span className="tabular">Faturalanan: <b>{formatCurrency(budget.data.totals.invoiced_try)}</b></span>
           <span className="tabular">Ödenen: <b>{formatCurrency(budget.data.totals.paid_try)}</b></span>
