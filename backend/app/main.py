@@ -37,6 +37,8 @@ from app.api import (
     ai,
     ai_conversations,
     ai_import,
+    automations,
+    automations_internal,
     document_capture,
     approvals,
     audit,
@@ -200,5 +202,7 @@ for r in (
     vendors.router,
     unit_sales.router,
     landowner_payments.router,
+    automations.router,
+    automations_internal.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

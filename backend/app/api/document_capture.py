@@ -153,6 +153,171 @@ def confirm_document(
     return success({"id": str(entry.id), "cost_category": entry.cost_category})
 
 
+# --- CR-012 Template A — document auto-file (event-driven, on upload) ---------
+
+def _iso_date(v) -> str | None:
+    """Best-effort normalise an AI date string to YYYY-MM-DD (or None)."""
+    if not v:
+        return None
+    s = str(v).strip()
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    try:
+        from datetime import datetime as _dt
+
+        for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return _dt.strptime(s[:10], fmt).date().isoformat()
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _normalize_autofile_fields(destination: str, raw: dict) -> dict:
+    """Shape the AI ``fields`` into the exact keys the approval applier expects
+    (same keys the manual confirm endpoints use), so apply stays byte-identical."""
+    if destination == "cost":
+        return {
+            "entry_date": _iso_date(raw.get("invoice_date")),
+            "cost_category": raw.get("cost_category") or "material_other",
+            "supplier_name": raw.get("supplier_name"),
+            "invoice_number": raw.get("invoice_number"),
+            "description": raw.get("description"),
+            "amount_try": raw.get("amount_try"),
+            "vat_rate": raw.get("vat_rate", 20),
+            "payment_due_date": _iso_date(raw.get("due_date")),
+            "payment_status": "unpaid",
+        }
+    # client_invoice
+    inv_date = _iso_date(raw.get("invoice_date"))
+    return {
+        "invoice_number": raw.get("invoice_number"),
+        "invoice_date": inv_date,
+        "due_date": _iso_date(raw.get("due_date")) or inv_date,
+        "hakkedis_period": raw.get("hakkedis_period"),
+        "description": raw.get("description"),
+        "amount_try": raw.get("amount_try"),
+        "vat_rate": raw.get("vat_rate", 20),
+        "retention_amount_try": raw.get("retention_amount_try", 0),
+    }
+
+
+_DEST_LABELS = {"cost": "Gider", "client_invoice": "Hakediş"}
+
+
+@router.post("/document-capture/auto-file")
+async def auto_file_document(user: CurrentUser, db: Session = Depends(get_db), file: UploadFile = File(...)):
+    """Auto-file mode: classify the document and, when the automation is enabled and
+    the AI is confident enough about an in-subset destination, create a *pending*
+    approval proposal (the automation never writes the record — a human approves).
+    Otherwise fall back to the manual smart-capture preview (no approval created)."""
+    from app.api.automations import TEMPLATE_CATALOG, _get_automation
+    from app.middleware.limits import enforce_user_limit
+    from app.models.automation import TEMPLATE_DOCUMENT_AUTO_FILE
+    from app.services import approvals as approvals_service
+
+    enforce_user_limit(str(user.id), "document-capture", settings.ai_import_rate_per_minute)
+    data = await file.read()
+    _validate_upload(file, data)
+    if not ai_service.is_available():
+        raise APIError(503, "AI_UNAVAILABLE", "AI şu an kullanılamıyor. Maliyeti elle girebilirsiniz.")
+
+    auto = _get_automation(db, user.company_id, TEMPLATE_DOCUMENT_AUTO_FILE)
+    config = dict(TEMPLATE_CATALOG[TEMPLATE_DOCUMENT_AUTO_FILE]["default_config"])
+    if auto and auto.config:
+        config.update(auto.config)
+    enabled = bool(auto and auto.enabled)
+
+    sha = hashlib.sha256(data).hexdigest()
+    ext = ALLOWED[file.content_type]
+    path = f"{user.company_id}/inbox/{uuid.uuid4().hex}.{ext}"
+    _upload_to_storage(path, data, file.content_type)
+
+    context = _capture_context(db, user)
+
+    # When the automation is off, behave exactly like manual smart capture.
+    if not enabled:
+        try:
+            fields = ai_service.analyze_document_smart(data, file.content_type, context)
+        except ai_service.AIUnavailable:
+            raise APIError(503, "AI_UNAVAILABLE", "AI belgeyi okuyamadı. Lütfen alanları elle doldurun.")
+        checks = _capture_checks(db, user, fields, sha, context)
+        return success({
+            "mode": "manual", "automation_enabled": False, "extracted": fields,
+            "document_path": path, "file_sha256": sha, "projects": context["projects"],
+            "duplicates": checks["duplicates"], "anomalies": checks["anomalies"],
+        })
+
+    try:
+        result = ai_service.analyze_and_classify(data, file.content_type, context)
+    except ai_service.AIUnavailable:
+        raise APIError(503, "AI_UNAVAILABLE", "AI belgeyi okuyamadı. Lütfen alanları elle doldurun.")
+
+    destination = result.get("destination")
+    try:
+        confidence = float(result.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    min_conf = float(config.get("min_confidence", 0.75))
+    allowed = set(config.get("destinations") or []) & {"cost", "client_invoice"}
+
+    # Gate: confident enough AND a routable, in-subset destination -> propose.
+    if destination in allowed and confidence >= min_conf:
+        fields = _normalize_autofile_fields(destination, result.get("fields") or {})
+        # Validate the AI project guess against the company's visible projects.
+        guess = result.get("project_guess")
+        project_id = None
+        proj_ids = {p["id"] for p in context["projects"]}
+        if guess and str(guess) in proj_ids:
+            project_id = uuid.UUID(str(guess))
+
+        filename = file.filename or "belge"
+        desc = f"«{filename}» → {_DEST_LABELS.get(destination, destination)} olarak önerildi"
+        amount = None
+        try:
+            amount = Decimal(str(fields.get("amount_try"))) if fields.get("amount_try") is not None else None
+        except Exception:
+            amount = None
+
+        req = approvals_service.create_request(
+            db, company_id=user.company_id, project_id=project_id,
+            kind="agent_file_document", target_table="cost_entries" if destination == "cost" else "client_invoices",
+            target_id=None,
+            payload={
+                "destination": destination,
+                "fields": fields,
+                "document_path": path,
+                "file_sha256": sha,
+                "original_filename": filename,
+                "confidence": confidence,
+                "project_id_guess": str(project_id) if project_id else None,
+                "doc_type": result.get("doc_type"),
+            },
+            description=desc, amount_try=amount, requested_by=user.id, proposed_by_agent=True,
+        )
+        db.commit()
+        return success({
+            "mode": "proposed", "automation_enabled": True, "request_id": str(req.id),
+            "destination": destination, "confidence": confidence,
+            "project_id_guess": str(project_id) if project_id else None,
+        })
+
+    # Uncertain or out-of-subset -> fall back to manual preview; create NOTHING.
+    try:
+        fields = ai_service.analyze_document_smart(data, file.content_type, context)
+    except ai_service.AIUnavailable:
+        fields = result.get("fields") or {}
+    checks = _capture_checks(db, user, fields, sha, context)
+    return success({
+        "mode": "manual", "automation_enabled": True,
+        "fallback_reason": "low_confidence" if confidence < min_conf else "out_of_subset",
+        "confidence": confidence, "extracted": fields, "document_path": path, "file_sha256": sha,
+        "projects": context["projects"], "duplicates": checks["duplicates"], "anomalies": checks["anomalies"],
+    })
+
+
 # --- Smart capture (company-level): AI suggests project + cost code with reasoning ---
 
 def _capture_context(db: Session, user) -> dict:

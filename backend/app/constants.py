@@ -258,4 +258,6 @@ AUDITED_TABLES = {
     # CR-031: sell-side revenue lane (unit sales + landowner payments).
     "unit_sales",
     "landowner_payments",
+    # CR-012: automation enable/disable/config changes are audited.
+    "automations",
 }
