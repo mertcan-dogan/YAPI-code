@@ -27,7 +27,7 @@ function keyOf(url: string, params?: Record<string, unknown>): string {
 export async function cachedGet<T = unknown>(
   url: string,
   params?: Record<string, unknown>,
-  opts?: { force?: boolean }
+  opts?: { force?: boolean; timeout?: number }
 ): Promise<{ data: T; meta?: unknown }> {
   const key = keyOf(url, params);
 
@@ -40,7 +40,7 @@ export async function cachedGet<T = unknown>(
     if (pending) return pending as Promise<{ data: T; meta?: unknown }>;
   }
 
-  const p = apiGet<T>(url, params)
+  const p = apiGet<T>(url, params, opts?.timeout ? { timeout: opts.timeout } : undefined)
     .then((res) => {
       cache.set(key, { ts: Date.now(), data: res.data, meta: res.meta });
       inflight.delete(key);

@@ -62,17 +62,30 @@ def compute_financing_cost(db: Session, project: Project, today: date | None = N
     monthly_factor = D(rate_pct) / D(100) / D(12)  # simple monthly accrual
     rows = project_cashflow(db, project, today=today)
 
-    total_usd = D(0)
-    total_try = D(0)
-    months: list[dict] = []
+    # First pass: find the underwater months + their financed amounts. PERF: do
+    # this BEFORE touching FX so we resolve every month's rate in ONE batched,
+    # CACHE-ONLY query — never a per-month synchronous TCMB fetch inside the web
+    # request (a project whose timeline runs past the cached rates would otherwise
+    # trigger dozens of blocking 10s HTTP calls). interest_try is rate-independent
+    # (the rate cancels); only interest_usd needs a rate, for which the most recent
+    # cached rate on/before the month is correct (and, for months past the cache,
+    # the latest cached rate).
+    underwater = []
     for row in rows:
         base = D(row["net_try"]) if eff["basis"] == "net" else D(row["cumulative_try"])
         if base >= 0:
             continue  # not underwater this month → finances nothing
-        financed_try = -base
-        rate = fx.rate_as_of(db, _month_end(row["year"], row["month_num"]), today=today)
+        underwater.append((row, -base, _month_end(row["year"], row["month_num"])))
+
+    rate_by_date = fx.cached_rates_on_or_before(db, [d for _, _, d in underwater])
+
+    total_usd = D(0)
+    total_try = D(0)
+    months: list[dict] = []
+    for row, financed_try, month_end in underwater:
+        rate = rate_by_date.get(month_end)
         if rate is None or rate <= 0:
-            continue  # no rate available at all → can't model this month (never error)
+            continue  # no cached rate on/before this month → can't model it (never error)
         financed_usd = financed_try / rate
         interest_usd = money(financed_usd * monthly_factor)
         # TRY interest at this month's rate == financed_try × factor (rate cancels).

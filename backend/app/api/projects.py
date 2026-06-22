@@ -1,4 +1,5 @@
 """Projects router: CRUD, project dashboard, budget, company dashboard (Section 2.5, 4.1-4.3)."""
+import logging
 import uuid
 from datetime import date, timedelta
 
@@ -29,6 +30,7 @@ from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 
 router = APIRouter(tags=["projects"])
+logger = logging.getLogger("yapi.dashboard")
 
 
 def _client_ip(request: Request) -> str | None:
@@ -156,41 +158,87 @@ def update_project(
     return success(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
+def _safe_section(degraded: list[str], name: str, fn, default=None):
+    """Compute one dashboard sub-section, degrading to ``default`` on ANY failure.
+
+    The project dashboard aggregates ~10 independent computations. Historically a
+    single failing one (e.g. an exotic data row) raised and 500'd the WHOLE page,
+    leaving the frontend in a perpetual skeleton (the silent-load-failure class
+    fixed for Bütçe). Each section is now isolated: a failure logs with a full
+    traceback, records the section name in ``degraded`` so the UI can flag it, and
+    returns the default — the rest of the dashboard still renders. TRY figures are
+    never altered; only the failing section becomes null.
+    """
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 — one bad section must never blank the page
+        logger.exception("dashboard section %r failed", name)
+        degraded.append(name)
+        return default
+
+
 @router.get("/projects/{project_id}/dashboard")
 def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     project = get_company_project(db, project_id, user)
-    f = fin_service.project_financials(db, project)
-    cashflow = fin_service.project_cashflow(db, project)
-    fac = fin_service.forecast_at_completion(db, project)  # CR-003-F
-    bridge = fin_service.margin_bridge(db, project)  # CR-003-G
+    degraded: list[str] = []
+
     return success(
         {
-            "project": ProjectOut.model_validate(project).model_dump(mode="json"),
-            "financials": _jsonify(f),
-            "cashflow": _jsonify_list(cashflow),
-            "forecast_at_completion": fac,
-            "margin_bridge": bridge,
+            "project": _safe_section(
+                degraded, "project",
+                lambda: ProjectOut.model_validate(project).model_dump(mode="json"),
+                default={"id": str(project.id), "name": project.name},
+            ),
+            "financials": _safe_section(
+                degraded, "financials", lambda: _jsonify(fin_service.project_financials(db, project))
+            ),
+            "cashflow": _safe_section(
+                degraded, "cashflow", lambda: _jsonify_list(fin_service.project_cashflow(db, project)),
+                default=[],
+            ),
+            "forecast_at_completion": _safe_section(
+                degraded, "forecast_at_completion", lambda: fin_service.forecast_at_completion(db, project)
+            ),  # CR-003-F
+            "margin_bridge": _safe_section(
+                degraded, "margin_bridge", lambda: fin_service.margin_bridge(db, project)
+            ),  # CR-003-G
             # CR-014-C: USD totals = SUM of per-row amount_usd snapshots (§0.2),
             # with a count of rows missing a snapshot. TRY figures unchanged.
-            "usd": fin_service.project_usd_totals(db, project),
+            "usd": _safe_section(
+                degraded, "usd", lambda: fin_service.project_usd_totals(db, project)
+            ),
             # CR-016-B: computed (not stored) residential aggregates over the
             # live unit schedule — feeds CR-017 per-m² benchmarks.
-            "residential": _jsonify(units_service.schedule_aggregates(project.units)),
+            "residential": _safe_section(
+                degraded, "residential", lambda: _jsonify(units_service.schedule_aggregates(project.units))
+            ),
             # CR-015-B: modeled financing cost as a SEPARATE forecast overlay
             # (never an actual cost). Zeroed/empty when the effective toggle is off.
-            "financing": financing_service.compute_financing_cost(db, project),
+            "financing": _safe_section(
+                degraded, "financing", lambda: financing_service.compute_financing_cost(db, project)
+            ),
             # CR-019-B: SCHEDULE-lane milestones block (weighted progress, next
             # deadline, overdue count, per-stage). Display + informs Proje
             # Sağlığı's "% Tamamlandı" ONLY — never feeds any money figure (§0.2).
-            "milestones": milestones_service.compute_schedule_block(db, project.id, project.company_id),
+            "milestones": _safe_section(
+                degraded, "milestones",
+                lambda: milestones_service.compute_schedule_block(db, project.id, project.company_id),
+            ),
             # CR-031-C: revenue-model-aware Project P&L (Kar/Zarar) + m² analizi +
             # kur-etkisi. Revenue is sell-side (sales+landowner) OR hakediş per
             # revenue_model — NEVER both (§0.2). Cost is read-only; financing stays
             # a separable overlay (net excl/incl both present).
-            "pnl": sales_service.project_pnl(db, project),
+            "pnl": _safe_section(
+                degraded, "pnl", lambda: sales_service.project_pnl(db, project)
+            ),
             # CR-031-D: IRR (XIRR, TRY & USD) / ROI / süre + yearly cash-flow feed.
             # Dated series over the same lanes; degenerate series → null IRR.
-            "investment_return": sales_service.investment_return(db, project),
+            "investment_return": _safe_section(
+                degraded, "investment_return", lambda: sales_service.investment_return(db, project)
+            ),
+            # Which sections (if any) failed to compute — the UI flags these rather
+            # than the whole page failing. Empty list = everything rendered.
+            "degraded_sections": degraded,
         }
     )
 
