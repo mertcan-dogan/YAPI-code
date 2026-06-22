@@ -31,3 +31,6 @@ Thumbs.db
 /backend/app.db
 *.sqlite3
 *.tsbuildinfo
+
+# Claude Code parallel-agent worktrees
+.claude/worktrees/
