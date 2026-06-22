@@ -541,3 +541,83 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
             last_err = exc
     logger.warning("Smart document extraction failed: %s", last_err)
     raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+
+def analyze_and_classify(data: bytes, content_type: str, context: dict) -> dict:
+    """CR-012 Template A: classify a document's TYPE and route it to a destination.
+
+    Builds on the smart-capture extraction but adds a routing decision so the
+    auto-file automation can propose WHERE the document belongs. v1 routes a
+    realistic subset:
+
+    - ``supplier_invoice`` (tedarikçi/malzeme faturası)  -> ``cost`` (Gider)
+    - ``client_invoice``   (kestiğimiz hakediş/müşteri faturası) -> ``client_invoice``
+    - anything else / uncertain -> ``destination=None`` (caller falls back to the
+      manual review preview; no approval is auto-created).
+
+    Returns ``{doc_type, destination, confidence, project_guess, fields}`` where
+    ``fields`` is shaped for the chosen destination. Never writes to the DB.
+    """
+    import base64
+
+    from app.constants import COST_CATEGORY_KEYS
+
+    client = _client()
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    if content_type == "application/pdf":
+        source_block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}}
+    elif content_type in ("image/jpeg", "image/png"):
+        source_block = {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": b64}}
+    else:
+        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+    ctx = json.dumps(context, ensure_ascii=False, default=_decimal_default)
+    categories = ", ".join(COST_CATEGORY_KEYS)
+    schema = (
+        '{"doc_type": "supplier_invoice|client_invoice|other", '
+        '"destination": "cost|client_invoice|null", "confidence": 0.0, '
+        '"project_guess": "<id|null>", '
+        '"fields": {"supplier_name": "...", "invoice_number": "...", '
+        '"invoice_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD", '
+        '"amount_try": 0.00, "vat_rate": 20, "retention_amount_try": 0.00, '
+        '"cost_category": "<anahtar>", "description": "..."}}'
+    )
+    prompt = (
+        "Bu bir belgenin görüntüsü veya PDF'idir (genellikle Türkçe). İki görevi yap:\n"
+        "1) Belgenin TÜRÜNÜ belirle:\n"
+        "   - 'supplier_invoice': bir tedarikçiden/maliyetten gelen ALIŞ faturası (gider).\n"
+        "   - 'client_invoice': işverene/müşteriye KESİLEN hakediş veya satış faturası (gelir).\n"
+        "   - 'other': fatura olmayan veya belirsiz belge.\n"
+        "2) Alanları çıkar ve aşağıdaki hedefe yönlendir:\n"
+        "   - supplier_invoice -> destination='cost'\n"
+        "   - client_invoice  -> destination='client_invoice'\n"
+        "   - other/belirsiz   -> destination=null\n\n"
+        "SADECE şu JSON nesnesini döndür:\n" + schema + "\n\n"
+        "Kurallar:\n"
+        "- amount_try KDV HARİÇ matrah tutarıdır (sayı, ondalık ayırıcı nokta). vat_rate yüzde (örn. 20).\n"
+        "- invoice_date ve due_date MUTLAKA YYYY-MM-DD biçiminde olmalı; bilinmiyorsa null.\n"
+        f"- cost_category yalnızca destination='cost' için ve şu anahtarlardan biri olmalı: {categories}.\n"
+        "- retention_amount_try yalnızca destination='client_invoice' için anlamlıdır (hakediş kesintisi); yoksa 0.\n"
+        "- project_guess BAĞLAM'daki projelerden birinin id'si olmalı; uygun proje yoksa null.\n"
+        "- confidence 0 ile 1 arası genel güven skorudur; tür VE alanlardan ne kadar emin olduğunu yansıtsın.\n"
+        "- JSON dışında hiçbir şey yazma.\n\n"
+        "BAĞLAM:\n" + ctx
+    )
+    last_err: Exception | None = None
+    for _ in range(2):
+        try:
+            msg = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=1500,
+                messages=[{"role": "user", "content": [source_block, {"type": "text", "text": prompt}]}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            result = _extract_json(text)
+            if isinstance(result, dict):
+                return result
+        except AIUnavailable:
+            raise
+        except Exception as exc:  # JSON parse / API error -> retry
+            last_err = exc
+    logger.warning("Document classify failed: %s", last_err)
+    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)

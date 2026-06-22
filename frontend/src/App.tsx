@@ -10,6 +10,7 @@ import AIAssistantPage from "./pages/AIAssistantPage";
 import AiPrinciplesPage from "./pages/AiPrinciplesPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import AuditLogPage from "./pages/AuditLogPage";
+import AutomationsPage from "./pages/AutomationsPage";
 import BudgetPage from "./pages/BudgetPage";
 import CashFlowPage from "./pages/CashFlowPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -98,6 +99,7 @@ export default function App() {
           <Route path="/workspace" element={<WorkspacePage />} />
           <Route path="/vendors" element={<VendorsPage />} />
           <Route path="/document-capture" element={<DocumentCapturePage />} />
+          <Route path="/automations" element={<AutomationsPage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/settings/*" element={<SettingsPage />} />
           <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />

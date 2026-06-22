@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     # Resend free-tier test sender; override once a verified domain is added.
     resend_from_email: str = "onboarding@resend.dev"
     resend_from_name: str = "Yapı Bildirimleri"
+    # CR-012: outbound email is unreliable from the Resend test sender. Set
+    # EMAIL_VERIFIED_DOMAIN=1 only once a verified domain is configured; until then
+    # the recurring-digest automation delivers in-app only and never tries email.
+    email_verified_domain: bool = False
+
+    # CR-012: shared secret gating the internal scheduler endpoint
+    # (POST /internal/automations/run-due). NEVER committed — set as a Railway env
+    # var. Blank => the endpoint rejects every request (no accidental open cron).
+    internal_cron_secret: str = ""
 
     # Security
     rate_limit_per_ip_per_minute: int = 100

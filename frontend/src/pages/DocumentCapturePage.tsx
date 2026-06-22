@@ -1,9 +1,9 @@
-import { Button, Card, CardBody, Input, Label, Select } from "@/components/ui";
+import { Button, Card, CardBody, Input, Label, Select, Switch } from "@/components/ui";
 import { COST_CATEGORIES, VAT_RATES } from "@/constants";
 import { api, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
 import { formatCurrency, formatDate } from "@/utils/format";
-import { AlertTriangle, Camera, CheckCircle2, Copy, FileText, Loader2, ShieldCheck, Sparkles, Upload } from "lucide-react";
+import { AlertTriangle, ArrowRight, Camera, CheckCircle2, Copy, FileText, Loader2, ShieldCheck, Sparkles, Upload, Zap } from "lucide-react";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -84,6 +84,11 @@ export default function DocumentCapturePage() {
   const [anomalies, setAnomalies] = useState<AnomalyItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // CR-012 Template A — "Otomatik dosyalama" mode: uploads create approval
+  // proposals instead of the manual review form (when uncertain, it falls back).
+  const [autoMode, setAutoMode] = useState(false);
+  const [proposed, setProposed] = useState<{ destination: string; confidence: number } | null>(null);
+  const [fallbackReason, setFallbackReason] = useState<string | null>(null);
 
   const set = (k: keyof Form, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
@@ -116,12 +121,25 @@ export default function DocumentCapturePage() {
     setDocPath(null);
     setDuplicates([]);
     setAnomalies([]);
+    setProposed(null);
+    setFallbackReason(null);
     setReading(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await api.post(`/document-capture`, fd);
-      const { extracted, document_path, file_sha256, projects, duplicates, anomalies } = res.data.data as {
+      const res = await api.post(autoMode ? `/document-capture/auto-file` : `/document-capture`, fd);
+      const d = res.data.data as any;
+      // Auto-file: a high-confidence in-subset doc becomes a pending approval —
+      // nothing is shown to edit here; it waits for a human in Onay Bekleyenler.
+      if (d.mode === "proposed") {
+        setProposed({ destination: d.destination, confidence: d.confidence });
+        setPreview(null);
+        setIsPdf(false);
+        toast.success("Öneri Onay Bekleyenler'e eklendi.");
+        return;
+      }
+      if (d.fallback_reason) setFallbackReason(d.fallback_reason);
+      const { extracted, document_path, file_sha256, projects, duplicates, anomalies } = d as {
         extracted: Extracted; document_path: string; file_sha256: string; projects: ProjectOpt[];
         duplicates?: DupItem[]; anomalies?: AnomalyItem[];
       };
@@ -228,6 +246,40 @@ export default function DocumentCapturePage() {
         </div>
       </div>
 
+      {/* CR-012 Template A — mode toggle: manual review vs auto-file proposals. */}
+      <div className="mt-4 flex items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 shadow-sm">
+        <div className="flex items-start gap-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-navy-50 text-brand">
+            <Zap className="h-4 w-4" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-primary">Otomatik dosyalama</p>
+            <p className="text-[11px] leading-snug text-text-secondary">
+              Açıkken Yapı AI belgeyi sınıflandırır ve emin olduğunda doğrudan{" "}
+              <b>Onay Bekleyenler</b>'e öneri olarak ekler. Belirsizse elle incelemeye düşer.
+            </p>
+          </div>
+        </div>
+        <Switch checked={autoMode} onChange={setAutoMode} label="Otomatik dosyalama modu" />
+      </div>
+
+      {/* Proposed banner — auto-file created a pending approval. */}
+      {proposed && (
+        <div className="mt-3 flex items-center gap-3 rounded-xl border border-success/40 bg-green-50 px-4 py-3">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-success">Öneri Onay Bekleyenler'e eklendi</p>
+            <p className="text-[11px] text-text-secondary">
+              {proposed.destination === "cost" ? "Gider" : "Hakediş"} olarak önerildi · güven %
+              {Math.round((proposed.confidence ?? 0) * 100)}. Onayladığınızda kayıt oluşturulur.
+            </p>
+          </div>
+          <Button variant="outline" className="shrink-0 px-3 py-1.5 text-xs" onClick={() => navigate("/approvals")}>
+            Onay Bekleyenler <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      )}
+
       {/* Upload zone */}
       <div className="mt-4">
         <div className="rounded-xl border border-border bg-surface p-5 text-center shadow-sm">
@@ -277,6 +329,15 @@ export default function DocumentCapturePage() {
           )}
         </div>
       </div>
+
+      {form && fallbackReason && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-warning/40 bg-amber-50 px-3 py-2 text-xs text-text-secondary">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+          {fallbackReason === "low_confidence"
+            ? "Yapı AI bu belgeden yeterince emin olamadı — lütfen alanları kontrol edip elle kaydedin."
+            : "Bu belge türü otomatik dosyalama kapsamı dışında — lütfen elle inceleyin."}
+        </div>
+      )}
 
       {form && (
         <Card className="mt-4">

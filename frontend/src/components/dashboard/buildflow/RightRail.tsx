@@ -1,7 +1,7 @@
 import { ScopedAgentDock } from "@/components/dashboard/ScopedAgentDock";
 import { Badge, Menu, MenuItem } from "@/components/ui";
 import type { AIAlert } from "@/types";
-import { ArrowRight, ClipboardList, Copy, FileText, MoreVertical, PlusSquare, Tag, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardList, Copy, FileText, MoreVertical, PlusSquare, Tag, Zap, type LucideIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -118,20 +118,30 @@ export function AiActionQueue({ alerts, approvalsByKind }: { alerts: AIAlert[]; 
 }
 
 export function RightRail({ alerts, approvalsByKind }: { alerts: AIAlert[]; approvalsByKind: { faturalar: number; ekIsler: number } | null }) {
+  const navigate = useNavigate();
   return (
     <>
       <AiActionQueue alerts={alerts} approvalsByKind={approvalsByKind} />
 
       {/* §11.2 — CR-011-D: the "Beceriler" half is live (scoped-agent dock);
-          "Otomasyonlar" stays "yakında" until CR-012. */}
+          CR-012: "Otomasyonlar" now links to the live Automations page. */}
       <RailCard title="AI Beceriler & Otomasyonlar" right={<span className="text-xs text-text-faint">Beceriler</span>}>
         <div className="border-t border-border">
           <ScopedAgentDock />
         </div>
-        <div className="border-t border-border px-3.5 py-2.5">
-          <p className="text-[11px] font-medium text-text-secondary">Otomasyonlar</p>
-          <p className="mt-0.5 text-xs text-text-muted">Otomatik iş akışları yakında (CR-012).</p>
-        </div>
+        <button
+          onClick={() => navigate("/automations")}
+          className="flex w-full items-center gap-2.5 border-t border-border px-3.5 py-2.5 text-left transition-colors hover:bg-surface-hover"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-border bg-surface-soft text-text-secondary">
+            <Zap className="h-[15px] w-[15px]" />
+          </span>
+          <span className="flex-1">
+            <span className="block text-[11px] font-medium text-text-secondary">Otomasyonlar</span>
+            <span className="mt-0.5 block text-xs text-text-muted">Belge dosyalama & periyodik özet</span>
+          </span>
+          <ArrowRight className="h-3.5 w-3.5 text-text-faint" />
+        </button>
       </RailCard>
 
       {/* §11.3 Phase-2 (new collaboration backend). */}

@@ -78,6 +78,11 @@ def apply_request(db: Session, req: ApprovalRequest) -> None:
         _apply_agent_notification(db, req)
     elif req.kind == "agent_flag_invoice":
         _apply_agent_flag_invoice(db, req)
+    # CR-012 Template A — auto-file: create the proposed cost/client-invoice record
+    # using the SAME creation logic as document-capture/confirm. Runs only here,
+    # after a human approves; the automation itself never writes a record.
+    elif req.kind == "agent_file_document":
+        _apply_agent_file_document(db, req)
 
 
 def mark_decided(req: ApprovalRequest, *, user_id: uuid.UUID, status: str, reason: str | None = None) -> None:
@@ -189,3 +194,106 @@ def _apply_agent_flag_invoice(db: Session, req: ApprovalRequest) -> None:
     )
     db.add(alert)
     db.flush()
+
+
+# --- CR-012 Template A applier ------------------------------------------------
+DOCS_BUCKET = "documents"
+
+
+def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
+    """Create the proposed record on approval, reusing the exact document-capture/
+    confirm creation logic so VAT/total/net-due/audit stay byte-identical. The
+    target project is ``req.project_id`` (the AI guess, or the project the approver
+    picked when the guess was null). Cost stays the authoritative CR-007/014 input."""
+    from datetime import date
+    from decimal import Decimal
+
+    from pydantic import ValidationError
+
+    from app.responses import APIError
+    from app.services.audit import record_audit, snapshot
+    from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
+
+    payload = req.payload or {}
+    destination = payload.get("destination")
+    fields = dict(payload.get("fields") or {})
+    if req.project_id is None:
+        raise APIError(422, "VALIDATION_ERROR", "Bu öneri için bir proje seçmelisiniz")
+    doc_path = payload.get("document_path")
+    doc_url = f"{DOCS_BUCKET}/{doc_path}" if doc_path else None
+
+    if destination == "cost":
+        from app.models.cost_entry import CostEntry
+        from app.schemas.cost import CostEntryCreate
+
+        try:
+            rec = CostEntryCreate(
+                entry_date=fields.get("entry_date") or fields.get("invoice_date"),
+                cost_category=fields.get("cost_category") or "material_other",
+                supplier_name=fields.get("supplier_name") or None,
+                invoice_number=fields.get("invoice_number") or None,
+                description=fields.get("description") or None,
+                amount_try=Decimal(str(fields.get("amount_try"))),
+                vat_rate=Decimal(str(fields.get("vat_rate", "20"))),
+                payment_due_date=fields.get("payment_due_date") or None,
+                payment_status=fields.get("payment_status") or "unpaid",
+                document_url=doc_url,
+            )
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise APIError(422, "VALIDATION_ERROR", "Belge alanları geçersiz: " + str(exc)[:120])
+        d = rec.model_dump()
+        entry = CostEntry(
+            project_id=req.project_id, company_id=req.company_id, created_by=req.requested_by,
+            vat_amount_try=vat_amount(d["amount_try"], d["vat_rate"]),
+            total_with_vat_try=total_with_vat(d["amount_try"], d["vat_rate"]),
+            **d,
+        )
+        db.add(entry)
+        db.flush()
+        record_audit(db, company_id=req.company_id, user_id=req.requested_by, table_name="cost_entries",
+                     record_id=entry.id, action="INSERT", new_values=snapshot(entry))
+
+    elif destination == "client_invoice":
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models.client_invoice import ClientInvoice
+        from app.schemas.invoice import ClientInvoiceCreate
+        from app.services import fx
+
+        invoice_date = fields.get("invoice_date")
+        due_date = fields.get("due_date") or invoice_date
+        try:
+            rec = ClientInvoiceCreate(
+                invoice_number=fields.get("invoice_number") or "—",
+                invoice_date=invoice_date,
+                hakkedis_period=fields.get("hakkedis_period") or None,
+                description=fields.get("description") or None,
+                amount_try=Decimal(str(fields.get("amount_try"))),
+                vat_rate=Decimal(str(fields.get("vat_rate", "20"))),
+                retention_amount_try=Decimal(str(fields.get("retention_amount_try", "0") or "0")),
+                due_date=due_date,
+                document_url=doc_url,
+            )
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise APIError(422, "VALIDATION_ERROR", "Belge alanları geçersiz: " + str(exc)[:120])
+        data = rec.model_dump()
+        inv = ClientInvoice(
+            project_id=req.project_id, company_id=req.company_id, created_by=req.requested_by,
+            vat_amount_try=vat_amount(data["amount_try"], data["vat_rate"]),
+            total_with_vat_try=total_with_vat(data["amount_try"], data["vat_rate"]),
+            net_due_try=invoice_net_due(data["amount_try"], data["vat_rate"], data["retention_amount_try"]),
+            amount_received_try=0, payment_status="unpaid", **data,
+        )
+        db.add(inv)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise APIError(422, "VALIDATION_ERROR", "Bu fatura numarası zaten mevcut")
+        fx.snapshot_invoice_usd(db, inv)
+        record_audit(db, company_id=req.company_id, user_id=req.requested_by, table_name="client_invoices",
+                     record_id=inv.id, action="INSERT", new_values=snapshot(inv))
+    else:
+        from app.responses import APIError as _APIError
+
+        raise _APIError(422, "VALIDATION_ERROR", "Bilinmeyen belge hedefi")

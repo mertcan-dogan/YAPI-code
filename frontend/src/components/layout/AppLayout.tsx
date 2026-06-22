@@ -89,7 +89,7 @@ const NAV_GROUPS: { group: string; items: NavEntry[] }[] = [
     group: "AI & Ekip",
     items: [
       { icon: Sparkles, label: "AI Beceriler", to: "#skills", comingSoon: true },
-      { icon: Zap, label: "Otomasyonlar", to: "#automations", comingSoon: true },
+      { icon: Zap, label: "Otomasyonlar", to: "/automations" },
       { icon: Rss, label: "Ekip Akışı", to: "#feed", comingSoon: true },
       { icon: Users, label: "Ekip", to: "#team", comingSoon: true },
     ],
