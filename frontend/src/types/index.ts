@@ -112,6 +112,8 @@ export interface BudgetCategoryRow {
   approved_variations_try: string;
   revised_budget_try: string;
   committed_try: string;
+  open_committed_try?: string; // CR-023: açık taahhüt (committed − linked actuals)
+  exposure_try?: string; // CR-023: actual + open committed
   invoiced_try: string;
   paid_try: string;
   remaining_try: string;
@@ -143,6 +145,9 @@ export interface CostEntry {
   amount_paid_try: string;
   document_url: string | null;
   notes: string | null;
+  commitment_id?: string | null; // CR-023: relief link (actual → committed entry)
+  po_number?: string | null;
+  expected_date?: string | null;
 }
 
 export interface ClientInvoice {

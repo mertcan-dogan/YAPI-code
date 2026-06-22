@@ -28,6 +28,10 @@ def _project_dict(p: Project) -> dict:
 
 def _cost_dict(c: CostEntry) -> dict:
     return {
+        # CR-023: id + commitment_id let the rollup net linked actuals out of
+        # their commitment (open_commitment) so exposure never double-counts.
+        "id": c.id,
+        "commitment_id": c.commitment_id,
         "amount_try": c.amount_try,
         "amount_eur": c.amount_eur,
         "total_with_vat_try": c.total_with_vat_try,
@@ -444,26 +448,41 @@ def forecast_at_completion(db: Session, project: Project) -> dict:
     )
 
     # Actual (entry_type=actual) cost-to-date and per-category VAT-inclusive totals.
+    # CR-023: also roll up open commitments per category (VAT-inclusive, relieved
+    # by any linked actuals) so the forecast sees money committed-but-not-yet-billed.
+    from app.calculations.project_financials import open_commitment, relief_by_commitment
+
+    relief = relief_by_commitment(costs, "total_with_vat_try")
     cost_to_date = D(0)
     actual_by_cat: dict[str, object] = {}
+    open_committed_by_cat: dict[str, object] = {}
     for c in costs:
-        if c.get("entry_type") == "actual":
+        etype = c.get("entry_type")
+        cat = c.get("cost_category")
+        if etype == "actual":
             twv = D(c.get("total_with_vat_try"))
             cost_to_date += twv
-            cat = c.get("cost_category")
             actual_by_cat[cat] = D(actual_by_cat.get(cat, D(0))) + twv
+        elif etype == "committed":
+            oc = open_commitment(c, relief, "total_with_vat_try")
+            open_committed_by_cat[cat] = D(open_committed_by_cat.get(cat, D(0))) + oc
     cost_to_date = money(cost_to_date)
 
-    # Estimated final cost: per-category forecast_final_try if set, else actuals.
+    # Estimated final cost per category: max(budget-derived forecast, actual + open
+    # committed). Open commitments are money you WILL spend (CR-023 §5.3), so the
+    # forecast can never fall below them even when a budget forecast is set lower.
     budget_by_cat = {b["cost_category"]: b for b in budgets}
-    all_cats = set(budget_by_cat) | set(actual_by_cat)
+    all_cats = set(budget_by_cat) | set(actual_by_cat) | set(open_committed_by_cat)
     forecast_final_cost = D(0)
     for cat in all_cats:
         b = budget_by_cat.get(cat)
+        actual_cat = D(actual_by_cat.get(cat, D(0)))
+        exposure_cat = actual_cat + D(open_committed_by_cat.get(cat, D(0)))
         if b and b.get("forecast_final_try") is not None:
-            forecast_final_cost += D(b["forecast_final_try"])
+            base = D(b["forecast_final_try"])
         else:
-            forecast_final_cost += D(actual_by_cat.get(cat, D(0)))
+            base = actual_cat
+        forecast_final_cost += max(base, exposure_cat)
     forecast_final_cost = money(forecast_final_cost)
 
     cost_to_complete = money(forecast_final_cost - cost_to_date)
