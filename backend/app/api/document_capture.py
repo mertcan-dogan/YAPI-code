@@ -27,6 +27,7 @@ from app.responses import APIError, success
 from app.schemas.cost import CostEntryCreate
 from app.services import ai as ai_service
 from app.services import fx
+from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
@@ -147,6 +148,10 @@ def confirm_document(
     )
     db.add(entry)
     db.flush()
+    # CR-008-F: auto-link the captured cost to a canonical vendor.
+    entry.vendor_id = entry.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+        db, user.company_id, entry.supplier_name
+    )
     # CR-023.1: snapshot USD like the normal cost-create endpoint, so captured
     # costs don't save with null amount_usd ("kur bulunamadı").
     fx.snapshot_cost_usd(db, entry)
@@ -553,6 +558,10 @@ def smart_capture_confirm(payload: SmartCaptureConfirm, user: CurrentUser, db: S
     )
     db.add(entry)
     db.flush()
+    # CR-008-F: auto-link the captured cost to a canonical vendor.
+    entry.vendor_id = entry.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+        db, user.company_id, entry.supplier_name
+    )
     # CR-023.1: snapshot USD like the normal cost-create endpoint, so smart-capture
     # costs don't save with null amount_usd ("kur bulunamadı").
     fx.snapshot_cost_usd(db, entry)

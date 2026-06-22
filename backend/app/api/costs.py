@@ -20,6 +20,7 @@ from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
 from app.schemas.cost import CostEntryCreate, CostEntryOut, CostEntryUpdate
 from app.services import fx
+from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
@@ -288,6 +289,10 @@ def create_cost(
     _refresh_payment_status(cost)
     db.add(cost)
     db.flush()
+    # CR-008-F: auto-link to a canonical vendor at create time (was backfill-only).
+    cost.vendor_id = cost.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+        db, user.company_id, cost.supplier_name
+    )
     # CR-014-B: snapshot the USD value at this row's relevant date (provisional
     # until paid). Never blocks the save if no rate is available.
     fx.snapshot_cost_usd(db, cost)

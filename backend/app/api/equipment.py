@@ -19,6 +19,7 @@ from app.responses import APIError, success
 from app.schemas.equipment import EquipmentCreate, EquipmentOut, EquipmentUpdate
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
+from app.services import vendor_backfill
 from app.services.financials import project_financials
 
 router = APIRouter(tags=["equipment"])
@@ -88,6 +89,10 @@ def _create_budget_entry_for_equipment(db, user, project_id, e: EquipmentLog) ->
     )
     db.add(entry)
     db.flush()
+    # CR-008-F: auto-link the auto-created equipment cost to a canonical vendor.
+    entry.vendor_id = entry.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+        db, user.company_id, entry.supplier_name
+    )
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
         record_id=entry.id, action="INSERT", new_values=snapshot(entry),

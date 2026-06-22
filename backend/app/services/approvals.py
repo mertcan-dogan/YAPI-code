@@ -251,6 +251,11 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
         )
         db.add(entry)
         db.flush()
+        # CR-008-F: auto-link the auto-filed cost to a canonical vendor.
+        from app.services.vendor_backfill import resolve_or_create_vendor_id
+        entry.vendor_id = entry.vendor_id or resolve_or_create_vendor_id(
+            db, req.company_id, entry.supplier_name
+        )
         # CR-023.1: snapshot USD like the manual cost-create + the invoice branch
         # below — otherwise auto-filed costs save with null amount_usd. Degrades
         # gracefully, never raises.

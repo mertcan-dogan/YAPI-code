@@ -27,7 +27,19 @@ from app.services.agent_tools import normalize_vendor_name
 
 logger = logging.getLogger("yapi.vendor_backfill")
 
-DUP_THRESHOLD = 0.4  # mirrors the CR-007 pg_trgm similarity threshold (§7.1.4)
+# CR-007 pg_trgm threshold for the agent's live fuzzy MATCHING (high recall — the
+# model then picks the best match). NOT used for merge suggestions.
+DUP_THRESHOLD = 0.4
+# Merge-SUGGESTION threshold (CR-008-H Tedarikçiler UI). Deliberately MUCH higher
+# than DUP_THRESHOLD: a suggestion tells a human "these two are probably the same
+# vendor", so it must be a near-exact spelling/diacritic variant, not a loose 40%
+# match. Tuned so genuine typos ("Bozkurt Beton"/"Beotn") and diacritic variants
+# ("Demir İnşaat"/"Demir Inşaat") are caught while distinct short names
+# ("Mehmet Usta"/"Ahmet Usta") are not.
+MERGE_SUGGEST_THRESHOLD = 0.86
+# Bound the suggestion payload (most-similar first) so a large vendor book can't
+# return a huge list to the merge UI.
+MAX_MERGE_SUGGESTIONS = 50
 
 
 def _distinct_raw_names(db: Session, company_id) -> set[str]:
@@ -50,43 +62,87 @@ def _distinct_raw_names(db: Session, company_id) -> set[str]:
     return {n for n in list(cost) + list(sub) if n and n.strip()}
 
 
-def find_duplicate_clusters(db: Session, company_id, threshold: float = DUP_THRESHOLD) -> list[list[dict]]:
-    """Groups of canonical vendors whose normalised names are >= threshold similar.
-    These are SUGGESTIONS for human review (CR-008-H) — never auto-merged."""
+def find_duplicate_clusters(
+    db: Session, company_id, threshold: float = MERGE_SUGGEST_THRESHOLD
+) -> list[list[dict]]:
+    """Likely-duplicate vendor PAIRS for human review (CR-008-H) — never auto-merged.
+
+    Each returned pair is two canonical vendors whose normalised names are
+    ``>= threshold`` similar, most-similar first. **Pairwise, NOT transitively
+    clustered:** the old union-find at a 0.4 threshold chained unrelated vendors
+    (A~B and B~C ⇒ {A, B, C}) into one giant unusable "merge everything" group.
+    Emitting independent pairs at a conservative threshold keeps each suggestion
+    individually reviewable. The frontend already renders each cluster as its own
+    merge card, so a 2-element cluster is the natural unit.
+    """
     vendors = db.execute(
         select(Vendor).where(Vendor.company_id == company_id, Vendor.is_deleted.is_(False))
     ).scalars().all()
     items = [(v.id, v.canonical_name, normalize_vendor_name(v.canonical_name)) for v in vendors]
     n = len(items)
 
-    parent = list(range(n))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def union(a: int, b: int) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
+    scored: list[tuple[float, int, int]] = []
     for i in range(n):
         for j in range(i + 1, n):
             if items[i][2] == items[j][2]:
-                continue  # same normalised name => already the same vendor
-            if SequenceMatcher(None, items[i][2], items[j][2]).ratio() >= threshold:
-                union(i, j)
+                continue  # identical normalised name => already the same vendor
+            ratio = SequenceMatcher(None, items[i][2], items[j][2]).ratio()
+            if ratio >= threshold:
+                scored.append((ratio, i, j))
 
-    comps: dict[int, list[int]] = {}
-    for i in range(n):
-        comps.setdefault(find(i), []).append(i)
+    scored.sort(key=lambda t: t[0], reverse=True)  # best candidates first
     return [
-        [{"id": str(items[m][0]), "canonical_name": items[m][1]} for m in members]
-        for members in comps.values()
-        if len(members) > 1
+        [
+            {"id": str(items[i][0]), "canonical_name": items[i][1]},
+            {"id": str(items[j][0]), "canonical_name": items[j][1]},
+        ]
+        for _ratio, i, j in scored[:MAX_MERGE_SUGGESTIONS]
     ]
+
+
+def resolve_or_create_vendor_id(db: Session, company_id, raw_name: str | None):
+    """Auto-link a freshly created cost/subcontractor row to a canonical vendor.
+
+    Called at cost-entry / import / capture time so new rows no longer pile up with
+    ``vendor_id IS NULL`` until the one-time backfill is re-run. Resolution is
+    EXACT-only, using the same normalisation as the backfill: an existing alias or
+    canonical-name match links to that vendor; otherwise a new canonical vendor +
+    alias is created. Fuzzy near-duplicates are NEVER auto-merged here — that stays
+    human-reviewed via ``find_duplicate_clusters`` + the merge UI. Returns the
+    ``vendor_id`` (uuid) or ``None`` for a blank name. Idempotent and additive, so
+    the same spelling twice yields one vendor.
+    """
+    if not raw_name or not raw_name.strip():
+        return None
+    norm = normalize_vendor_name(raw_name)
+    if not norm:
+        return None
+
+    alias = db.execute(
+        select(VendorAlias).where(
+            VendorAlias.company_id == company_id,
+            VendorAlias.alias_normalised == norm,
+            VendorAlias.is_deleted.is_(False),
+        )
+    ).scalars().first()
+    if alias:
+        return alias.vendor_id
+
+    # Defensive: a canonical vendor exists with no alias for this spelling yet.
+    for v in db.execute(
+        select(Vendor).where(Vendor.company_id == company_id, Vendor.is_deleted.is_(False))
+    ).scalars().all():
+        if normalize_vendor_name(v.canonical_name) == norm:
+            db.add(VendorAlias(vendor_id=v.id, company_id=company_id,
+                               alias_name=raw_name.strip(), alias_normalised=norm))
+            return v.id
+
+    vendor = Vendor(company_id=company_id, canonical_name=raw_name.strip())
+    db.add(vendor)
+    db.flush()
+    db.add(VendorAlias(vendor_id=vendor.id, company_id=company_id,
+                       alias_name=raw_name.strip(), alias_normalised=norm))
+    return vendor.id
 
 
 def backfill_company(db: Session, company_id) -> dict:

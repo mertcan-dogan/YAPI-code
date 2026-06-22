@@ -23,6 +23,7 @@ from app.schemas.invoice import ClientInvoiceCreate
 from app.schemas.subcontractor import SubcontractorCreate
 from app.services import ai as ai_service
 from app.services import fx
+from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
@@ -117,6 +118,10 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
                           vat_amount_try=vat, total_with_vat_try=twv, **d)
         db.add(entry)
         db.flush()
+        # CR-008-F: auto-link the AI-imported row to a canonical vendor.
+        entry.vendor_id = entry.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+            db, user.company_id, entry.supplier_name
+        )
         # CR-014-B parity: snapshot USD so AI-imported rows aren't left amount_usd=NULL.
         fx.snapshot_cost_usd(db, entry)
         record_audit(db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
@@ -159,6 +164,10 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
         sub = Subcontractor(project_id=project.id, company_id=user.company_id, **item.model_dump())
         db.add(sub)
         db.flush()
+        # CR-008-F: auto-link the AI-imported subcontractor to a canonical vendor.
+        sub.vendor_id = sub.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+            db, user.company_id, sub.name
+        )
         record_audit(db, company_id=user.company_id, user_id=user.id, table_name="subcontractors",
                      record_id=sub.id, action="INSERT", new_values=snapshot(sub))
         imported["alt_yukleniciler"] += 1
