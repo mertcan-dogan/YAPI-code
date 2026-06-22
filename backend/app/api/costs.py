@@ -50,6 +50,40 @@ def _bump_custom_category(db: Session, company_id, category: str) -> None:
         cat.usage_count = (cat.usage_count or 0) + 1
 
 
+def _validate_commitment(
+    db: Session, project, commitment_id, entry_type: str, self_id=None
+) -> None:
+    """CR-023: a relief link is only valid when it points to a *committed* entry in
+    the SAME project + company, and the linking entry is itself an *actual*.
+
+    Raises APIError(422) on any violation so a mislinked invoice can never quietly
+    double-count or escape company scope.
+    """
+    if commitment_id is None:
+        return
+    if entry_type != "actual":
+        raise APIError(
+            422, "INVALID_COMMITMENT",
+            "Yalnızca gerçekleşen (fatura) girişleri bir taahhüde bağlanabilir",
+        )
+    if self_id is not None and commitment_id == self_id:
+        raise APIError(422, "INVALID_COMMITMENT", "Bir giriş kendisine bağlanamaz")
+    target = db.execute(
+        select(CostEntry).where(
+            CostEntry.id == commitment_id,
+            CostEntry.project_id == project.id,
+            CostEntry.company_id == project.company_id,
+            CostEntry.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise APIError(422, "INVALID_COMMITMENT", "Taahhüt kaydı bu projede bulunamadı")
+    if target.entry_type != "committed":
+        raise APIError(
+            422, "INVALID_COMMITMENT", "Bağlanan kayıt bir taahhüt (committed) girişi olmalı"
+        )
+
+
 def _refresh_payment_status(c: CostEntry, today: date | None = None) -> None:
     """Keep payment_status coherent with amounts/dates (overdue is derived)."""
     today = today or date.today()
@@ -158,6 +192,70 @@ def costs_by_subcategory(
     return success({"categories": out})
 
 
+@router.get("/projects/{project_id}/commitments")
+def list_commitments(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+    open_only: bool = Query(False),
+):
+    """CR-023-B: a project's commitments (entry_type=committed) with per-commitment
+    relief progress — how much of each commitment has been invoiced (linked
+    actuals) and how much is still open. ``open_only`` hides fully relieved ones.
+
+    Exact Decimal, summed in Python (dialect-safe). Company-scoped via the project
+    access check.
+    """
+    from app.calculations.money import money
+
+    project = get_company_project(db, project_id, user)
+    rows = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False)
+        )
+    ).scalars().all()
+
+    # Relief per commitment: Σ ex-VAT of linked actuals + a count of those invoices.
+    relieved: dict = {}
+    relieved_count: dict = {}
+    for c in rows:
+        if c.entry_type == "actual" and c.commitment_id is not None:
+            relieved[c.commitment_id] = relieved.get(c.commitment_id, D(0)) + D(c.amount_try)
+            relieved_count[c.commitment_id] = relieved_count.get(c.commitment_id, 0) + 1
+
+    out = []
+    for c in rows:
+        if c.entry_type != "committed":
+            continue
+        amount = D(c.amount_try)
+        invoiced = relieved.get(c.id, D(0))
+        open_amt = amount - invoiced
+        if open_amt < 0:
+            open_amt = D(0)
+        if open_only and open_amt <= 0:
+            continue
+        pct_relieved = (invoiced / amount * D(100)) if amount > 0 else D(0)
+        out.append({
+            "id": str(c.id),
+            "cost_category": c.cost_category,
+            "label_tr": COST_CATEGORIES.get(c.cost_category, c.cost_category),
+            "supplier_name": c.supplier_name,
+            "description": c.description,
+            "po_number": c.po_number,
+            "expected_date": c.expected_date.isoformat() if c.expected_date else None,
+            "entry_date": c.entry_date.isoformat() if c.entry_date else None,
+            "amount_try": str(money(amount)),
+            "invoiced_try": str(money(invoiced)),
+            "open_try": str(money(open_amt)),
+            "pct_relieved": str(money(pct_relieved)),
+            "invoice_count": relieved_count.get(c.id, 0),
+            "fully_relieved": open_amt <= 0,
+        })
+    # Most open exposure first.
+    out.sort(key=lambda r: D(r["open_try"]), reverse=True)
+    return success({"commitments": out})
+
+
 @router.post("/projects/{project_id}/costs")
 def create_cost(
     project_id: uuid.UUID,
@@ -168,6 +266,8 @@ def create_cost(
 ):
     project = get_company_project(db, project_id, user)  # all roles may add (Section 3.2)
     data = payload.model_dump()
+    # CR-023: a relief link must point to a committed entry in this project/company.
+    _validate_commitment(db, project, data.get("commitment_id"), data["entry_type"])
     vat = vat_amount(data["amount_try"], data["vat_rate"])
     twv = total_with_vat(data["amount_try"], data["vat_rate"])
     cost = CostEntry(
@@ -244,6 +344,11 @@ def update_cost(
 
     old = snapshot(cost)
     changes = payload.model_dump(exclude_unset=True)
+    # CR-023: validate the relief link against the POST-edit entry_type + id.
+    if "commitment_id" in changes or "entry_type" in changes:
+        new_etype = changes.get("entry_type", cost.entry_type)
+        new_commitment = changes.get("commitment_id", cost.commitment_id)
+        _validate_commitment(db, project, new_commitment, new_etype, self_id=cost.id)
     for k, v in changes.items():
         setattr(cost, k, v)
     # Recompute derived VAT fields.

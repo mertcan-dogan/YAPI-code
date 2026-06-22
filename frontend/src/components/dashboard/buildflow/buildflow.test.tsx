@@ -18,17 +18,19 @@ afterEach(() => vi.clearAllMocks());
 const KPI_DATA = {
   kpis: { active_project_count: 12, total_contract_value_try: "86400000", weighted_avg_margin_pct: "19.8", cost_to_complete_try: "0", overdue_payment_count: 0 },
   exec_kpis: { net_cash_position_try: "1320000", backlog_try: "0", projected_profit_try: "0", total_receivables_try: "0" },
-  portfolio_budget: { actual_try: "59300000", forecast_final_cost_try: "76500000", contract_try: "0", revised_budget_try: "0", committed_try: "0" },
+  portfolio_budget: { actual_try: "59300000", forecast_final_cost_try: "76500000", contract_try: "0", revised_budget_try: "0", committed_try: "12400000", open_committed_try: "12400000", committed_exposure_try: "71700000" },
   kpi_trends: { total_contract_value_try: { series: [70, 80, 86], delta_pct: 8.1 }, weighted_avg_margin_pct: { series: [21, 20, 19.8], delta_pct: null }, net_cash_position_try: { series: [1.8, 1.5, 1.32], delta_pct: -3 } },
 };
 
 describe("KpiCards (CR-029-D)", () => {
-  it("renders the 8 KPIs with the Taahhüt CR-023 placeholder", () => {
+  it("renders the 8 KPIs with the CR-023 açık taahhüt figure wired in", () => {
     wrap(<KpiCards data={KPI_DATA} approvalsCount={27} loading={false} />);
     expect(screen.getByText("Aktif Projeler")).toBeInTheDocument();
     expect(screen.getByText("12")).toBeInTheDocument();
     expect(screen.getByText("Taahhüt Edilen Maliyet")).toBeInTheDocument();
-    expect(screen.getByText("Yakında")).toBeInTheDocument(); // placeholder, not a fake number
+    // CR-023: real açık taahhüt number, no longer the "Yakında" placeholder.
+    expect(screen.getByText("12,4 Mn ₺")).toBeInTheDocument();
+    expect(screen.queryByText("Yakında")).not.toBeInTheDocument();
     expect(screen.getByText("27")).toBeInTheDocument(); // approvals
   });
 });

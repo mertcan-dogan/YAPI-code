@@ -15,6 +15,7 @@ client invoice: amount_try, amount_received_try, outstanding_try,
 budget line: cost_category, original_budget_try, approved_variations_try,
              forecast_final_try
 """
+from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 
@@ -24,6 +25,25 @@ from app.constants import COST_CATEGORY_KEYS
 
 ZERO = Decimal("0")
 HUNDRED = Decimal("100")
+
+
+def relief_by_commitment(cost_entries: list[dict], amount_key: str = "amount_try") -> dict:
+    """CR-023: Σ of linked-actual amounts per commitment_id.
+
+    An *actual* entry with ``commitment_id`` set "relieves" that committed entry.
+    ``amount_key`` picks the measure — ex-VAT (``amount_try``) for the budget
+    rollup, VAT-inclusive (``total_with_vat_try``) for the forecast.
+    """
+    relief: dict = defaultdict(lambda: ZERO)
+    for e in cost_entries:
+        if e.get("entry_type", "actual") == "actual" and e.get("commitment_id"):
+            relief[e["commitment_id"]] += D(e.get(amount_key))
+    return relief
+
+
+def open_commitment(c: dict, relief: dict, amount_key: str = "amount_try") -> Decimal:
+    """Open (unrelieved) portion of a committed entry: max(amount − Σ linked, 0)."""
+    return max(D(c.get(amount_key)) - D(relief.get(c.get("id"), ZERO)), ZERO)
 
 
 def _is_overdue_cost(e: dict, today: date) -> bool:
@@ -61,31 +81,45 @@ def compute_project_financials(
         D(project.get("original_budget_try")) + D(project.get("approved_variations_try"))
     )
 
-    # --- Cost rollups (Section 7.1) ---
-    total_committed = ZERO   # entry_type in (actual, committed), ex-VAT
+    # --- Cost rollups (Section 7.1; CR-023 commitment relief) ---
+    total_committed_gross = ZERO  # entry_type in (actual, committed), ex-VAT (legacy)
     total_actual = ZERO      # entry_type == actual, ex-VAT
     total_actual_with_vat = ZERO  # for the "Gerçekleşen Maliyet" hero card (Section 4.2)
     total_paid_out = ZERO    # amount_paid_try
+    total_open_committed = ZERO  # CR-023: Σ open_commitment (committed − linked actuals)
+
+    # CR-023: an actual linked to a commitment relieves it, so the open portion of
+    # that commitment is netted out and the same money is never counted twice.
+    relief = relief_by_commitment(cost_entries, "amount_try")
 
     for e in cost_entries:
         etype = e.get("entry_type", "actual")
         amt = D(e.get("amount_try"))
         if etype in ("actual", "committed"):
-            total_committed += amt
+            total_committed_gross += amt
         if etype == "actual":
             total_actual += amt
             total_actual_with_vat += D(e.get("total_with_vat_try"))
+        if etype == "committed":
+            total_open_committed += open_commitment(e, relief, "amount_try")
         total_paid_out += D(e.get("amount_paid_try"))
 
-    total_committed = money(total_committed)
+    total_committed_gross = money(total_committed_gross)
     total_actual = money(total_actual)
     total_actual_with_vat = money(total_actual_with_vat)
     total_paid_out = money(total_paid_out)
+    total_open_committed = money(total_open_committed)
 
-    remaining_budget = money(revised_budget - total_committed)
+    # Exposure = money already spent (actual) + money locked in but not yet billed
+    # (open commitments). This REPLACES the old "actual + all committed" so a
+    # commitment and its later invoice never both count (CR-023 §4).
+    total_committed_exposure = money(total_actual + total_open_committed)
+    remaining_budget = money(revised_budget - total_committed_exposure)
 
     # --- Per-category budget table (Section 4.3) ---
-    categories = _compute_category_rows(cost_entries, budget_line_items, today, extra_category_keys)
+    categories = _compute_category_rows(
+        cost_entries, budget_line_items, today, extra_category_keys, relief
+    )
     forecast_from_budget = money(sum((c["forecast_final"] for c in categories), ZERO))
     categories_over_100pct = sum(1 for c in categories if c["pct_spent"] > HUNDRED)
     categories_over_95pct = sum(1 for c in categories if c["pct_spent"] >= Decimal("95"))
@@ -145,7 +179,11 @@ def compute_project_financials(
     return {
         "contract_value_try": contract_value,
         "revised_budget_try": revised_budget,
-        "total_committed_try": total_committed,
+        # Legacy gross (actual + all committed) kept for back-compat consumers.
+        "total_committed_try": total_committed_gross,
+        # CR-023: relief-aware figures.
+        "total_open_committed_try": total_open_committed,
+        "total_committed_exposure_try": total_committed_exposure,
         "total_actual_try": total_actual,
         "total_actual_with_vat_try": total_actual_with_vat,
         "total_paid_out_try": total_paid_out,
@@ -180,6 +218,7 @@ def _compute_category_rows(
     budget_line_items: list[dict],
     today: date,
     extra_category_keys: list[str] | None = None,
+    relief: dict | None = None,
 ) -> list[dict]:
     """Budget-vs-actual rows per cost category (Section 4.3 / CR-002-A).
 
@@ -188,6 +227,8 @@ def _compute_category_rows(
     appear in the data or budget rows.
     """
     budgets = {b["cost_category"]: b for b in budget_line_items}
+    if relief is None:
+        relief = relief_by_commitment(cost_entries, "amount_try")
 
     # Aggregate cost entries by category.
     agg: dict[str, dict] = {}
@@ -195,13 +236,18 @@ def _compute_category_rows(
         cat = e.get("cost_category")
         if cat is None:
             continue
-        a = agg.setdefault(cat, {"committed": ZERO, "invoiced": ZERO, "paid": ZERO})
+        a = agg.setdefault(
+            cat, {"committed": ZERO, "invoiced": ZERO, "paid": ZERO, "open_committed": ZERO}
+        )
         etype = e.get("entry_type", "actual")
         amt = D(e.get("amount_try"))
         if etype in ("actual", "committed"):
             a["committed"] += amt
         if etype == "actual":
             a["invoiced"] += amt
+        if etype == "committed":
+            # CR-023: open = committed − linked actuals (never below 0).
+            a["open_committed"] += open_commitment(e, relief, "amount_try")
         a["paid"] += D(e.get("amount_paid_try"))
 
     rows: list[dict] = []
@@ -217,19 +263,26 @@ def _compute_category_rows(
 
     for cat in all_cats:
         b = budgets.get(cat, {})
-        a = agg.get(cat, {"committed": ZERO, "invoiced": ZERO, "paid": ZERO})
+        a = agg.get(cat, {"committed": ZERO, "invoiced": ZERO, "paid": ZERO, "open_committed": ZERO})
         original = D(b.get("original_budget_try"))
         variations = D(b.get("approved_variations_try"))
         revised = money(original + variations)
-        committed = money(a["committed"])
+        committed = money(a["committed"])  # legacy gross (actual + committed)
         invoiced = money(a["invoiced"])
+        open_committed = money(a["open_committed"])  # CR-023: açık taahhüt
         paid = money(a["paid"])
-        remaining = money(revised - committed)
+        # CR-023: exposure = actual + open committed; remaining nets BOTH out so a
+        # commitment and its linked invoice never double-charge the budget.
+        exposure = money(invoiced + open_committed)
+        remaining = money(revised - exposure)
         pct_spent = pct(safe_div(invoiced, revised) * HUNDRED)
 
         forecast_raw = b.get("forecast_final_try")
         # Forecast falls back to max(revised budget, actual invoiced) when unset.
-        forecast = money(forecast_raw) if forecast_raw is not None else money(max(revised, invoiced))
+        forecast_base = money(forecast_raw) if forecast_raw is not None else money(max(revised, invoiced))
+        # CR-023 §5.3: open commitments are money you WILL spend, so the forecast
+        # is at least actual + open committed regardless of the budget-derived base.
+        forecast = money(max(forecast_base, exposure))
         variance = money(forecast - revised)  # positive = over budget
 
         # CR-003-A: RAG dot rules.
@@ -256,6 +309,9 @@ def _compute_category_rows(
                 "approved_variations_try": money(variations),
                 "revised_budget_try": revised,
                 "committed_try": committed,
+                # CR-023: açık taahhüt (committed minus linked actuals) + exposure.
+                "open_committed_try": open_committed,
+                "exposure_try": exposure,
                 "invoiced_try": invoiced,
                 "paid_try": paid,
                 "remaining_try": remaining,

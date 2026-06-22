@@ -18,15 +18,15 @@ interface KpiDef {
   color: string; // CSS var
   soft: string; // CSS var (soft bg)
   trend?: Trend;
-  placeholder?: boolean; // CR-023 — no data yet
   // CR-014 USD snapshot (fix #3): only figures with a real amount_usd switch on
   // the $ / İkisi toggle. Others stay ₺ (no USD snapshot → never fabricated).
   usd?: { amountUsd: string | null; missing: number };
 }
 
 // CR-029-D §7: 8 KPI cards. Real data from /dashboard (exec_kpis/kpis/kpi_trends)
-// + approvals; card 4 (Taahhüt) is the honest CR-023 placeholder ("—"). Trends
-// shown only where kpi_trends provides a real series — never fabricated.
+// + approvals. Card 4 (Taahhüt Edilen Maliyet) is wired to the CR-023 açık taahhüt
+// (open committed) figure. Trends shown only where kpi_trends provides a real
+// series — never fabricated.
 export function KpiCards({ data, approvalsCount, loading }: { data: any; approvalsCount: number | null; loading?: boolean }) {
   const k = data?.kpis;
   const ex = data?.exec_kpis;
@@ -81,12 +81,17 @@ export function KpiCards({ data, approvalsCount, loading }: { data: any; approva
       usd: { amountUsd: data?.usd?.costs?.amount_usd ?? null, missing: data?.usd?.costs?.usd_missing_count ?? 0 },
     },
     {
+      // CR-023: açık taahhüt — committed-but-not-yet-billed exposure. Detail/tooltip
+      // shows the full exposure (gerçekleşen + açık taahhüt).
       label: "Taahhüt Edilen Maliyet",
-      value: "—",
+      value: formatCurrencyAbbrev(pb?.open_committed_try ?? pb?.committed_try),
+      valueTitle:
+        pb?.committed_exposure_try != null
+          ? `Açık taahhüt: ${formatCurrency(pb?.open_committed_try ?? pb?.committed_try)} · Toplam maruziyet (gerçekleşen + açık): ${formatCurrency(pb?.committed_exposure_try)}`
+          : formatCurrency(pb?.open_committed_try ?? pb?.committed_try),
       icon: Briefcase,
       color: "var(--color-warning)",
       soft: "var(--color-amber-50)",
-      placeholder: true,
     },
     {
       label: "Tahmini Final Maliyet",
@@ -148,13 +153,11 @@ export function KpiCards({ data, approvalsCount, loading }: { data: any; approva
           </div>
           <div
             title={
-              c.placeholder
-                ? "CR-023 ile gelecek"
-                : showUsd && c.usd && c.usd.missing > 0
-                  ? `${c.usd.missing} kayıt için kur bulunamadı; USD toplamı eksik olabilir`
-                  : c.valueTitle
+              showUsd && c.usd && c.usd.missing > 0
+                ? `${c.usd.missing} kayıt için kur bulunamadı; USD toplamı eksik olabilir`
+                : c.valueTitle
             }
-            className={cn("mt-1.5 text-[21px] font-semibold leading-none tabular", c.placeholder && "text-text-faint")}
+            className="mt-1.5 text-[21px] font-semibold leading-none tabular"
           >
             {showUsd && c.usd ? (
               c.usd.amountUsd == null ? (
@@ -169,16 +172,14 @@ export function KpiCards({ data, approvalsCount, loading }: { data: any; approva
             )}
           </div>
           <div className="mt-1 h-[14px] text-[11px]">
-            {c.placeholder ? (
-              <span className="text-text-faint">Yakında</span>
-            ) : c.trend?.deltaText ? (
+            {c.trend?.deltaText ? (
               <span className={cn(c.trend.tone === "pos" ? "text-success" : c.trend.tone === "neg" ? "text-danger" : "text-text-muted")}>
                 {c.trend.deltaText}
               </span>
             ) : null}
           </div>
           <div className="mt-1.5 h-[26px]">
-            {c.trend?.series && c.trend.series.length >= 2 && !c.placeholder && (
+            {c.trend?.series && c.trend.series.length >= 2 && (
               <Sparkline data={c.trend.series} color={c.color} className="h-[26px] w-full" />
             )}
           </div>

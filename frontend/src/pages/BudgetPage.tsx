@@ -18,11 +18,27 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { BudgetCategoryRow, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
-import { AlertTriangle, ArrowUpRight, Download, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, FileText, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 const RAG_BG: Record<string, string> = { red: "bg-red-50", amber: "bg-amber-50", green: "" };
+
+// CR-023: a commitment with its relief progress (from /projects/:id/commitments).
+type Commitment = {
+  id: string;
+  cost_category: string;
+  label_tr: string;
+  supplier_name: string | null;
+  description: string | null;
+  po_number: string | null;
+  amount_try: string;
+  invoiced_try: string;
+  open_try: string;
+  pct_relieved: string;
+  invoice_count: number;
+  fully_relieved: boolean;
+};
 
 export default function BudgetPage() {
   const { id } = useParams();
@@ -34,7 +50,12 @@ export default function BudgetPage() {
     entry_type: filters.entry_type || undefined,
     per_page: 100,
   });
+  // CR-023: per-commitment relief progress, keyed by commitment id.
+  const commitments = useFetch<{ commitments: Commitment[] }>(`/projects/${id}/commitments`);
+  const reliefById: Record<string, Commitment> = {};
+  for (const c of commitments.data?.commitments ?? []) reliefById[c.id] = c;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [billing, setBilling] = useState<Commitment | null>(null); // commitment being invoiced
   const [editingCost, setEditingCost] = useState<CostEntry | null>(null);
   const [catRow, setCatRow] = useState<BudgetCategoryRow | null>(null); // CR-004-L
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -50,6 +71,7 @@ export default function BudgetPage() {
   const refetchAll = () => {
     costs.refetch();
     budget.refetch();
+    commitments.refetch(); // CR-023: relief progress changes when an actual is linked
     setRollupKey((k) => k + 1); // CR-018-C: refresh the subcategory breakdown
   };
 
@@ -107,6 +129,8 @@ export default function BudgetPage() {
       render: (r) => <EditableMoneyCell value={r.revised_budget_try} onSave={(v) => editRevised(r.cost_category, v)} />,
     },
     { key: "committed_try", header: "Taahhüt", align: "right", render: (r) => formatCurrency(r.committed_try) },
+    // CR-023: açık taahhüt = committed minus what's already been invoiced against it.
+    { key: "open_committed_try", header: "Açık Taahhüt", align: "right", render: (r) => <span className="text-accent" title="Taahhüt edilen ama henüz faturalanmamış tutar">{formatCurrency(r.open_committed_try ?? "0")}</span> },
     { key: "invoiced_try", header: "Faturalanan", align: "right", render: (r) => formatCurrency(r.invoiced_try) },
     { key: "paid_try", header: "Ödenen", align: "right", render: (r) => formatCurrency(r.paid_try) },
     { key: "remaining_try", header: "Kalan", align: "right", render: (r) => <span className={toNumber(r.remaining_try) < 0 ? "text-danger" : ""}>{formatCurrency(r.remaining_try)}</span> },
@@ -163,7 +187,28 @@ export default function BudgetPage() {
     // CR-018-C: subcategory column; null/blank rolls up as "Belirtilmemiş".
     { key: "subcategory", header: "Alt Kategori", render: (r) => (r.subcategory && r.subcategory.trim()) ? r.subcategory : "Belirtilmemiş" },
     { key: "supplier_name", header: "Tedarikçi", render: (r) => r.supplier_name ?? "—" },
-    { key: "description", header: "Açıklama", render: (r) => r.description ?? "—" },
+    {
+      key: "description",
+      header: "Açıklama",
+      render: (r) => {
+        const rel = r.entry_type === "committed" ? reliefById[r.id] : undefined;
+        return (
+          <div>
+            <span>{r.description ?? "—"}</span>
+            {/* CR-023: relief progress on each commitment row. */}
+            {rel && (
+              <div className="mt-0.5 text-xs text-text-secondary">
+                {formatCurrency(rel.invoiced_try)} faturalandı / {formatCurrency(rel.amount_try)} taahhüt
+                {" · "}
+                <span className={toNumber(rel.open_try) > 0 ? "text-accent" : "text-success"}>
+                  {toNumber(rel.open_try) > 0 ? `${formatCurrency(rel.open_try)} açık` : "tamamlandı"}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
     { key: "amount_try", header: "Tutar", align: "right", render: (r) => formatCurrency(r.amount_try), sortable: true, sortValue: (r) => toNumber(r.amount_try) },
     { key: "total_with_vat_try", header: "KDV Dahil", align: "right", render: (r) => formatCurrency(r.total_with_vat_try) },
     // CR-014-D: USD snapshot (point-in-time). "—" while null (pre-backfill).
@@ -187,6 +232,16 @@ export default function BudgetPage() {
       header: "",
       render: (r) => (
         <div className="flex justify-end gap-2">
+          {/* CR-023: invoice an open commitment — opens the form prefilled + linked. */}
+          {r.entry_type === "committed" && !reliefById[r.id]?.fully_relieved && (
+            <button
+              onClick={() => setBilling(reliefById[r.id] ?? null)}
+              className="inline-flex items-center gap-1 rounded border border-accent px-1.5 py-0.5 text-xs text-accent hover:bg-amber-50"
+              title="Bu taahhüde karşı fatura gir"
+            >
+              <FileText className="h-3.5 w-3.5" /> Faturala
+            </button>
+          )}
           <button onClick={() => openEdit(r)} className="text-text-secondary hover:text-primary" aria-label="Düzenle">
             <Pencil className="h-4 w-4" />
           </button>
@@ -334,6 +389,8 @@ export default function BudgetPage() {
           <span className="font-semibold">Toplam</span>
           <span className="tabular">Revize Bütçe: <b>{formatCurrency(budget.data.totals.revised_budget_try)}</b></span>
           <span className="tabular">Taahhüt: <b>{formatCurrency(budget.data.totals.committed_try)}</b></span>
+          {/* CR-023: açık taahhüt (committed − faturalanmış) + toplam maruziyet. */}
+          <span className="tabular">Açık Taahhüt: <b>{formatCurrency(budget.data.totals.open_committed_try ?? "0")}</b></span>
           <span className="tabular">Faturalanan: <b>{formatCurrency(budget.data.totals.invoiced_try)}</b></span>
           <span className="tabular">Ödenen: <b>{formatCurrency(budget.data.totals.paid_try)}</b></span>
           <span className="tabular">Genel Kalan: <b>{formatCurrency(budget.data.totals.remaining_try)}</b></span>
@@ -370,6 +427,15 @@ export default function BudgetPage() {
         editing={editingCost}
         onClose={() => { setDrawerOpen(false); setEditingCost(null); }}
         onSaved={() => { setEditingCost(null); refetchAll(); }}
+      />
+
+      {/* CR-023: dedicated drawer for invoicing against a commitment (Faturala). */}
+      <CostDrawer
+        open={!!billing}
+        projectId={id!}
+        billing={billing}
+        onClose={() => setBilling(null)}
+        onSaved={() => { setBilling(null); refetchAll(); }}
       />
 
       {/* CR-004-L: budget category detail drawer */}
@@ -572,7 +638,7 @@ function SubcategoryBreakdown({ projectId, refreshKey }: { projectId: string; re
   );
 }
 
-function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: boolean; projectId: string; editing?: CostEntry | null; onClose: () => void; onSaved: () => void }) {
+function CostDrawer({ open, projectId, editing, billing, onClose, onSaved }: { open: boolean; projectId: string; editing?: CostEntry | null; billing?: Commitment | null; onClose: () => void; onSaved: () => void }) {
   const empty = {
     entry_date: new Date().toISOString().slice(0, 10),
     entry_type: "actual",
@@ -586,6 +652,7 @@ function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: bool
     vat_rate: "20",
     payment_due_date: "",
     notes: "",
+    commitment_id: "", // CR-023: set in billing (Faturala) mode
   };
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
@@ -595,9 +662,11 @@ function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: bool
   const set = (k: string, v: string) => setForm((f: any) => ({ ...f, [k]: v }));
 
   // CR-001-G: prefill the form when editing an existing entry.
+  // CR-023: in billing mode prefill a linked actual against the open commitment.
   useEffect(() => {
     if (open && editing) {
       setForm({
+        ...empty,
         entry_date: editing.entry_date ?? empty.entry_date,
         entry_type: editing.entry_type ?? "actual",
         cost_category: editing.cost_category ?? "",
@@ -610,12 +679,22 @@ function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: bool
         vat_rate: editing.vat_rate ?? "20",
         payment_due_date: editing.payment_due_date ?? "",
         notes: editing.notes ?? "",
+        commitment_id: editing.commitment_id ?? "",
+      });
+    } else if (open && billing) {
+      setForm({
+        ...empty,
+        entry_type: "actual",
+        cost_category: billing.cost_category ?? "",
+        supplier_name: billing.supplier_name ?? "",
+        amount_try: billing.open_try ?? "",
+        commitment_id: billing.id,
       });
     } else if (open && !editing) {
       setForm(empty);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, editing]);
+  }, [open, editing, billing]);
 
   // CR-001-D: company custom categories appear under their own group.
   useEffect(() => {
@@ -633,6 +712,8 @@ function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: bool
         ...form,
         amount_eur: form.amount_eur || null,
         payment_due_date: form.payment_due_date || null,
+        // CR-023: only send a relief link when one is set (Faturala flow).
+        commitment_id: form.commitment_id || null,
       };
       if (editing) {
         await apiPut(`/projects/${projectId}/costs/${editing.id}`, body);
@@ -678,8 +759,16 @@ function CostDrawer({ open, projectId, editing, onClose, onSaved }: { open: bool
   const aiClass = (k: string) => (aiFields.has(k) ? "bg-navy-50" : "");
 
   return (
-    <SideDrawer open={open} title={editing ? "Maliyet Düzenle" : "Maliyet Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.amount_try || !!form.cost_category}>
+    <SideDrawer open={open} title={billing ? "Taahhüde Karşı Faturala" : editing ? "Maliyet Düzenle" : "Maliyet Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.amount_try || !!form.cost_category}>
       <div className="space-y-3">
+        {/* CR-023: billing-against-commitment context banner. */}
+        {billing && (
+          <div className="rounded-md border border-accent bg-amber-50 px-3 py-2 text-xs text-text-secondary">
+            <b className="text-primary">{billing.label_tr}</b> taahhüdüne karşı fatura giriliyor.
+            {" "}Açık tutar: <b>{formatCurrency(billing.open_try)}</b> / {formatCurrency(billing.amount_try)} taahhüt.
+            <div className="mt-0.5">Tutarı değiştirebilirsiniz; girilen fatura bu taahhüdü düşer (mükerrer saymaz).</div>
+          </div>
+        )}
         <div>
           <Button variant="outline" className="w-full" onClick={() => extractRef.current?.click()}>
             PDF Fatura Yükle (AI ile doldur)

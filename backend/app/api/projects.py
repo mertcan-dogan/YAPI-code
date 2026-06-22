@@ -71,6 +71,7 @@ def _summary(f: dict) -> dict:
     """Compact KPI summary for list/dashboard rows."""
     keys = [
         "contract_value_try", "revised_budget_try", "total_committed_try",
+        "total_open_committed_try", "total_committed_exposure_try",
         "total_actual_try", "total_actual_with_vat_try", "remaining_budget_try",
         "forecast_final_cost_try", "current_profit_try", "margin_pct",
         "total_invoiced_try", "total_collected_try", "total_outstanding_try",
@@ -310,23 +311,31 @@ def get_budget(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(g
     cats = f["categories"]
     rows = []
     tot_revised = tot_committed = tot_invoiced = tot_paid = D(0)
+    tot_open_committed = tot_exposure = tot_remaining = D(0)
     for c in cats:
         row = _jsonify(c)
         row["label_tr"] = COST_CATEGORIES.get(c["cost_category"], c["cost_category"])
         rows.append(row)
         tot_revised += c["revised_budget_try"]
         tot_committed += c["committed_try"]
+        tot_open_committed += c["open_committed_try"]
+        tot_exposure += c["exposure_try"]
         tot_invoiced += c["invoiced_try"]
         tot_paid += c["paid_try"]
+        tot_remaining += c["remaining_try"]
     return success(
         {
             "categories": rows,
             "totals": {
                 "revised_budget_try": str(money(tot_revised)),
+                # Legacy gross committed kept; CR-023 surfaces açık taahhüt + exposure.
                 "committed_try": str(money(tot_committed)),
+                "open_committed_try": str(money(tot_open_committed)),
+                "exposure_try": str(money(tot_exposure)),
                 "invoiced_try": str(money(tot_invoiced)),
                 "paid_try": str(money(tot_paid)),
-                "remaining_try": str(money(tot_revised - tot_committed)),
+                # Remaining nets actual + open committed (no double-count, CR-023).
+                "remaining_try": str(money(tot_remaining)),
                 "forecast_final_cost_try": str(f["forecast_final_cost_try"]),
             },
         }
@@ -581,6 +590,8 @@ def company_dashboard(
     total_net_cash = D(0)
     total_revised_budget = D(0)
     total_committed = D(0)
+    total_open_committed = D(0)  # CR-023: portfolio açık taahhüt
+    total_exposure = D(0)        # CR-023: actual + open committed
     total_actual = D(0)
     mf_rows = []
     mf_target_num = D(0)
@@ -598,6 +609,8 @@ def company_dashboard(
         total_net_cash += f["net_cash_position_try"]
         total_revised_budget += f["revised_budget_try"]
         total_committed += f["total_committed_try"]
+        total_open_committed += f["total_open_committed_try"]
+        total_exposure += f["total_committed_exposure_try"]
         total_actual += f["total_actual_try"]
         if f["target_margin_pct"] is not None:
             mf_rows.append({
@@ -705,7 +718,12 @@ def company_dashboard(
             "portfolio_budget": {
                 "contract_try": str(money(total_contract)),
                 "revised_budget_try": str(money(total_revised_budget)),
-                "committed_try": str(money(total_committed)),
+                # CR-023: the committed lane is now OPEN committed (relief-aware).
+                # Legacy gross + exposure are kept alongside for tooltips/detail.
+                "committed_try": str(money(total_open_committed)),
+                "committed_gross_try": str(money(total_committed)),
+                "open_committed_try": str(money(total_open_committed)),
+                "committed_exposure_try": str(money(total_exposure)),
                 "actual_try": str(money(total_actual)),
                 "forecast_final_cost_try": str(money(total_forecast_cost)),
             },

@@ -49,6 +49,16 @@ class CostEntry(TimestampSoftDeleteMixin, Base):
     amount_paid_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), server_default="0")
 
     entry_type: Mapped[str] = mapped_column(String(20), default="actual", server_default="actual")
+    # CR-023: commitment relief. On an *actual* entry, points to the committed
+    # entry it (partly) fulfils — open_commitment nets these out so a commitment
+    # and its later invoice never double-count exposure. Null for standalone
+    # actuals and for committed entries themselves. Light optional PO metadata
+    # lives on the committed entry.
+    commitment_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("cost_entries.id"), nullable=True
+    )
+    po_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expected_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # CR-003-J: large entries await director approval and are excluded from the dashboard.
     pending_approval: Mapped[bool] = mapped_column(default=False, server_default="false")
     approval_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
