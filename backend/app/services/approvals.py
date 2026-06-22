@@ -225,6 +225,7 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
     if destination == "cost":
         from app.models.cost_entry import CostEntry
         from app.schemas.cost import CostEntryCreate
+        from app.services import fx
 
         try:
             rec = CostEntryCreate(
@@ -250,6 +251,10 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
         )
         db.add(entry)
         db.flush()
+        # CR-023.1: snapshot USD like the manual cost-create + the invoice branch
+        # below — otherwise auto-filed costs save with null amount_usd. Degrades
+        # gracefully, never raises.
+        fx.snapshot_cost_usd(db, entry)
         record_audit(db, company_id=req.company_id, user_id=req.requested_by, table_name="cost_entries",
                      record_id=entry.id, action="INSERT", new_values=snapshot(entry))
 

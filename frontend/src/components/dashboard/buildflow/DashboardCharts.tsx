@@ -5,9 +5,10 @@ import { GripVertical, Info, MoreVertical } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 // CR-029-D §8 (+ fix #6): three chart cards wired to the real /dashboard payload.
-// Each chart owns ONE legend (no doubled Recharts legend). Taahhüt (committed)
-// series = honest CR-023 placeholder. Per-project margin lines come from the real
-// margin_fade target→current pairs (per-project monthly history isn't tracked).
+// Each chart owns ONE legend (no doubled Recharts legend). CR-023.1: the Taahhüt
+// (committed) series is real now — per-project open committed from
+// portfolio_performance. Per-project margin lines come from the real margin_fade
+// target→current pairs (per-project monthly history isn't tracked).
 
 const AXIS_TICK = { fontSize: 10, fill: "var(--color-text-faint)" };
 const SERIES = ["#2563EB", "#14B8A6", "#10B981", "#F59E0B", "#8B5CF6", "#F97316"];
@@ -81,11 +82,13 @@ export function DashboardCharts({ data, loading }: { data: any; loading?: boolea
   const minCash = data?.cash_forecast?.min_cash_try;
   const minCashMonth = data?.cash_forecast?.min_cash_month;
 
-  // 2) Budget (Sözleşme) vs Gerçekleşen vs Tahmin per project (Taahhüt = CR-023)
+  // 2) Budget (Sözleşme) vs Gerçekleşen vs Taahhüt vs Tahmin per project.
+  // CR-023.1: Taahhüt = open committed (açık taahhüt), matching the KPI headline.
   const budgetData = (data?.portfolio_performance ?? []).map((p: any) => ({
     project: p.project,
     contract: toNumber(p.contract_try),
     actual: toNumber(p.actual_try),
+    committed: toNumber(p.committed_try),
     forecast: toNumber(p.forecast_final_try),
   }));
 
@@ -128,12 +131,12 @@ export function DashboardCharts({ data, loading }: { data: any; loading?: boolea
         </div>
       </ChartCard>
 
-      <ChartCard title="Bütçe vs Gerçekleşen vs Taahhüt vs Tahmin" info="Proje bazında sözleşme, gerçekleşen ve tahmini final maliyet. Taahhüt CR-023 ile gelecek.">
+      <ChartCard title="Bütçe vs Gerçekleşen vs Taahhüt vs Tahmin" info="Proje bazında sözleşme, gerçekleşen, açık taahhüt ve tahmini final maliyet.">
         <LegendRow items={[
           { label: "Sözleşme", color: "#CBD5E1" },
           { label: "Gerçekleşen", color: "var(--color-brand)" },
+          { label: "Taahhüt", color: "var(--color-teal)" },
           { label: "Tahmin", color: "#0F172A" },
-          { label: "Taahhüt (yakında)", color: "var(--color-teal)", muted: true },
         ]} />
         <div className="px-2.5 pb-3">
           {budgetData.length ? (
@@ -145,6 +148,7 @@ export function DashboardCharts({ data, loading }: { data: any; loading?: boolea
                 <Tooltip formatter={(v: any) => formatCurrency(v)} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid var(--color-border)" }} />
                 <Bar dataKey="contract" name="Sözleşme" fill="#CBD5E1" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="actual" name="Gerçekleşen" fill="var(--color-brand)" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="committed" name="Taahhüt" fill="var(--color-teal)" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="forecast" name="Tahmin" fill="#0F172A" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

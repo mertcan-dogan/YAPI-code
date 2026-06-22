@@ -7,6 +7,7 @@ const { toastInfo } = vi.hoisted(() => ({ toastInfo: vi.fn() }));
 vi.mock("@/store/toast", () => ({ toast: { info: toastInfo, success: vi.fn(), error: vi.fn() } }));
 
 import { BriefingHero } from "./BriefingHero";
+import { DashboardCharts } from "./DashboardCharts";
 import { KpiCards } from "./KpiCards";
 import { ProjectRiskTable } from "./ProjectRiskTable";
 import { ReportsPanel } from "./ReportsPanel";
@@ -32,6 +33,22 @@ describe("KpiCards (CR-029-D)", () => {
     expect(screen.getByText("12,4 Mn ₺")).toBeInTheDocument();
     expect(screen.queryByText("Yakında")).not.toBeInTheDocument();
     expect(screen.getByText("27")).toBeInTheDocument(); // approvals
+  });
+});
+
+describe("DashboardCharts (CR-023.1)", () => {
+  it("wires the Taahhüt series to real open-committed data, no 'yakında'", () => {
+    const data = {
+      portfolio_performance: [
+        { project: "Proje 0", contract_try: "1000000", actual_try: "600000", committed_try: "150000", forecast_final_try: "800000" },
+      ],
+      portfolio_budget: { committed_try: "150000", open_committed_try: "150000", committed_exposure_try: "750000" },
+    };
+    wrap(<DashboardCharts data={data} loading={false} />);
+    // The committed series legend is now a real "Taahhüt" (no placeholder suffix).
+    expect(screen.getByText("Taahhüt")).toBeInTheDocument();
+    expect(screen.queryByText("Taahhüt (yakında)")).not.toBeInTheDocument();
+    expect(screen.queryByText(/yakında/i)).not.toBeInTheDocument();
   });
 });
 
