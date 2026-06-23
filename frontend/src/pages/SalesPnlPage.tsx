@@ -136,7 +136,7 @@ export default function SalesPnlPage() {
                   <PnlRow label="Gelir" tryV={pnl?.revenue_try} usdV={pnl?.revenue_usd} showUsd={showUsd} />
                   <PnlRow label="Maliyet (−)" tryV={pnl?.cost_try} usdV={pnl?.cost_usd} showUsd={showUsd} muted />
                   <PnlRow label="Finansman (−)" tryV={pnl?.financing_try} usdV={pnl?.financing_usd} showUsd={showUsd} muted />
-                  <PnlRow label="Net (finansman hariç)" tryV={pnl?.net_excl_financing_try} usdV={pnl?.net_excl_financing_usd} showUsd={showUsd} strong colored />
+                  <PnlRow label="Net (finansman hariç)" hint="tüm proje, bugüne kadar (satılmamış daireler dahil)" tryV={pnl?.net_excl_financing_try} usdV={pnl?.net_excl_financing_usd} showUsd={showUsd} strong colored />
                   <PnlRow label="Net (finansman dahil)" tryV={pnl?.net_incl_financing_try} usdV={pnl?.net_incl_financing_usd} showUsd={showUsd} strong colored />
                   <tr className="border-t border-border">
                     <td className="py-2 text-text-secondary">Marj %</td>
@@ -231,7 +231,14 @@ export default function SalesPnlPage() {
             <div className="mb-3 flex flex-wrap gap-3">
               <SummaryChip label="Σ Satış" value={formatCurrency(sales.data.totals.sale_price_try)} />
               <SummaryChip label="Σ Maliyet Payı" value={formatCurrency(sales.data.totals.cost_try)} />
-              <SummaryChip label="Σ Kar/Zarar" value={formatCurrency(sales.data.totals.pnl_try)} valueClass={pnlClass(sales.data.totals.pnl_try)} />
+              <SummaryChip label="Σ Kar/Zarar" value={formatCurrency(sales.data.totals.pnl_try)} valueClass={pnlClass(sales.data.totals.pnl_try)} hint="yalnızca satılan dairelerin brüt karı" />
+              {pnl && (
+                <SummaryChip
+                  label="Satılmamış daire maliyeti"
+                  value={formatCurrency(toNumber(pnl.cost_try) - toNumber(sales.data.totals.cost_try))}
+                  hint="proje Net'i ile satılan kar farkını açıklar"
+                />
+              )}
               <SummaryChip label="Adet" value={String(sales.data.totals.count)} />
               {sales.data.totals.avg_price_per_m2_try && <SummaryChip label="Ort. ₺/m²" value={formatCurrency(sales.data.totals.avg_price_per_m2_try)} />}
             </div>
@@ -292,12 +299,15 @@ function sourceLabel(pnl?: ProjectPnl): string {
   return pnl.revenue_source === "sales" ? "Satış + Arsa Sahibi" : "Hakediş";
 }
 
-function PnlRow({ label, tryV, usdV, showUsd, muted, strong, colored }: {
-  label: string; tryV?: string | null; usdV?: string | null; showUsd: boolean; muted?: boolean; strong?: boolean; colored?: boolean;
+function PnlRow({ label, hint, tryV, usdV, showUsd, muted, strong, colored }: {
+  label: string; hint?: string; tryV?: string | null; usdV?: string | null; showUsd: boolean; muted?: boolean; strong?: boolean; colored?: boolean;
 }) {
   return (
     <tr className="border-b border-border last:border-0">
-      <td className={cn("py-2", strong ? "font-semibold text-primary" : "text-text-secondary")}>{label}</td>
+      <td className={cn("py-2", strong ? "font-semibold text-primary" : "text-text-secondary")}>
+        {label}
+        {hint && <div className="text-caption font-normal text-text-muted">{hint}</div>}
+      </td>
       <td className={cn("py-2 text-right", strong && "font-semibold", colored ? pnlClass(tryV) : muted ? "text-text-secondary" : "text-primary")}>
         {formatCurrency(tryV)}
       </td>
@@ -344,11 +354,12 @@ function M2Card({ label, trio, sub, showUsd }: { label: string; trio: { try: str
   );
 }
 
-function SummaryChip({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+function SummaryChip({ label, value, valueClass, hint }: { label: string; value: string; valueClass?: string; hint?: string }) {
   return (
     <div className="rounded-card border border-border bg-surface px-4 py-2">
       <div className="overline">{label}</div>
       <div className={cn("tabular text-base font-semibold", valueClass ?? "text-primary")}>{value}</div>
+      {hint && <div className="mt-0.5 text-caption text-text-muted">{hint}</div>}
     </div>
   );
 }

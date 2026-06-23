@@ -119,6 +119,16 @@ describe("SalesPnlPage — revenue-model awareness", () => {
     expect(screen.getByText("Gelir kaynağı: Satış + Arsa Sahibi")).toBeInTheDocument();
   });
 
+  it("clarifies the two profit figures and shows the reconciling unsold-cost chip", () => {
+    setProject("kat_karsiligi");
+    render(createElement(SalesPnlPage));
+    // Project Net vs sold-units margin disambiguation.
+    expect(screen.getByText("tüm proje, bugüne kadar (satılmamış daireler dahil)")).toBeInTheDocument();
+    expect(screen.getByText("yalnızca satılan dairelerin brüt karı")).toBeInTheDocument();
+    // Reconciling line bridging the gap (cost of still-unsold units).
+    expect(screen.getByText("Satılmamış daire maliyeti")).toBeInTheDocument();
+  });
+
   it("colors per-unit profit green and loss red", () => {
     setProject("kat_karsiligi");
     render(createElement(SalesPnlPage));
