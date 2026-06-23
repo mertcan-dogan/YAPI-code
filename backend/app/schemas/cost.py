@@ -37,6 +37,16 @@ class CostEntryCreate(BaseModel):
     commitment_id: uuid.UUID | None = None
     po_number: str | None = None
     expected_date: date | None = None
+    # CR-024: AI document-extraction confidence (0..1); NULL for manual / standard
+    # Excel rows. Persisted as-is; never affects financial math.
+    extraction_confidence: float | None = None
+
+    @field_validator("extraction_confidence")
+    @classmethod
+    def _conf(cls, v):
+        from app.services.calc_fields import coerce_confidence
+
+        return coerce_confidence(v)
 
     @field_validator("amount_try")
     @classmethod
@@ -158,6 +168,7 @@ class CostEntryOut(ORMModel):
     commitment_id: uuid.UUID | None = None
     po_number: str | None = None
     expected_date: date | None = None
+    extraction_confidence: float | None = None
     pending_approval: bool = False
     created_by: uuid.UUID
     created_at: datetime

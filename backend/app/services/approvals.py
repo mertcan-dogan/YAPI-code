@@ -212,7 +212,7 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
 
     from app.responses import APIError
     from app.services.audit import record_audit, snapshot
-    from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
+    from app.services.calc_fields import coerce_confidence, invoice_net_due, total_with_vat, vat_amount
 
     payload = req.payload or {}
     destination = payload.get("destination")
@@ -239,6 +239,7 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
                 payment_due_date=fields.get("payment_due_date") or None,
                 payment_status=fields.get("payment_status") or "unpaid",
                 document_url=doc_url,
+                extraction_confidence=payload.get("confidence"),
             )
         except (ValidationError, TypeError, ValueError) as exc:
             raise APIError(422, "VALIDATION_ERROR", "Belge alanları geçersiz: " + str(exc)[:120])
@@ -292,7 +293,8 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
             vat_amount_try=vat_amount(data["amount_try"], data["vat_rate"]),
             total_with_vat_try=total_with_vat(data["amount_try"], data["vat_rate"]),
             net_due_try=invoice_net_due(data["amount_try"], data["vat_rate"], data["retention_amount_try"]),
-            amount_received_try=0, payment_status="unpaid", **data,
+            amount_received_try=0, payment_status="unpaid",
+            extraction_confidence=coerce_confidence(payload.get("confidence")), **data,
         )
         db.add(inv)
         try:

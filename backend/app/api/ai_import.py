@@ -26,7 +26,7 @@ from app.services import fx
 from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
-from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
+from app.services.calc_fields import coerce_confidence, invoice_net_due, total_with_vat, vat_amount
 from app.services.excel_import import LABEL_TO_KEY, LEGACY_XLS_MESSAGE, excel_to_text, is_legacy_xls
 
 router = APIRouter(tags=["ai-import"])
@@ -106,6 +106,9 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
     for raw in payload.maliyet_girisleri:
         rec = _clean(raw)
         rec["cost_category"] = _normalise_category(rec.get("cost_category"))
+        # CR-024: persist the AI's per-record 0..1 confidence (_clean drops the
+        # raw "confidence" key, so read it from the original record).
+        rec["extraction_confidence"] = raw.get("confidence")
         try:
             item = CostEntryCreate(**rec)
         except ValidationError:
@@ -141,7 +144,8 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
             vat_amount_try=vat_amount(d["amount_try"], d["vat_rate"]),
             total_with_vat_try=total_with_vat(d["amount_try"], d["vat_rate"]),
             net_due_try=invoice_net_due(d["amount_try"], d["vat_rate"], d["retention_amount_try"]),
-            amount_received_try=0, payment_status="unpaid", **d,
+            amount_received_try=0, payment_status="unpaid",
+            extraction_confidence=coerce_confidence(raw.get("confidence")), **d,
         )
         db.add(inv)
         try:

@@ -110,6 +110,8 @@ class CaptureConfirm(BaseModel):
     vat_rate: Decimal = Decimal("20")
     payment_due_date: date | None = None
     payment_status: str = "unpaid"
+    # CR-024: AI's 0..1 extraction confidence from the capture step (optional).
+    extraction_confidence: float | None = None
 
 
 @router.post("/projects/{project_id}/document-capture/confirm")
@@ -134,6 +136,7 @@ def confirm_document(
             payment_due_date=payload.payment_due_date,
             payment_status=payload.payment_status,
             document_url=doc_url,
+            extraction_confidence=payload.extraction_confidence,
         )
     except ValidationError as exc:
         msg = exc.errors()[0].get("msg", "Geçersiz veri") if exc.errors() else "Geçersiz veri"
@@ -525,6 +528,8 @@ class SmartCaptureConfirm(BaseModel):
     vat_rate: Decimal = Decimal("20")
     payment_due_date: date | None = None
     payment_status: str = "unpaid"
+    # CR-024: AI's 0..1 extraction confidence from the smart-capture step (optional).
+    extraction_confidence: float | None = None
 
 
 @router.post("/document-capture/confirm")
@@ -544,6 +549,7 @@ def smart_capture_confirm(payload: SmartCaptureConfirm, user: CurrentUser, db: S
             payment_due_date=payload.payment_due_date,
             payment_status=payload.payment_status,
             document_url=doc_url,
+            extraction_confidence=payload.extraction_confidence,
         )
     except ValidationError as exc:
         msg = exc.errors()[0].get("msg", "Geçersiz veri") if exc.errors() else "Geçersiz veri"

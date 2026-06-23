@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Computed, Date, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Computed, Date, Float, ForeignKey, Numeric, String, Text, UniqueConstraint
 from app.models.types import GUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,4 +52,7 @@ class ClientInvoice(TimestampSoftDeleteMixin, Base):
 
     document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # CR-024: AI document-extraction confidence (0..1) for auto-filed / AI-imported
+    # invoices; NULL when entered manually. Display + monitoring only.
+    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

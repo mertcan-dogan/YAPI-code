@@ -3,7 +3,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, Date, Float, ForeignKey, Numeric, String, Text
 from app.models.types import GUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -65,6 +65,10 @@ class CostEntry(TimestampSoftDeleteMixin, Base):
     document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # SHA-256 of the captured document bytes — duplicate detection (smart capture).
     document_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # CR-024: AI document-extraction confidence (0..1) captured at import time —
+    # NULL for manually entered / standard-Excel rows (no AI involved). Display +
+    # capture-quality monitoring only; never affects financial math.
+    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_by: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
