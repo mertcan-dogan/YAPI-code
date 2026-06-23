@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Card, CardBody, Select, Button } from "@/components/ui";
+import { LoadError } from "@/components/EmptyState";
 import { useFetch } from "@/hooks/useFetch";
 import { api } from "@/lib/api";
 import { toast } from "@/store/toast";
@@ -16,7 +17,7 @@ const REPORTS = [
 ];
 
 export default function ReportsPage() {
-  const { data } = useFetch<Project[]>("/projects");
+  const { data, loading: projectsLoading, error: projectsError, refetch: refetchProjects } = useFetch<Project[]>("/projects");
   const [projectId, setProjectId] = useState("");
 
   const download = async (key: string) => {
@@ -80,10 +81,16 @@ export default function ReportsPage() {
         </CardBody>
       </Card>
       <div className="mb-4 max-w-sm">
-        <Select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-          <option value="">Proje seçin...</option>
-          {(data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </Select>
+        {/* A failed project load must not look like an empty dropdown — show a
+            clear error + retry so report selection isn't silently broken. */}
+        {projectsError && !projectsLoading ? (
+          <LoadError message="Projeler yüklenemedi." onRetry={refetchProjects} />
+        ) : (
+          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={projectsLoading}>
+            <option value="">{projectsLoading ? "Projeler yükleniyor…" : "Proje seçin..."}</option>
+            {(data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+        )}
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {REPORTS.map((r) => (

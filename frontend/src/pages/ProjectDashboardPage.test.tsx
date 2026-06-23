@@ -169,6 +169,41 @@ describe("ProjectDashboardPage redesign", () => {
     expect(screen.getByText(/Maliyet dağılımı yüklenemedi/)).toBeInTheDocument();
   });
 
+  it("shows a retryable error on the period charts when the ranged cashflow fetch fails (not an empty state)", () => {
+    const refetch = vi.fn();
+    h.cashflow = { data: null, meta: null, loading: false, error: "500", refetch };
+    render(createElement(ProjectDashboardPage));
+    // Activate a date range so the ranged cashflow fetch drives the S-curve + cashflow charts.
+    fireEvent.click(screen.getByText("Son 3 Ay"));
+    // Both charts surface the retryable error instead of collapsing to a silent "no data".
+    expect(screen.getAllByText("Dönem grafiği yüklenemedi.").length).toBe(2);
+    expect(screen.queryByText("Henüz maliyet verisi yok.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Henüz nakit hareketi yok.")).not.toBeInTheDocument();
+    // Retry is wired to the ranged-cashflow refetch.
+    fireEvent.click(screen.getAllByText("Tekrar Dene")[0]);
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("non-ranged charts show the normal EmptyState (not LoadError) when there is simply no data", () => {
+    // Default window comes from the dashboard fetch (cashflow: []). No range is
+    // active, so the charts must read as "no data" — never a failure.
+    render(createElement(ProjectDashboardPage));
+    expect(screen.getByText("Henüz maliyet verisi yok.")).toBeInTheDocument();
+    expect(screen.getByText("Henüz nakit hareketi yok.")).toBeInTheDocument();
+    expect(screen.queryByText("Dönem grafiği yüklenemedi.")).not.toBeInTheDocument();
+  });
+
+  it("a cashflow error does NOT leak a chart LoadError while NO range is active", () => {
+    // With the default preset ("Tümü") the ranged cashflow fetch is disabled
+    // (URL=null, never fetched), so an error parked on it must never surface — the
+    // charts fall back to the dashboard window and read as empty, not failed.
+    h.cashflow = { data: null, meta: null, loading: false, error: "500", refetch: () => {} };
+    render(createElement(ProjectDashboardPage));
+    expect(screen.queryByText("Dönem grafiği yüklenemedi.")).not.toBeInTheDocument();
+    expect(screen.getByText("Henüz maliyet verisi yok.")).toBeInTheDocument();
+    expect(screen.getByText("Henüz nakit hareketi yok.")).toBeInTheDocument();
+  });
+
   it("renders LoadError+retry (not an infinite skeleton) when the dashboard load fails/times out", () => {
     const refetch = vi.fn();
     h.dashboard = { data: null, meta: null, loading: false, error: "İstek zaman aşımına uğradı.", refetch };

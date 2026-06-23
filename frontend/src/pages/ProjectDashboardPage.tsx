@@ -289,6 +289,11 @@ export default function ProjectDashboardPage() {
 
   // Build S-curve + monthly cashflow series from the (optionally ranged) window.
   const cf = rangeActive ? (cfRange.data ?? []) : (data?.cashflow ?? []);
+  // Silent-load guard: when a range is active and its cashflow fetch fails, the
+  // charts must show a retryable error — NOT collapse to an "empty" EmptyState
+  // that reads as "no data". (The non-ranged window comes from the main dashboard
+  // fetch, already covered by the page-level LoadError above.)
+  const cfError = rangeActive && !!cfRange.error && !cfRange.loading;
   let plannedCum = 0;
   let actualCum = 0;
   const sCurve = cf.map((r) => {
@@ -743,10 +748,26 @@ export default function ProjectDashboardPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch">
         <DashboardSection title="S-Eğrisi (Kümülatif Maliyet)">
-          <div className="px-4 pb-4">{sCurve.length ? <SCurveChart data={sCurve} /> : <EmptyState message="Henüz maliyet verisi yok." />}</div>
+          <div className="px-4 pb-4">
+            {cfError ? (
+              <LoadError message="Dönem grafiği yüklenemedi." onRetry={cfRange.refetch} />
+            ) : sCurve.length ? (
+              <SCurveChart data={sCurve} />
+            ) : (
+              <EmptyState message="Henüz maliyet verisi yok." />
+            )}
+          </div>
         </DashboardSection>
         <DashboardSection title="Aylık Nakit Akışı">
-          <div className="px-4 pb-4">{cashflow.length ? <CashFlowChart data={cashflow} /> : <EmptyState message="Henüz nakit hareketi yok." />}</div>
+          <div className="px-4 pb-4">
+            {cfError ? (
+              <LoadError message="Dönem grafiği yüklenemedi." onRetry={cfRange.refetch} />
+            ) : cashflow.length ? (
+              <CashFlowChart data={cashflow} />
+            ) : (
+              <EmptyState message="Henüz nakit hareketi yok." />
+            )}
+          </div>
         </DashboardSection>
       </div>
 
