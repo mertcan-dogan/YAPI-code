@@ -7,9 +7,10 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { useFetch } from "@/hooks/useFetch";
 import { apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
+import { streamAgent } from "@/lib/agentStream";
 import { toast } from "@/store/toast";
 import type { Project } from "@/types";
-import type { AgentChartSpec, AgentResponse, Citation } from "@/types/agent";
+import type { AgentChartSpec, Citation } from "@/types/agent";
 import { formatDateTime } from "@/utils/format";
 import { ArrowUp, FileText, Loader2, Pin, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -42,23 +43,9 @@ interface Msg {
   query_log_id?: string | null;
 }
 
-// CR-007-F: tool name -> Turkish step label, for the post-response "thinking" replay.
-const TOOL_STEPS: Record<string, string> = {
-  list_projects: "Projeler listeleniyor…",
-  get_project_financials: "Proje finansalları getiriliyor…",
-  query_cost_entries: "Maliyet kayıtları inceleniyor…",
-  query_client_invoices: "Hakedişler inceleniyor…",
-  query_subcontractors: "Alt yükleniciler inceleniyor…",
-  get_vendor_spend: "Tedarikçi harcamaları inceleniyor…",
-  compare_vendors: "Tedarikçiler karşılaştırılıyor…",
-  get_cashflow: "Nakit akışı hesaplanıyor…",
-  get_overdue_payments: "Vadesi geçmiş ödemeler taranıyor…",
-  create_chart: "Grafik oluşturuluyor…",
-};
-
-const GENERIC_STEPS = ["Soru anlaşılıyor…", "Veriler inceleniyor…", "Analiz hazırlanıyor…"];
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+// CR-011-D §4.1: the step label shown before the first server `step` event arrives.
+// Once tools start running the agent stream pushes real Turkish step labels.
+const INITIAL_STEP = "Soru anlaşılıyor…";
 
 interface Conversation {
   id: string;
@@ -116,7 +103,11 @@ export default function AIAssistantPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [thinkingStep, setThinkingStep] = useState<string | null>(null);
+  // CR-011-D: live token buffer for the in-progress answer (streamed token-by-token).
+  const [liveText, setLiveText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  // Abort the in-flight stream on unmount or when a new question starts.
+  const abortRef = useRef<(() => void) | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -188,11 +179,15 @@ export default function AIAssistantPage() {
     else localStorage.removeItem(ACTIVE_KEY);
   }, [activeId]);
 
-  // CR-004-I: auto-scroll to the newest message within the chat container.
+  // CR-004-I: auto-scroll to the newest message within the chat container. Also
+  // follows the streamed answer as live tokens arrive (CR-011-D).
   useEffect(() => {
     if (messages.length === 0) return;
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [activeId, messages.length, loading]);
+  }, [activeId, messages.length, loading, liveText]);
+
+  // CR-011-D: abort any in-flight token stream when the page unmounts.
+  useEffect(() => () => abortRef.current?.(), []);
 
   // Push a conversation to the server (fire-and-forget; cache already updated).
   const syncConversation = (id: string, title: string, msgs: Msg[], projId: string) => {
@@ -216,7 +211,7 @@ export default function AIAssistantPage() {
     apiDelete(`/ai/conversations/${id}`).catch(() => {});
   };
 
-  const ask = async (question: string) => {
+  const ask = (question: string) => {
     if (!question.trim() || loading) return;
     const userMsg: Msg = { role: "user", text: question };
     const now = new Date().toISOString();
@@ -237,57 +232,54 @@ export default function AIAssistantPage() {
     syncConversation(id, title, afterUser, projectId);
     setInput("");
     setLoading(true);
+    setLiveText("");
+    setThinkingStep(INITIAL_STEP);
 
-    // Brief generic "thinking" animation during the request (no streaming yet, §7.2).
-    let gi = 0;
-    setThinkingStep(GENERIC_STEPS[0]);
-    const timer = window.setInterval(() => {
-      gi = (gi + 1) % GENERIC_STEPS.length;
-      setThinkingStep(GENERIC_STEPS[gi]);
-    }, 1100);
+    // Cancel any previous in-flight stream before starting a new one.
+    abortRef.current?.();
 
-    try {
-      // CR-007-B agent endpoint: send the full session as Anthropic messages
-      // ({role:"ai"|"user", text} -> {role:"assistant"|"user", content}, §0 S2).
-      // The legacy single-shot POST /ai/assistant (CR-003-H) stays available as a
-      // fallback for now; plan its deprecation once the agent endpoint is stable.
-      const res = await apiPost<AgentResponse>("/ai/agent", {
-        messages: toAgentMessages(afterUser),
-        project_id: projectId || null,
-      });
-      window.clearInterval(timer);
-
-      // Short replay of the real steps the agent took, derived from tools_used.
-      for (const t of res.tools_used ?? []) {
-        setThinkingStep(TOOL_STEPS[t] ?? "Araç çalıştırılıyor…");
-        await sleep(420);
-      }
-
-      const aiMsg: Msg = {
-        role: "ai",
-        text: res.answer_markdown || "Bu konuda veri bulunamadı.",
-        at: res.generated_at,
-        charts: res.charts ?? [],
-        citations: res.citations ?? [],
-        tools_used: res.tools_used ?? [],
-        // CR-024: real explainability data + the log id for feedback linkage.
-        row_counts: res.row_counts ?? {},
-        query_log_id: res.query_log_id ?? null,
-      };
+    // CR-011-D §4.1: live token streaming via POST /ai/agent?stream=1. Tokens
+    // arrive on `onDelta` (rendered as they come), real Turkish step labels on
+    // `onStep`, and the full structured AgentResponse on `onFinal`. The transport
+    // (agentStream.ts) falls back to the non-stream endpoint if the stream can't
+    // open, so the answer is never lost.
+    // CR-007-B: the full session is sent as Anthropic messages
+    // ({role:"ai"|"user", text} -> {role:"assistant"|"user", content}, §0 S2).
+    const finish = (aiMsg: Msg) => {
       const afterAi = [...afterUser, aiMsg];
       setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: afterAi, updatedAt: new Date().toISOString() } : c)));
       syncConversation(id, title, afterAi, projectId);
-    } catch (e: any) {
-      window.clearInterval(timer);
-      const aiMsg: Msg = { role: "ai", text: e.message ?? "AI şu an kullanılamıyor." };
-      const afterAi = [...afterUser, aiMsg];
-      setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: afterAi, updatedAt: new Date().toISOString() } : c)));
-      syncConversation(id, title, afterAi, projectId);
-    } finally {
-      window.clearInterval(timer);
+      abortRef.current = null;
       setLoading(false);
       setThinkingStep(null);
-    }
+      setLiveText("");
+    };
+
+    abortRef.current = streamAgent(
+      { messages: toAgentMessages(afterUser), project_id: projectId || null },
+      {
+        // Live answer tokens — append as they arrive for a token-by-token render.
+        onDelta: (text) => setLiveText((prev) => prev + text),
+        // A tool started: clear the preamble preview and show the real step label.
+        onStep: (label) => {
+          setLiveText("");
+          if (label) setThinkingStep(label);
+        },
+        onFinal: (res) =>
+          finish({
+            role: "ai",
+            text: res.answer_markdown || "Bu konuda veri bulunamadı.",
+            at: res.generated_at,
+            charts: res.charts ?? [],
+            citations: res.citations ?? [],
+            tools_used: res.tools_used ?? [],
+            // CR-024: real explainability data + the log id for feedback linkage.
+            row_counts: res.row_counts ?? {},
+            query_log_id: res.query_log_id ?? null,
+          }),
+        onError: () => finish({ role: "ai", text: "AI şu an kullanılamıyor." }),
+      }
+    );
   };
 
   // {role:"ai", text} -> {role:"assistant", content}; user unchanged (§0 S2).
@@ -424,7 +416,24 @@ export default function AIAssistantPage() {
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-2 text-white">
                   <Sparkles className="h-4 w-4 animate-pulse" />
                 </span>
-                <div className="pt-1.5 text-sm text-text-secondary">{thinkingStep ?? "Yanıt hazırlanıyor…"}</div>
+                <div className="min-w-0 flex-1 pt-0.5">
+                  {/* CR-011-D: live token-by-token answer while it streams in… */}
+                  {liveText ? (
+                    <>
+                      <div className="text-sm leading-relaxed text-text-primary">
+                        <MarkdownText text={liveText} />
+                      </div>
+                      <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-brand" /> {thinkingStep ?? "Yanıt yazılıyor…"}
+                      </div>
+                    </>
+                  ) : (
+                    // …or just the real-time step label before the first token arrives.
+                    <div className="flex items-center gap-2 pt-1 text-sm text-text-secondary">
+                      <Loader2 className="h-4 w-4 animate-spin text-brand" /> {thinkingStep ?? "Yanıt hazırlanıyor…"}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             <div ref={endRef} />
