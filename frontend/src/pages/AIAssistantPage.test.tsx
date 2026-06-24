@@ -291,4 +291,28 @@ describe("AIAssistantPage agent steps (Cowork-style collapse)", () => {
     expect(screen.queryByText(/adım tamamlandı/)).not.toBeInTheDocument();
     expect(screen.queryByText(/araç kullanıldı/)).not.toBeInTheDocument();
   });
+
+  // Gap: when EVERY recorded step ran a tool (and there is more than one), the
+  // collapsed group summarises by tool count ("N araç kullanıldı") rather than
+  // step count. Only this branch tells the user how many tools the agent hit; the
+  // other tests only ever produce "N adım tamamlandı" (or assert its absence).
+  it("summarises an all-tool turn as 'N araç kullanıldı', not step count", () => {
+    wrap();
+    submit("Akçansa ne kadar?");
+    const cb = h.streamCalls[0].cb;
+    // Two steps, BOTH carrying a tool (no reasoning/thinking step in between).
+    act(() => cb.onStep("Tedarikçi harcamaları inceleniyor…", "get_vendor_spend"));
+    act(() => cb.onStep("Nakit akışı hesaplanıyor…", "get_cashflow"));
+    act(() =>
+      cb.onFinal({
+        ...FINAL,
+        tools_used: ["get_vendor_spend", "get_cashflow"],
+        row_counts: { get_vendor_spend: 1, get_cashflow: 3 },
+      })
+    );
+
+    // Tool-count summary wins; the step-count phrasing must NOT appear.
+    expect(screen.getByText("2 araç kullanıldı")).toBeInTheDocument();
+    expect(screen.queryByText(/adım tamamlandı/)).not.toBeInTheDocument();
+  });
 });
