@@ -2,6 +2,7 @@ import { AIDisclaimer, Select } from "@/components/ui";
 import { AiTrustBadge } from "@/components/ai/AiTrustBadge";
 import { AiExplainPanel } from "@/components/ai/AiExplainPanel";
 import { AiFeedbackControl } from "@/components/ai/AiFeedbackControl";
+import { AgentSteps, type AgentStep } from "@/components/ai/AgentSteps";
 import { AgentChart } from "@/components/charts/AgentChart";
 import { MarkdownText } from "@/components/MarkdownText";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -41,6 +42,9 @@ interface Msg {
   // CR-024: explainability + feedback (in-session only).
   row_counts?: Record<string, number>;
   query_log_id?: string | null;
+  // Cowork-style thinking steps recorded during the turn (in-session only;
+  // dropped on persist like the other agent extras above).
+  steps?: AgentStep[];
 }
 
 // CR-011-D §4.1: the step label shown before the first server `step` event arrives.
@@ -103,6 +107,10 @@ export default function AIAssistantPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [thinkingStep, setThinkingStep] = useState<string | null>(null);
+  // Cowork-style steps recorded live for the in-progress turn. The ref mirrors
+  // the state so the (closure-captured) finish() can attach the final list.
+  const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
+  const stepsRef = useRef<AgentStep[]>([]);
   // CR-011-D: live token buffer for the in-progress answer (streamed token-by-token).
   const [liveText, setLiveText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -234,6 +242,8 @@ export default function AIAssistantPage() {
     setLoading(true);
     setLiveText("");
     setThinkingStep(INITIAL_STEP);
+    stepsRef.current = [];
+    setLiveSteps([]);
 
     // Cancel any previous in-flight stream before starting a new one.
     abortRef.current?.();
@@ -253,6 +263,8 @@ export default function AIAssistantPage() {
       setLoading(false);
       setThinkingStep(null);
       setLiveText("");
+      stepsRef.current = [];
+      setLiveSteps([]);
     };
 
     abortRef.current = streamAgent(
@@ -260,10 +272,16 @@ export default function AIAssistantPage() {
       {
         // Live answer tokens — append as they arrive for a token-by-token render.
         onDelta: (text) => setLiveText((prev) => prev + text),
-        // A tool started: clear the preamble preview and show the real step label.
-        onStep: (label) => {
+        // A tool started: clear the preamble preview, show the real step label,
+        // and record the step so it survives into the collapsed group on finish.
+        onStep: (label, tool) => {
           setLiveText("");
           if (label) setThinkingStep(label);
+          if (label || tool) {
+            const next = [...stepsRef.current, { label: label ?? "", tool: tool ?? "" }];
+            stepsRef.current = next;
+            setLiveSteps(next);
+          }
         },
         onFinal: (res) =>
           finish({
@@ -276,6 +294,13 @@ export default function AIAssistantPage() {
             // CR-024: real explainability data + the log id for feedback linkage.
             row_counts: res.row_counts ?? {},
             query_log_id: res.query_log_id ?? null,
+            // Prefer the live-recorded steps (they carry Turkish labels). On the
+            // non-stream fallback no `step` events fire, so synthesise steps from
+            // the authoritative tools_used list (label fills in from toolLabels).
+            steps:
+              stepsRef.current.length > 0
+                ? stepsRef.current
+                : (res.tools_used ?? []).map((t) => ({ label: "", tool: t })),
           }),
         onError: () => finish({ role: "ai", text: "AI şu an kullanılamıyor." }),
       }
@@ -359,6 +384,9 @@ export default function AIAssistantPage() {
                     <Sparkles className="h-4 w-4" />
                   </span>
                   <div className="min-w-0 flex-1 pt-0.5 text-sm leading-relaxed text-text-primary">
+                    {/* Cowork-style steps: collapsed group toggle above the answer,
+                        expandable per past turn. Renders nothing when no steps. */}
+                    <AgentSteps steps={m.steps ?? []} rowCounts={m.row_counts} />
                     <MarkdownText text={m.text} />
                     {/* CR-007-G: inline charts rendered from the agent's chart specs. */}
                     {(m.charts ?? []).map((spec, ci) => (
@@ -417,6 +445,8 @@ export default function AIAssistantPage() {
                   <Sparkles className="h-4 w-4 animate-pulse" />
                 </span>
                 <div className="min-w-0 flex-1 pt-0.5">
+                  {/* Live Cowork-style steps — auto-expanded, last row in progress. */}
+                  {liveSteps.length > 0 && <AgentSteps steps={liveSteps} running />}
                   {/* CR-011-D: live token-by-token answer while it streams in… */}
                   {liveText ? (
                     <>
@@ -428,10 +458,13 @@ export default function AIAssistantPage() {
                       </div>
                     </>
                   ) : (
-                    // …or just the real-time step label before the first token arrives.
-                    <div className="flex items-center gap-2 pt-1 text-sm text-text-secondary">
-                      <Loader2 className="h-4 w-4 animate-spin text-brand" /> {thinkingStep ?? "Yanıt hazırlanıyor…"}
-                    </div>
+                    // …or, before the first step/token, just the preamble indicator.
+                    // Once steps exist the panel above already shows the live step.
+                    liveSteps.length === 0 && (
+                      <div className="flex items-center gap-2 pt-1 text-sm text-text-secondary">
+                        <Loader2 className="h-4 w-4 animate-spin text-brand" /> {thinkingStep ?? "Yanıt hazırlanıyor…"}
+                      </div>
+                    )
                   )}
                 </div>
               </div>
