@@ -83,10 +83,13 @@ async def lifespan(app: FastAPI):
     # latest script head. A mismatch logs an ERROR + alerts Sentry but never
     # blocks startup. Best-effort — only meaningful against the real (Postgres) DB.
     try:
-        from app.db import get_engine
+        # CR-040: read alembic_version on the escalated (RLS-bypassing) engine so
+        # the NOBYPASSRLS app role can never trip on it. Falls back to the normal
+        # engine when ADMIN_DATABASE_URL is unset.
+        from app.db import get_admin_engine
 
         if settings.database_url.startswith(("postgres://", "postgresql")):
-            with get_engine().connect() as conn:
+            with get_admin_engine().connect() as conn:
                 verify_migration_head_on_boot(conn)
     except Exception:  # noqa: BLE001 - diagnostics must never block boot
         logging.getLogger("yapi.startup").exception(
@@ -144,9 +147,12 @@ def health():
     # ERROR log + Sentry alert from verify_migration_head_on_boot().
     expected_head = get_expected_head()
     try:
-        from app.db import SessionLocal
+        # CR-040: use the escalated (RLS-bypassing) session for the alembic_version
+        # read so the NOBYPASSRLS app role never trips it. Falls back to the normal
+        # session when ADMIN_DATABASE_URL is unset.
+        from app.db import AdminSessionLocal
 
-        db = SessionLocal()
+        db = AdminSessionLocal()
         try:
             status = check_migration_head(db.connection())
         finally:

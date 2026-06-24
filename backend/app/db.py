@@ -115,14 +115,24 @@ def get_db() -> Generator[Session, None, None]:
 # is blank it reuses the normal sessionmaker, so single-URL deploys and the
 # SQLite test suite (which also override get_sessionmaker) are unaffected.
 
+def get_admin_engine() -> Engine:
+    """Escalated (RLS-bypassing) engine. Falls back to the normal engine when
+    ADMIN_DATABASE_URL is unset (single-URL deploys, tests)."""
+    if not settings.admin_database_url:
+        return get_engine()
+    global _admin_engine
+    if _admin_engine is None:
+        _admin_engine = _build_engine(settings.admin_database_url)
+    return _admin_engine
+
+
 def get_admin_sessionmaker() -> sessionmaker:
-    global _admin_engine, _AdminSessionLocal
     if not settings.admin_database_url:
         return get_sessionmaker()
+    global _AdminSessionLocal
     if _AdminSessionLocal is None:
-        _admin_engine = _build_engine(settings.admin_database_url)
         _AdminSessionLocal = sessionmaker(
-            bind=_admin_engine, autocommit=False, autoflush=False, future=True
+            bind=get_admin_engine(), autocommit=False, autoflush=False, future=True
         )
     return _AdminSessionLocal
 

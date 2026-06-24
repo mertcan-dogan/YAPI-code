@@ -226,7 +226,8 @@ def test_health_stays_200_when_db_unavailable(client, monkeypatch):
     def _db_down():
         raise RuntimeError("connection refused")
 
-    monkeypatch.setattr(db_module, "SessionLocal", _db_down)
+    # CR-040: /health reads alembic_version via the escalated session now.
+    monkeypatch.setattr(db_module, "AdminSessionLocal", _db_down)
 
     r = client.get("/health")
     assert r.status_code == 200
