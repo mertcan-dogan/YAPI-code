@@ -473,7 +473,9 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
 
     Returns a dict with: supplier_name, invoice_number, invoice_date, due_date,
     currency, subtotal, vat_amount, vat_rate, total, line_items[], confidence,
-    suggested_project_id, suggested_cost_category, reasoning.
+    suggested_project_id, suggested_cost_category, suggested_destination
+    (cost|equipment|income — the user confirms it), suggested_equipment_name,
+    reasoning.
     """
     import base64
 
@@ -496,15 +498,18 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
         '"vat_rate": 20, "total": 0.00, '
         '"line_items": [{"description": "...", "quantity": 0, "unit_price": 0.00, "amount": 0.00}], '
         '"confidence": 0.0, "suggested_project_id": "<id|null>", '
-        '"suggested_cost_category": "<anahtar>", "reasoning": "..."}'
+        '"suggested_cost_category": "<anahtar>", '
+        '"suggested_destination": "cost|equipment|income", '
+        '"suggested_equipment_name": "<...|null>", "reasoning": "..."}'
     )
     prompt = (
-        "Bu bir tedarikçi/malzeme faturasının görüntüsü veya PDF'idir (genellikle Türkçe). "
-        "İki görevi yap:\n"
+        "Bu bir inşaat belgesinin (genellikle Türkçe) görüntüsü veya PDF'idir — bir tedarikçi/malzeme "
+        "faturası, bir ekipman kira/satın alma belgesi ya da işverene kesilen bir hakediş/satış faturası "
+        "olabilir. İki görevi yap:\n"
         "1) Fatura alanlarını ve TÜM satır kalemlerini eksiksiz çıkar.\n"
-        "2) Bu faturanın HANGİ projeye ve HANGİ maliyet kategorisine ait olduğunu, sana verilen "
-        "BAĞLAM'ı (tedarikçi geçmişi ve daha önce onaylanmış sınıflandırmalar, aktif proje listesi "
-        "ve her projenin bütçe kategorileri, kategori açıklamaları) kullanarak öner.\n\n"
+        "2) Bu belgenin HANGİ projeye, HANGİ maliyet kategorisine ve HANGİ HEDEF kayda ait olduğunu, "
+        "sana verilen BAĞLAM'ı (tedarikçi geçmişi ve daha önce onaylanmış sınıflandırmalar, aktif proje "
+        "listesi ve her projenin bütçe kategorileri, kategori açıklamaları) kullanarak öner.\n\n"
         "SADECE şu JSON nesnesini döndür:\n" + schema + "\n\n"
         "Kurallar:\n"
         "- subtotal KDV hariç matrah, vat_amount KDV tutarı, total KDV dahil genel toplam "
@@ -516,6 +521,13 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
         "due_date = invoice_date + o gün sayısı olarak hesapla. Hiç bilgi yoksa null.\n"
         "- line_items faturadaki her satır kalemini içersin (yoksa boş dizi).\n"
         f"- suggested_cost_category şu anahtarlardan biri olmalı: {categories}.\n"
+        "- suggested_destination belgenin TÜRÜNE göre tam olarak şu üçünden biri olsun: "
+        "'cost' (tedarikçi/malzeme/taşeron gideri faturası → Gider), "
+        "'equipment' (iş makinesi/ekipman kiralama veya satın alma belgesi → Ekipman), "
+        "'income' (işverene/müşteriye kesilen hakediş veya satış faturası → Gelir). "
+        "Emin değilsen 'cost' döndür.\n"
+        "- suggested_equipment_name yalnızca destination 'equipment' ise ekipmanın adını içersin "
+        "(örn. 'Ekskavatör', 'Vinç'); aksi halde null.\n"
         "- suggested_project_id BAĞLAM'daki projelerden birinin id'si olmalı; uygun proje yoksa null.\n"
         "- reasoning Türkçe olmalı ve seçimini AÇIKLA: tedarikçinin geçmiş kullanımına, satır "
         "kalemlerine, projelerin bütçe kategorilerine ve kategori açıklamalarına atıfta bulun.\n"

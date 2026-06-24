@@ -47,8 +47,9 @@ def test_coerce_confidence_normalises_inputs():
 # --------------------------------------------------------------------------- #
 def test_confirm_persists_confidence_and_exposes_it(client, seed):
     pid = _login(client, seed)
+    cid = seed["a"]["company"].id
     body = {
-        "document_path": f"{pid}/abc.png",
+        "document_path": f"{cid}/{pid}/abc.png",
         "entry_date": "2025-05-01",
         "cost_category": "material_concrete",
         "supplier_name": "Beton A.Ş.",

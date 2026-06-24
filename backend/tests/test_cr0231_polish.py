@@ -83,9 +83,10 @@ def test_portfolio_performance_has_open_committed(client, seed):
 # --------------------------------------------------------------------------- #
 def test_document_capture_confirm_snapshots_usd(client, seed, db):
     pid = _login(client, seed)
+    cid = seed["a"]["company"].id
     _seed_rate(db, "2025-05-01", "32.0000")
     body = {
-        "document_path": f"{pid}/abc.png",
+        "document_path": f"{cid}/{pid}/abc.png",
         "entry_date": "2025-05-01",
         "cost_category": "material_concrete",
         "supplier_name": "Beton A.Ş.",
@@ -103,10 +104,11 @@ def test_document_capture_confirm_snapshots_usd(client, seed, db):
 
 def test_smart_capture_confirm_snapshots_usd(client, seed, db):
     pid = _login(client, seed)
+    cid = seed["a"]["company"].id
     _seed_rate(db, "2025-05-01", "30.0000")
     body = {
         "project_id": str(pid),
-        "document_path": f"{pid}/def.png",
+        "document_path": f"{cid}/inbox/def.png",
         "file_sha256": "a" * 64,
         "entry_date": "2025-05-01",
         "cost_category": "material_concrete",

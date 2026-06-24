@@ -38,9 +38,10 @@ def _project_a(seed):
 def test_destination_omitted_creates_cost_entry(client, seed):
     client.login(seed["a"]["users"][ROLE_DIRECTOR])
     pid = _project_a(seed).id
+    cid = seed["a"]["company"].id
     body = {
         "project_id": str(pid),
-        "document_path": f"{pid}/abc.png",
+        "document_path": f"{cid}/inbox/abc.png",
         "entry_date": "2025-05-01",
         "cost_category": "material_concrete",
         "supplier_name": "Beton A.Ş.",
@@ -59,7 +60,7 @@ def test_destination_omitted_creates_cost_entry(client, seed):
     assert costs["meta"]["total"] == 1
     row = costs["data"][0]
     assert row["entry_type"] == "actual"  # legacy capture is an actual cost
-    assert row["document_url"] == f"documents/{pid}/abc.png"
+    assert row["document_url"] == f"documents/{cid}/inbox/abc.png"
     # VAT math matches calc_fields.
     assert D(str(row["vat_amount_try"])) == D("30000.00")
     assert D(str(row["total_with_vat_try"])) == D("180000.00")
@@ -187,10 +188,11 @@ def test_equipment_without_budget_creates_no_cost(client, seed):
 def test_income_director_creates_invoice_with_correct_net_due(client, seed):
     client.login(seed["a"]["users"][ROLE_DIRECTOR])
     pid = _project_a(seed).id
+    cid = seed["a"]["company"].id
     body = {
         "project_id": str(pid),
         "destination": "income",
-        "document_path": f"{pid}/hak.png",
+        "document_path": f"{cid}/inbox/hak.png",
         "invoice_number": "HK-2025-01",
         "invoice_date": "2025-05-01",
         "due_date": "2025-06-01",
@@ -214,7 +216,7 @@ def test_income_director_creates_invoice_with_correct_net_due(client, seed):
     assert D(str(inv["total_with_vat_try"])) == D("120000.00")
     assert D(str(inv["net_due_try"])) == D("115000.00")
     assert inv["payment_status"] == "unpaid"
-    assert inv["document_url"] == f"documents/{pid}/hak.png"
+    assert inv["document_url"] == f"documents/{cid}/inbox/hak.png"
 
     # No cost rows leaked from the income branch.
     costs = client.get(f"/api/v1/projects/{pid}/costs").json()
@@ -385,6 +387,29 @@ def test_cross_company_project_not_found_income(client, seed):
     assert r.status_code == 404, r.text
     client.login(seed["b"]["users"][ROLE_DIRECTOR])
     assert client.get(f"/api/v1/projects/{pid_b}/invoices").json()["meta"]["total"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# 9. document_path must live under the caller's own company folder (M1 guard)
+# --------------------------------------------------------------------------- #
+def test_document_path_from_other_company_rejected(client, seed):
+    client.login(seed["a"]["users"][ROLE_DIRECTOR])
+    pid = _project_a(seed).id
+    other_cid = seed["b"]["company"].id  # a path under company B's folder
+    body = {
+        "project_id": str(pid),
+        "destination": "cost",
+        "document_path": f"{other_cid}/inbox/leak.png",
+        "entry_date": "2025-05-01",
+        "cost_category": "material_steel",
+        "amount_try": "1000",
+        "vat_rate": "20",
+    }
+    r = client.post(CONFIRM_URL, json=body)
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["field"] == "document_path"
+    # Nothing written.
+    assert client.get(f"/api/v1/projects/{pid}/costs").json()["meta"]["total"] == 0
 
 
 # --------------------------------------------------------------------------- #

@@ -28,6 +28,8 @@ interface Extracted {
   confidence?: number | null;
   suggested_project_id?: string | null;
   suggested_cost_category?: string | null;
+  suggested_destination?: string | null;
+  suggested_equipment_name?: string | null;
   reasoning?: string | null;
 }
 
@@ -36,16 +38,39 @@ interface ProjectOpt { id: string; name: string }
 interface DupItem { id: string; supplier?: string | null; invoice_number?: string | null; amount_try: string; entry_date: string; project?: string | null; reasons: string[] }
 interface AnomalyItem { type: string; message: string }
 
+// Where a captured document is filed. The AI suggests it; the user confirms.
+type Destination = "cost" | "equipment" | "income";
+const DESTINATIONS: { key: Destination; label: string }[] = [
+  { key: "cost", label: "Gider" },
+  { key: "equipment", label: "Ekipman" },
+  { key: "income", label: "Gelir / Hakediş" },
+];
+
 type Form = {
+  // shared
   supplier_name: string;
   invoice_number: string;
   entry_date: string;
   amount_try: string;
   vat_rate: string;
-  cost_category: string;
   description: string;
+  // cost (Gider)
+  cost_category: string;
   payment_due_date: string;
   payment_status: string;
+  // equipment (Ekipman)
+  equipment_name: string;
+  ownership_type: string;
+  rate_try: string;
+  rate_unit: string;
+  deployment_start: string;
+  deployment_end: string;
+  fuel_maintenance_try: string;
+  add_to_budget: boolean;
+  // income (Gelir / Hakediş)
+  due_date: string;
+  hakkedis_period: string;
+  retention_amount_try: string;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -62,7 +87,13 @@ function toISODate(s: unknown): string {
 }
 
 function blank(): Form {
-  return { supplier_name: "", invoice_number: "", entry_date: today(), amount_try: "", vat_rate: "20", cost_category: "material_other", description: "", payment_due_date: "", payment_status: "unpaid" };
+  return {
+    supplier_name: "", invoice_number: "", entry_date: today(), amount_try: "", vat_rate: "20", description: "",
+    cost_category: "material_other", payment_due_date: "", payment_status: "unpaid",
+    equipment_name: "", ownership_type: "rented", rate_try: "", rate_unit: "day",
+    deployment_start: today(), deployment_end: "", fuel_maintenance_try: "0", add_to_budget: true,
+    due_date: "", hakkedis_period: "", retention_amount_try: "0",
+  };
 }
 
 export default function DocumentCapturePage() {
@@ -76,6 +107,8 @@ export default function DocumentCapturePage() {
   const [docPath, setDocPath] = useState<string | null>(null);
   const [fileSha, setFileSha] = useState<string | null>(null);
   const [form, setForm] = useState<Form | null>(null);
+  const [destination, setDestination] = useState<Destination>("cost");
+  const [suggestedDestination, setSuggestedDestination] = useState<Destination | null>(null);
   const [extracted, setExtracted] = useState<Extracted | null>(null);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
   const [projectId, setProjectId] = useState("");
@@ -90,7 +123,7 @@ export default function DocumentCapturePage() {
   const [proposed, setProposed] = useState<{ destination: string; confidence: number } | null>(null);
   const [fallbackReason, setFallbackReason] = useState<string | null>(null);
 
-  const set = (k: keyof Form, v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
+  const set = (k: keyof Form, v: string | boolean) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
   const ACCEPTED = ["image/png", "image/jpeg", "application/pdf"];
 
@@ -156,13 +189,26 @@ export default function DocumentCapturePage() {
       const f = blank();
       if (extracted.supplier_name) f.supplier_name = String(extracted.supplier_name);
       if (extracted.invoice_number) f.invoice_number = String(extracted.invoice_number);
-      if (extracted.invoice_date) f.entry_date = toISODate(extracted.invoice_date) || f.entry_date;
+      const invDate = toISODate(extracted.invoice_date);
+      if (invDate) f.entry_date = invDate;
       f.payment_due_date = toISODate(extracted.due_date);
       if (extracted.subtotal != null) f.amount_try = String(extracted.subtotal);
       if (extracted.vat_rate != null) f.vat_rate = String(extracted.vat_rate);
       if (extracted.suggested_cost_category && COST_CATEGORIES[String(extracted.suggested_cost_category)]) f.cost_category = String(extracted.suggested_cost_category);
       const firstLine = extracted.line_items?.[0]?.description;
       if (firstLine) f.description = String(firstLine);
+      // Equipment prefill: a captured doc rarely states ownership/rate cleanly, so
+      // fall back to sensible defaults the user can adjust before confirming.
+      if (extracted.suggested_equipment_name) f.equipment_name = String(extracted.suggested_equipment_name);
+      else if (firstLine) f.equipment_name = String(firstLine);
+      if (invDate) f.deployment_start = invDate;
+      // Income prefill: due_date defaults to the invoice date (the user can extend it).
+      f.due_date = toISODate(extracted.due_date) || invDate || f.due_date;
+      // AI-suggested destination, confirmed by the user below. Default "cost".
+      const sd = String(extracted.suggested_destination || "cost") as Destination;
+      const dest: Destination = sd === "equipment" || sd === "income" ? sd : "cost";
+      setSuggestedDestination(dest);
+      setDestination(dest);
       setForm(f);
     } catch (err: any) {
       toast.error(err.message ?? "Belge okunamadı");
@@ -175,24 +221,53 @@ export default function DocumentCapturePage() {
   const save = async () => {
     if (!form) return;
     if (!projectId) { toast.error("Lütfen bir proje seçin"); return; }
-    if (!form.amount_try || Number(form.amount_try) <= 0) { toast.error("Geçerli bir tutar girin"); return; }
+
+    let body: Record<string, unknown>;
+    let successMsg: string;
+    if (destination === "equipment") {
+      if (!form.equipment_name.trim()) { toast.error("Ekipman adı girin"); return; }
+      if (!form.deployment_start) { toast.error("Başlangıç tarihi girin"); return; }
+      if (form.ownership_type === "rented" && form.add_to_budget && (!form.rate_try || Number(form.rate_try) <= 0)) {
+        toast.error("Bütçeye eklemek için birim ücret girin (veya bütçeye eklemeyi kapatın)"); return;
+      }
+      body = {
+        project_id: projectId, destination: "equipment", document_path: docPath, file_sha256: fileSha,
+        equipment_name: form.equipment_name, ownership_type: form.ownership_type,
+        supplier_name: form.supplier_name || null,
+        rate_try: form.rate_try || null, rate_unit: form.rate_unit || null,
+        deployment_start: form.deployment_start, deployment_end: form.deployment_end || null,
+        fuel_maintenance_try: form.fuel_maintenance_try || "0", add_to_budget: form.add_to_budget,
+      };
+      successMsg = "Ekipman kaydı oluşturuldu";
+    } else if (destination === "income") {
+      if (!form.invoice_number.trim()) { toast.error("Fatura no girin"); return; }
+      if (!form.entry_date) { toast.error("Fatura tarihi girin"); return; }
+      if (!form.due_date) { toast.error("Vade tarihi girin"); return; }
+      if (!form.amount_try || Number(form.amount_try) <= 0) { toast.error("Geçerli bir tutar girin"); return; }
+      body = {
+        project_id: projectId, destination: "income", document_path: docPath, file_sha256: fileSha,
+        invoice_number: form.invoice_number, invoice_date: form.entry_date, due_date: form.due_date,
+        hakkedis_period: form.hakkedis_period || null, description: form.description || null,
+        amount_try: form.amount_try, vat_rate: form.vat_rate,
+        retention_amount_try: form.retention_amount_try || "0",
+      };
+      successMsg = "Hakediş / gelir kaydı oluşturuldu";
+    } else {
+      if (!form.amount_try || Number(form.amount_try) <= 0) { toast.error("Geçerli bir tutar girin"); return; }
+      body = {
+        project_id: projectId, destination: "cost", document_path: docPath, file_sha256: fileSha,
+        entry_date: form.entry_date, cost_category: form.cost_category,
+        supplier_name: form.supplier_name || null, invoice_number: form.invoice_number || null,
+        description: form.description || null, amount_try: form.amount_try, vat_rate: form.vat_rate,
+        payment_due_date: form.payment_due_date || null, payment_status: form.payment_status,
+      };
+      successMsg = "Maliyet girişi kaydedildi";
+    }
+
     setSaving(true);
     try {
-      await apiPost(`/document-capture/confirm`, {
-        project_id: projectId,
-        document_path: docPath,
-        file_sha256: fileSha,
-        entry_date: form.entry_date,
-        cost_category: form.cost_category,
-        supplier_name: form.supplier_name || null,
-        invoice_number: form.invoice_number || null,
-        description: form.description || null,
-        amount_try: form.amount_try,
-        vat_rate: form.vat_rate,
-        payment_due_date: form.payment_due_date || null,
-        payment_status: form.payment_status,
-      });
-      toast.success("Maliyet girişi kaydedildi");
+      await apiPost(`/document-capture/confirm`, body);
+      toast.success(successMsg);
       setForm(null);
       setExtracted(null);
       setPreview(null);
@@ -388,6 +463,25 @@ export default function DocumentCapturePage() {
               </div>
             )}
 
+            {/* Destination picker — AI suggests, user confirms (cost / equipment / income) */}
+            <div>
+              <Label>Belge Hedefi {suggestedDestination && destination === suggestedDestination && <span className="ml-1 rounded-full bg-navy-50 px-1.5 py-0.5 text-[10px] font-medium text-brand">AI önerisi</span>}</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {DESTINATIONS.map((d) => (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => setDestination(d.key)}
+                    className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-colors ${
+                      destination === d.key ? "border-brand bg-navy-50 text-brand ring-1 ring-brand/30" : "border-border bg-surface text-text-secondary hover:border-brand/40"
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Suggested project (editable) */}
             <div>
               <Label required>Proje {suggestedProjectId && projectId === suggestedProjectId && <span className="ml-1 rounded-full bg-navy-50 px-1.5 py-0.5 text-[10px] font-medium text-brand">AI önerisi</span>}</Label>
@@ -397,30 +491,86 @@ export default function DocumentCapturePage() {
               </Select>
             </div>
 
-            <div><Label>Tedarikçi</Label><Input value={form.supplier_name} onChange={(e) => set("supplier_name", e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>Fatura No</Label><Input value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
-              <div><Label required>Fatura Tarihi</Label><Input type="date" value={form.entry_date} onChange={(e) => set("entry_date", e.target.value)} /></div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label required>Tutar (KDV hariç ₺)</Label><Input type="number" value={form.amount_try} onChange={(e) => set("amount_try", e.target.value)} /></div>
-              <div><Label>KDV %</Label><Select value={form.vat_rate} onChange={(e) => set("vat_rate", e.target.value)}>{VAT_RATES.map((v) => <option key={v} value={v}>%{v}</option>)}</Select></div>
-            </div>
-            <div><Label required>Maliyet Kategorisi {extracted?.suggested_cost_category === form.cost_category && <span className="ml-1 rounded-full bg-navy-50 px-1.5 py-0.5 text-[10px] font-medium text-brand">AI önerisi</span>}</Label>
-              <Select value={form.cost_category} onChange={(e) => set("cost_category", e.target.value)}>
-                {Object.entries(COST_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </Select>
-            </div>
-            <div><Label>Açıklama</Label><Input value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label>Vade Tarihi</Label><Input type="date" value={form.payment_due_date} onChange={(e) => set("payment_due_date", e.target.value)} /></div>
-              <div><Label>Ödeme Durumu</Label>
-                <Select value={form.payment_status} onChange={(e) => set("payment_status", e.target.value)}>
-                  <option value="unpaid">Ödenmedi</option>
-                  <option value="paid">Ödendi</option>
+            {/* --- Gider (cost) fields --- */}
+            {destination === "cost" && <>
+              <div><Label>Tedarikçi</Label><Input value={form.supplier_name} onChange={(e) => set("supplier_name", e.target.value)} /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Fatura No</Label><Input value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
+                <div><Label required>Fatura Tarihi</Label><Input type="date" value={form.entry_date} onChange={(e) => set("entry_date", e.target.value)} /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label required>Tutar (KDV hariç ₺)</Label><Input type="number" value={form.amount_try} onChange={(e) => set("amount_try", e.target.value)} /></div>
+                <div><Label>KDV %</Label><Select value={form.vat_rate} onChange={(e) => set("vat_rate", e.target.value)}>{VAT_RATES.map((v) => <option key={v} value={v}>%{v}</option>)}</Select></div>
+              </div>
+              <div><Label required>Maliyet Kategorisi {extracted?.suggested_cost_category === form.cost_category && <span className="ml-1 rounded-full bg-navy-50 px-1.5 py-0.5 text-[10px] font-medium text-brand">AI önerisi</span>}</Label>
+                <Select value={form.cost_category} onChange={(e) => set("cost_category", e.target.value)}>
+                  {Object.entries(COST_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </Select>
               </div>
-            </div>
+              <div><Label>Açıklama</Label><Input value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Vade Tarihi</Label><Input type="date" value={form.payment_due_date} onChange={(e) => set("payment_due_date", e.target.value)} /></div>
+                <div><Label>Ödeme Durumu</Label>
+                  <Select value={form.payment_status} onChange={(e) => set("payment_status", e.target.value)}>
+                    <option value="unpaid">Ödenmedi</option>
+                    <option value="paid">Ödendi</option>
+                  </Select>
+                </div>
+              </div>
+            </>}
+
+            {/* --- Ekipman (equipment) fields --- */}
+            {destination === "equipment" && <>
+              <div><Label required>Ekipman Adı</Label><Input value={form.equipment_name} onChange={(e) => set("equipment_name", e.target.value)} /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label required>Sahiplik</Label>
+                  <Select value={form.ownership_type} onChange={(e) => set("ownership_type", e.target.value)}>
+                    <option value="rented">Kiralık</option>
+                    <option value="owned">Şirkete Ait</option>
+                  </Select>
+                </div>
+                {form.ownership_type === "rented" && <div><Label>Tedarikçi</Label><Input value={form.supplier_name} onChange={(e) => set("supplier_name", e.target.value)} /></div>}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Birim Ücret (₺)</Label><Input type="number" value={form.rate_try} onChange={(e) => set("rate_try", e.target.value)} /></div>
+                <div><Label>Birim</Label>
+                  <Select value={form.rate_unit} onChange={(e) => set("rate_unit", e.target.value)}>
+                    <option value="day">Gün</option>
+                    <option value="month">Ay</option>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label required>Başlangıç</Label><Input type="date" value={form.deployment_start} onChange={(e) => set("deployment_start", e.target.value)} /></div>
+                <div><Label>Bitiş</Label><Input type="date" value={form.deployment_end} onChange={(e) => set("deployment_end", e.target.value)} /></div>
+              </div>
+              <div><Label>Yakıt / Bakım (₺)</Label><Input type="number" value={form.fuel_maintenance_try} onChange={(e) => set("fuel_maintenance_try", e.target.value)} /></div>
+              <div className="flex items-center justify-between rounded-lg border border-border bg-bg px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-primary">Bütçeye ekle</p>
+                  <p className="text-[11px] text-text-secondary">Bu ekipman için taahhüt edilmiş bir maliyet kaydı oluşturur (birim ücret gerekir).</p>
+                </div>
+                <Switch checked={form.add_to_budget} onChange={(v) => set("add_to_budget", v)} label="Bütçeye ekle" />
+              </div>
+            </>}
+
+            {/* --- Gelir / Hakediş (income) fields --- */}
+            {destination === "income" && <>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label required>Fatura No</Label><Input value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
+                <div><Label>Hakediş Dönemi</Label><Input value={form.hakkedis_period} onChange={(e) => set("hakkedis_period", e.target.value)} placeholder="örn. 2026-06" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label required>Fatura Tarihi</Label><Input type="date" value={form.entry_date} onChange={(e) => set("entry_date", e.target.value)} /></div>
+                <div><Label required>Vade Tarihi</Label><Input type="date" value={form.due_date} onChange={(e) => set("due_date", e.target.value)} /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label required>Tutar (KDV hariç ₺)</Label><Input type="number" value={form.amount_try} onChange={(e) => set("amount_try", e.target.value)} /></div>
+                <div><Label>KDV %</Label><Select value={form.vat_rate} onChange={(e) => set("vat_rate", e.target.value)}>{VAT_RATES.map((v) => <option key={v} value={v}>%{v}</option>)}</Select></div>
+              </div>
+              <div><Label>Teminat / Kesinti (₺)</Label><Input type="number" value={form.retention_amount_try} onChange={(e) => set("retention_amount_try", e.target.value)} /></div>
+              <div><Label>Açıklama</Label><Input value={form.description} onChange={(e) => set("description", e.target.value)} /></div>
+            </>}
 
             {/* Totals summary from extraction */}
             {(extracted?.subtotal != null || extracted?.total != null) && (
@@ -463,7 +613,7 @@ export default function DocumentCapturePage() {
 
             <div className="flex items-center justify-end gap-2 pt-1">
               <Button type="button" variant="outline" onClick={() => navigate(projectId ? `/projects/${projectId}/budget` : "/projects")}>İptal</Button>
-              <Button type="button" onClick={save} loading={saving}><CheckCircle2 className="h-4 w-4" /> Maliyet Olarak Kaydet</Button>
+              <Button type="button" onClick={save} loading={saving}><CheckCircle2 className="h-4 w-4" /> {destination === "equipment" ? "Ekipman Olarak Kaydet" : destination === "income" ? "Gelir Olarak Kaydet" : "Maliyet Olarak Kaydet"}</Button>
             </div>
           </CardBody>
         </Card>

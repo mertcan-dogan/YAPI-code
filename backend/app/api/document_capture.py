@@ -16,21 +16,27 @@ import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.constants import ROLE_DIRECTOR, ROLE_FINANCE, ROLE_PROJECT_MANAGER
 from app.db import get_db
 from app.deps import CurrentUser
 from app.models.budget_line_item import BudgetLineItem
+from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.models.equipment_log import EquipmentLog
 from app.responses import APIError, success
 from app.schemas.cost import CostEntryCreate
+from app.schemas.equipment import EquipmentCreate
+from app.schemas.invoice import ClientInvoiceCreate
 from app.services import ai as ai_service
 from app.services import fx
 from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
-from app.services.calc_fields import total_with_vat, vat_amount
+from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
 
 router = APIRouter(tags=["document-capture"])
 
@@ -63,6 +69,18 @@ def _upload_to_storage(path: str, data: bytes, content_type: str) -> None:
         raise APIError(502, "STORAGE_ERROR", "Belge yüklenemedi")
     if resp.status_code not in (200, 201):
         raise APIError(502, "STORAGE_ERROR", f"Belge yüklenemedi (depolama hatası {resp.status_code})")
+
+
+def _confirmed_doc_url(document_path: str | None, user) -> str | None:
+    """Resolve the stored-document URL at confirm time. ``document_path`` is supplied
+    by the client here, so only accept paths under the caller's OWN company folder
+    (uploads always write to ``{company_id}/...``). This prevents a confirmed row from
+    pointing its document_url at another tenant's stored file."""
+    if not document_path:
+        return None
+    if not document_path.startswith(f"{user.company_id}/"):
+        raise APIError(422, "VALIDATION_ERROR", "Geçersiz belge yolu", field="document_path")
+    return f"{DOCS_BUCKET}/{document_path}"
 
 
 @router.post("/projects/{project_id}/document-capture")
@@ -123,7 +141,7 @@ def confirm_document(
 ):
     """Save the user-reviewed fields as a cost entry, linking the stored document."""
     project = get_company_project(db, project_id, user)
-    doc_url = f"{DOCS_BUCKET}/{payload.document_path}" if payload.document_path else None
+    doc_url = _confirmed_doc_url(payload.document_path, user)
     try:
         rec = CostEntryCreate(
             entry_date=payload.entry_date,
@@ -517,26 +535,45 @@ async def smart_capture(user: CurrentUser, db: Session = Depends(get_db), file: 
 
 class SmartCaptureConfirm(BaseModel):
     project_id: uuid.UUID
+    # Where the captured document is filed. The AI suggests it; the user confirms.
+    # One of: "cost" (Gider), "equipment" (Ekipman), "income" (Gelir/Hakediş).
+    destination: str = "cost"
     document_path: str | None = None
     file_sha256: str | None = None
-    entry_date: date
-    cost_category: str
+    # --- cost (Gider) ---
+    entry_date: date | None = None
+    cost_category: str | None = None
     supplier_name: str | None = None
     invoice_number: str | None = None
     description: str | None = None
-    amount_try: Decimal
+    amount_try: Decimal | None = None
     vat_rate: Decimal = Decimal("20")
     payment_due_date: date | None = None
     payment_status: str = "unpaid"
+    # --- equipment (Ekipman) ---
+    equipment_name: str | None = None
+    ownership_type: str | None = None
+    rate_try: Decimal | None = None
+    rate_unit: str | None = None
+    deployment_start: date | None = None
+    deployment_end: date | None = None
+    fuel_maintenance_try: Decimal | None = None
+    add_to_budget: bool = True
+    # --- income (Gelir/Hakediş) ---
+    invoice_date: date | None = None
+    due_date: date | None = None
+    hakkedis_period: str | None = None
+    retention_amount_try: Decimal | None = None
     # CR-024: AI's 0..1 extraction confidence from the smart-capture step (optional).
     extraction_confidence: float | None = None
 
 
-@router.post("/document-capture/confirm")
-def smart_capture_confirm(payload: SmartCaptureConfirm, user: CurrentUser, db: Session = Depends(get_db)):
-    """Save the reviewed cost to the chosen project, storing the document + its hash."""
-    project = get_company_project(db, payload.project_id, user)
-    doc_url = f"{DOCS_BUCKET}/{payload.document_path}" if payload.document_path else None
+def _validation_msg(exc: ValidationError) -> str:
+    return str(exc.errors()[0].get("msg", "Geçersiz veri")) if exc.errors() else "Geçersiz veri"
+
+
+def _confirm_cost(db: Session, user, project, payload: SmartCaptureConfirm, doc_url: str | None):
+    """Save the reviewed cost to the project (the original cost-only behaviour)."""
     try:
         rec = CostEntryCreate(
             entry_date=payload.entry_date,
@@ -552,8 +589,7 @@ def smart_capture_confirm(payload: SmartCaptureConfirm, user: CurrentUser, db: S
             extraction_confidence=payload.extraction_confidence,
         )
     except ValidationError as exc:
-        msg = exc.errors()[0].get("msg", "Geçersiz veri") if exc.errors() else "Geçersiz veri"
-        raise APIError(422, "VALIDATION_ERROR", str(msg))
+        raise APIError(422, "VALIDATION_ERROR", _validation_msg(exc))
 
     d = rec.model_dump()
     vat = vat_amount(d["amount_try"], d["vat_rate"])
@@ -575,4 +611,105 @@ def smart_capture_confirm(payload: SmartCaptureConfirm, user: CurrentUser, db: S
                  record_id=entry.id, action="INSERT", new_values=snapshot(entry))
     db.commit()
     db.refresh(entry)
-    return success({"id": str(entry.id), "cost_category": entry.cost_category})
+    return success({"id": str(entry.id), "destination": "cost", "cost_category": entry.cost_category})
+
+
+def _confirm_equipment(db: Session, user, project, payload: SmartCaptureConfirm):
+    """File the captured document as an equipment_log, reusing the equipment-create
+    path (and its optional committed-cost budget entry). Mirrors POST /equipment."""
+    from app.api.equipment import _create_budget_entry_for_equipment, _serialize
+
+    try:
+        rec = EquipmentCreate(
+            equipment_name=payload.equipment_name,
+            ownership_type=payload.ownership_type,
+            supplier_name=payload.supplier_name,
+            rate_try=payload.rate_try,
+            rate_unit=payload.rate_unit,
+            deployment_start=payload.deployment_start,
+            deployment_end=payload.deployment_end,
+            fuel_maintenance_try=(
+                payload.fuel_maintenance_try if payload.fuel_maintenance_try is not None else Decimal("0")
+            ),
+            add_to_budget=payload.add_to_budget,
+        )
+    except ValidationError as exc:
+        raise APIError(422, "VALIDATION_ERROR", _validation_msg(exc))
+
+    data = rec.model_dump()
+    add_to_budget = data.pop("add_to_budget", True)
+    e = EquipmentLog(project_id=project.id, company_id=user.company_id, **data)
+    db.add(e)
+    db.flush()
+    if add_to_budget:
+        _create_budget_entry_for_equipment(db, user, project.id, e)
+    db.commit()
+    db.refresh(e)
+    out = _serialize(e)
+    return success({"id": str(e.id), "destination": "equipment", "equipment_name": out["equipment_name"]})
+
+
+def _confirm_income(db: Session, user, project, payload: SmartCaptureConfirm, doc_url: str | None):
+    """File the captured document as a client_invoice (Gelir/Hakediş), reusing the
+    invoice-create path. Enforces the same role gate as POST /invoices so capture
+    cannot bypass who is allowed to create income invoices."""
+    if user.role not in (ROLE_DIRECTOR, ROLE_PROJECT_MANAGER, ROLE_FINANCE):
+        raise APIError(403, "FORBIDDEN", "Bu işlem için yetkiniz yok")
+    try:
+        rec = ClientInvoiceCreate(
+            invoice_number=payload.invoice_number,
+            invoice_date=payload.invoice_date,
+            hakkedis_period=payload.hakkedis_period,
+            description=payload.description,
+            amount_try=payload.amount_try,
+            vat_rate=payload.vat_rate,
+            retention_amount_try=(
+                payload.retention_amount_try if payload.retention_amount_try is not None else Decimal("0")
+            ),
+            due_date=payload.due_date,
+            document_url=doc_url,
+        )
+    except ValidationError as exc:
+        raise APIError(422, "VALIDATION_ERROR", _validation_msg(exc))
+
+    d = rec.model_dump()
+    inv = ClientInvoice(
+        project_id=project.id, company_id=user.company_id, created_by=user.id,
+        vat_amount_try=vat_amount(d["amount_try"], d["vat_rate"]),
+        total_with_vat_try=total_with_vat(d["amount_try"], d["vat_rate"]),
+        net_due_try=invoice_net_due(d["amount_try"], d["vat_rate"], d["retention_amount_try"]),
+        amount_received_try=0, payment_status="unpaid",
+        extraction_confidence=payload.extraction_confidence, **d,
+    )
+    db.add(inv)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        # Unique (project_id, invoice_number) violation (Section 8.1)
+        raise APIError(422, "VALIDATION_ERROR", "Bu fatura numarası zaten mevcut", field="invoice_number")
+    # CR-014-B: snapshot USD at the relevant date (provisional until received).
+    fx.snapshot_invoice_usd(db, inv)
+    record_audit(db, company_id=user.company_id, user_id=user.id, table_name="client_invoices",
+                 record_id=inv.id, action="INSERT", new_values=snapshot(inv))
+    db.commit()
+    db.refresh(inv)
+    return success({"id": str(inv.id), "destination": "income", "invoice_number": inv.invoice_number})
+
+
+@router.post("/document-capture/confirm")
+def smart_capture_confirm(payload: SmartCaptureConfirm, user: CurrentUser, db: Session = Depends(get_db)):
+    """Save the reviewed document to the user-confirmed destination — Gider (cost),
+    Ekipman (equipment_log) or Gelir/Hakediş (client_invoice) — on the chosen project.
+    The AI only suggests the destination; the human confirms it here before any write.
+    Every destination reuses its existing creation path and runs under the caller's
+    company context (RLS-safe via get_company_project)."""
+    project = get_company_project(db, payload.project_id, user)
+    doc_url = _confirmed_doc_url(payload.document_path, user)
+    if payload.destination == "equipment":
+        return _confirm_equipment(db, user, project, payload)
+    if payload.destination == "income":
+        return _confirm_income(db, user, project, payload, doc_url)
+    if payload.destination != "cost":
+        raise APIError(422, "VALIDATION_ERROR", "Geçersiz hedef", field="destination")
+    return _confirm_cost(db, user, project, payload, doc_url)
