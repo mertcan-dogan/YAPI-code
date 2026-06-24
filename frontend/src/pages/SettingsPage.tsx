@@ -243,8 +243,27 @@ function CompanyTab() {
   );
 }
 
+// CR-041: pending teammate invitations.
+type Invite = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  invited_by: string;
+  expires_at: string;
+  created_at: string;
+};
+
+const INVITE_STATUS_LABELS: Record<string, string> = {
+  pending: "Bekliyor",
+  accepted: "Kabul Edildi",
+  revoked: "İptal Edildi",
+  expired: "Süresi Doldu",
+};
+
 function UsersTab() {
   const { data, loading, refetch, error } = useFetch<User[]>("/settings/users");
+  const invites = useFetch<Invite[]>("/settings/invites");
   const { user: me } = useAuth();
   const [open, setOpen] = useState(false);
 
@@ -281,19 +300,76 @@ function UsersTab() {
     <div>
       <div className="mb-3 flex justify-end"><Button onClick={() => setOpen(true)}>Kullanıcı Davet Et</Button></div>
       <DataTable columns={columns} rows={data ?? []} loading={loading} error={error} onRetry={refetch} emptyMessage="Henüz kullanıcı yok." />
-      <InviteDrawer open={open} onClose={() => setOpen(false)} onSaved={refetch} />
+      <PendingInvites invites={invites.data ?? []} loading={invites.loading} error={invites.error} onRetry={invites.refetch} onChanged={invites.refetch} />
+      <InviteDrawer open={open} onClose={() => setOpen(false)} onSaved={invites.refetch} />
+    </div>
+  );
+}
+
+function PendingInvites({
+  invites,
+  loading,
+  error,
+  onRetry,
+  onChanged,
+}: {
+  invites: Invite[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onChanged: () => void;
+}) {
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+
+  const revoke = async (inv: Invite) => {
+    if (!confirm(`${inv.email} için bekleyen daveti iptal etmek istediğinize emin misiniz?`)) return;
+    setRevokingId(inv.id);
+    try {
+      await apiDelete(`/settings/invites/${inv.id}`);
+      toast.success("Davet iptal edildi");
+      onChanged();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setRevokingId(null);
+    }
+  };
+
+  // Hide accepted invites (the member now shows in the table above); show
+  // pending/revoked/expired so directors can see and re-send.
+  const visible = invites.filter((i) => i.status !== "accepted");
+
+  const columns: Column<Invite>[] = [
+    { key: "email", header: "E-posta", render: (i) => <span className="font-medium text-primary">{i.email}</span> },
+    { key: "role", header: "Rol", render: (i) => ROLE_LABELS[i.role] ?? i.role },
+    { key: "status", header: "Durum", render: (i) => (
+      <span className={cn("rounded-full px-2 py-0.5 text-xs", i.status === "pending" ? "bg-amber-50 text-warning" : "bg-gray-100 text-text-secondary")}>{INVITE_STATUS_LABELS[i.status] ?? i.status}</span>
+    ) },
+    { key: "expires_at", header: "Son Geçerlilik", render: (i) => formatDateTime(i.expires_at) },
+    { key: "id", header: "", render: (i) => i.status === "pending" ? (
+      <Button type="button" variant="danger" onClick={() => revoke(i)} loading={revokingId === i.id}>İptal Et</Button>
+    ) : null },
+  ];
+
+  return (
+    <div className="mt-6">
+      <h3 className="mb-2 text-sm font-semibold text-primary">Bekleyen Davetler</h3>
+      <DataTable columns={columns} rows={visible} loading={loading} error={error} onRetry={onRetry} emptyMessage="Bekleyen davet yok." />
     </div>
   );
 }
 
 function InviteDrawer({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ email: "", full_name: "", role: "project_manager" });
+  const [form, setForm] = useState({ email: "", role: "project_manager" });
   const [saving, setSaving] = useState(false);
   const save = async () => {
     setSaving(true);
     try {
-      await apiPost("/settings/users", form);
+      // CR-041: creates a tokenized invite; the invitee supplies their name when
+      // they accept, so we only collect email + role here.
+      await apiPost("/settings/invites", form);
       toast.success("Davet gönderildi");
+      setForm({ email: "", role: "project_manager" });
       onSaved();
       onClose();
     } catch (e: any) {
@@ -305,9 +381,9 @@ function InviteDrawer({ open, onClose, onSaved }: { open: boolean; onClose: () =
   return (
     <SideDrawer open={open} title="Kullanıcı Davet Et" onClose={onClose} onSave={save} saving={saving} saveLabel="Davet Gönder">
       <div className="space-y-3">
-        <div><Label required>Ad Soyad</Label><Input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></div>
         <div><Label required>E-posta</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
         <div><Label required>Rol</Label><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{Object.entries(ROLE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Select></div>
+        <p className="text-xs text-text-secondary">Davet edilen kişiye 7 gün geçerli bir bağlantı e-posta ile gönderilir. Bağlantıyı açıp hesabını oluşturduğunda ekibinize katılır.</p>
       </div>
     </SideDrawer>
   );

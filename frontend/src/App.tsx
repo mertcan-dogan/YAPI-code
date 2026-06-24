@@ -5,6 +5,7 @@ import { AppLayout } from "./components/layout/AppLayout";
 import { Toaster } from "./components/Toaster";
 import { useAuth } from "./store/auth";
 
+import AcceptInvitePage from "./pages/AcceptInvitePage";
 import AIAlertsPage from "./pages/AIAlertsPage";
 import AIAssistantPage from "./pages/AIAssistantPage";
 import AiPrinciplesPage from "./pages/AiPrinciplesPage";
@@ -71,6 +72,7 @@ export default function App() {
       <Toaster />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route
           element={
             <Protected>
