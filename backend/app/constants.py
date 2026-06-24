@@ -7,6 +7,13 @@ ROLE_FINANCE = "finance"
 ROLE_SITE_MANAGER = "site_manager"
 ROLES = [ROLE_DIRECTOR, ROLE_PROJECT_MANAGER, ROLE_FINANCE, ROLE_SITE_MANAGER]
 
+# --- Invite statuses (CR-041 teammate invitation/acceptance) ---
+INVITE_PENDING = "pending"
+INVITE_ACCEPTED = "accepted"
+INVITE_REVOKED = "revoked"
+INVITE_EXPIRED = "expired"
+INVITE_STATUSES = [INVITE_PENDING, INVITE_ACCEPTED, INVITE_REVOKED, INVITE_EXPIRED]
+
 # --- Project types (CR-001-A: 26 types grouped by category) ---
 # key (stored in DB) -> (label, category)
 PROJECT_TYPE_DEFS = [

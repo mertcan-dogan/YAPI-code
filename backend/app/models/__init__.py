@@ -27,6 +27,7 @@ from app.models.fx_rate import FxRate
 from app.models.unit_sale import UnitSale
 from app.models.landowner_payment import LandownerPayment
 from app.models.automation import Automation, AutomationRun
+from app.models.invite import Invite
 
 __all__ = [
     "Base",
@@ -59,4 +60,5 @@ __all__ = [
     "LandownerPayment",
     "Automation",
     "AutomationRun",
+    "Invite",
 ]

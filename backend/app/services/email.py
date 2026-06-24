@@ -49,19 +49,6 @@ def _send(to: str | list[str], subject: str, html: str) -> bool:
         return False
 
 
-def send_user_invitation(email: str, full_name: str, company_name: str) -> bool:
-    subject = f"[Yapı] Şirkete Davet Edildiniz: {company_name}"
-    link = f"{settings.frontend_url}/signup?email={email}"
-    html = _wrap_html(
-        "Şirkete Davet Edildiniz",
-        f"<p>Merhaba {full_name},</p>"
-        f"<p><b>{company_name}</b> şirketi sizi Yapı platformuna davet etti.</p>"
-        f'<p><a href="{link}" style="background:{PRIMARY}; color:#fff; padding:10px 16px; '
-        f'text-decoration:none; border-radius:6px;">Hesabınızı Oluşturun</a></p>',
-    )
-    return _send(email, subject, html)
-
-
 def send_overdue_cost(recipients: list[str], supplier: str, project: str, amount: str) -> bool:
     subject = f"[Yapı] Vadesi Geçmiş Ödeme: {supplier} — {project}"
     html = _wrap_html(
