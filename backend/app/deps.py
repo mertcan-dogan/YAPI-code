@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import get_db
+from app.db import AdminSessionLocal, get_db, set_session_company
 from app.models.user import User
 from app.responses import APIError
 from app.security import TokenError, decode_token
@@ -51,19 +51,33 @@ def get_current_user(
     except ValueError:
         raise APIError(401, "UNAUTHENTICATED", "Geçersiz kullanıcı kimliği")
 
-    user = db.execute(
-        select(User).where(User.id == uid, User.is_deleted.is_(False))
-    ).scalar_one_or_none()
-    if user is None or not user.is_active:
-        # Token verified but no matching app user row — common when the public.users
-        # row was never created for this Supabase auth user (see /auth/me note).
-        if settings.debug_auth:
-            logger.warning("[auth] token valid (sub=%s) but no active users row found", user_id)
-        raise APIError(401, "UNAUTHENTICATED", "Kullanıcı bulunamadı veya pasif")
+    # CR-040: resolve the user on an ESCALATED (RLS-bypassing) session. Under the
+    # NOBYPASSRLS app role the request session can't read `users` until the GUC is
+    # set — but the GUC needs company_id, which only this lookup provides. The
+    # escalated session breaks that chicken-and-egg; without it nobody could log in.
+    admin_db = AdminSessionLocal()
+    try:
+        user = admin_db.execute(
+            select(User).where(User.id == uid, User.is_deleted.is_(False))
+        ).scalar_one_or_none()
+        if user is None or not user.is_active:
+            # Token verified but no matching app user row — common when the public.users
+            # row was never created for this Supabase auth user (see /auth/me note).
+            if settings.debug_auth:
+                logger.warning("[auth] token valid (sub=%s) but no active users row found", user_id)
+            raise APIError(401, "UNAUTHENTICATED", "Kullanıcı bulunamadı veya pasif")
+        # Detach so the user is usable after the escalated session closes (mirrors
+        # the test harness, which also returns a detached user).
+        admin_db.expunge(user)
+    finally:
+        admin_db.close()
 
     # Stash on request state for the audit middleware.
     request.state.user_id = str(user.id)
     request.state.company_id = str(user.company_id)
+    # Scope the request's (non-escalated) DB session to this company so every
+    # router query the request makes is RLS-filtered to it.
+    set_session_company(db, user.company_id)
     return user
 
 

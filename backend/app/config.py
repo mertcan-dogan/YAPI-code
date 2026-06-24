@@ -17,6 +17,14 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+psycopg://yapi:yapi_dev_password@localhost:5432/yapi"
+    # CR-040: dedicated escalated/owner connection for the paths that must BYPASS
+    # row-level security — Alembic migrations (ALTER/CREATE POLICY), the auth user
+    # lookup (reads users before company_id is known), the cron scheduler (all
+    # companies), and the login-stamp write. When BLANK, everything falls back to
+    # database_url, so single-URL deploys and the SQLite test suite are unchanged.
+    # Rollout: set database_url = yapi_app (NOBYPASSRLS) and admin_database_url =
+    # the service_role/owner URL. Rollback: point database_url back at service_role.
+    admin_database_url: str = ""
 
     # Supabase
     supabase_url: str = ""

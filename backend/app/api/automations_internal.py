@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db import get_db
+from app.db import get_admin_db
 from app.responses import APIError, success
 from app.services import automations as automations_service
 
@@ -27,7 +27,9 @@ router = APIRouter(tags=["automations-internal"])
 @router.post("/internal/automations/run-due")
 def run_due_automations(
     x_internal_secret: Annotated[str | None, Header()] = None,
-    db: Session = Depends(get_db),
+    # CR-040: cron has no user/company → must run on the escalated (RLS-bypassing)
+    # session, else under the app role it would see zero rows and process nothing.
+    db: Session = Depends(get_admin_db),
 ):
     secret = settings.internal_cron_secret
     # No configured secret => endpoint is closed. Constant-time compare otherwise.

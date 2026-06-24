@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.constants import ROLE_DIRECTOR
-from app.db import SessionLocal, get_db
+from app.db import AdminSessionLocal, get_db
 from app.deps import CurrentUser, TokenClaims
 from app.models.company import Company
 from app.models.user import User
@@ -82,7 +82,9 @@ def login(payload: LoginRequest, request: Request):
     # Best-effort: stamp last_login_at.
     user_id = (session.get("user") or {}).get("id")
     if user_id:
-        db = SessionLocal()
+        # CR-040: pre-company-context write → escalated (RLS-bypassing) session,
+        # else under the app role the user row is invisible and the stamp no-ops.
+        db = AdminSessionLocal()
         try:
             from app.models.user import User
 
