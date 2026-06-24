@@ -158,3 +158,48 @@ def test_autofile_approval_persists_invoice_confidence(client, db, seed, monkeyp
 
     inv = db.execute(select(ClientInvoice)).scalars().one()
     assert inv.extraction_confidence == 0.88
+
+
+# --------------------------------------------------------------------------- #
+# ClientInvoiceOut read path — the GET endpoints now expose the score
+# (mirrors the cost-side assertions above). Frontend CR-024 badge depends on it.
+# --------------------------------------------------------------------------- #
+def _create_invoice(client, pid, number="FT-2026-1"):
+    body = {
+        "invoice_number": number,
+        "invoice_date": "2025-05-01",
+        "amount_try": "100000",
+        "vat_rate": "20",
+        "retention_amount_try": "0",
+        "due_date": "2025-06-01",
+    }
+    r = client.post(f"/api/v1/projects/{pid}/invoices", json=body)
+    assert r.status_code in (200, 201), r.text
+    return r.json()["data"]
+
+
+def test_invoice_get_exposes_extraction_confidence(client, db, seed):
+    """A client invoice carrying an AI score surfaces it on both list + detail GET."""
+    pid = _login(client, seed)
+    created = _create_invoice(client, pid)
+    # Create endpoint does not accept the score (manual create) — it starts NULL.
+    assert created["extraction_confidence"] is None
+
+    # Simulate an AI auto-filed / imported invoice by setting the persisted score.
+    inv = db.execute(
+        select(ClientInvoice).where(ClientInvoice.id == created["id"])
+    ).scalars().one()
+    inv.extraction_confidence = 0.88
+    db.commit()
+
+    # List endpoint exposes it.
+    rows = client.get(f"/api/v1/projects/{pid}/invoices").json()["data"]
+    assert rows[0]["extraction_confidence"] == 0.88
+
+
+def test_manual_invoice_create_leaves_confidence_null(client, seed):
+    """Manually created invoices have no AI score — the badge must render nothing."""
+    pid = _login(client, seed)
+    _create_invoice(client, pid, number="FT-2026-2")
+    rows = client.get(f"/api/v1/projects/{pid}/invoices").json()["data"]
+    assert rows[0]["extraction_confidence"] is None

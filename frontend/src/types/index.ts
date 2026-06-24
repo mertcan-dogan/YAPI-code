@@ -148,6 +148,8 @@ export interface CostEntry {
   commitment_id?: string | null; // CR-023: relief link (actual → committed entry)
   po_number?: string | null;
   expected_date?: string | null;
+  // CR-024: AI document-extraction confidence (0..1); null on manual/Excel rows.
+  extraction_confidence?: number | null;
 }
 
 export interface ClientInvoice {
@@ -172,6 +174,8 @@ export interface ClientInvoice {
   amount_received_try: string;
   outstanding_try: string;
   document_url: string | null;
+  // CR-024: AI document-extraction confidence (0..1); null on manual rows.
+  extraction_confidence?: number | null;
 }
 
 // --- CR-031: Satışlar & Kar/Zarar (sell-side revenue lane) ---

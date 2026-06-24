@@ -91,4 +91,7 @@ class ClientInvoiceOut(ORMModel):
     outstanding_try: Decimal
     document_url: str | None
     notes: str | None
+    # CR-024: AI document-extraction confidence (0..1); NULL for manual rows.
+    # Display / monitoring only — never feeds the financial math.
+    extraction_confidence: float | None = None
     created_at: datetime

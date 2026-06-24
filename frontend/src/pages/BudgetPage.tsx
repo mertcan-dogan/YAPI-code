@@ -8,6 +8,7 @@ import { BudgetCategoryDrawer } from "@/components/budget/BudgetCategoryDrawer";
 import { BudgetSummaryCharts } from "@/components/budget/BudgetSummaryCharts";
 import { ImportPreview } from "@/components/ImportPreview";
 import { AIImportPreview } from "@/components/AIImportPreview";
+import { ExtractionConfidenceBadge } from "@/components/ai/ExtractionConfidenceBadge";
 import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { StatusBadge } from "@/components/StatusBadge";
 import { COST_CATEGORIES, COST_CATEGORY_OPTIONS, STATUS_LABELS, VAT_RATES } from "@/constants";
@@ -230,7 +231,17 @@ export default function BudgetPage() {
       ),
     }] : []),
     { key: "payment_due_date", header: "Vade", align: "right", render: (r) => formatDate(r.payment_due_date) },
-    { key: "payment_status", header: "Durum", render: (r) => <StatusBadge status={r.payment_status} /> },
+    {
+      key: "payment_status",
+      header: "Durum",
+      render: (r) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge status={r.payment_status} />
+          {/* CR-024: AI-read rows carry a confidence pill; manual rows show nothing. */}
+          <ExtractionConfidenceBadge confidence={r.extraction_confidence} />
+        </div>
+      ),
+    },
     {
       key: "actions",
       header: "",
@@ -766,6 +777,13 @@ function CostDrawer({ open, projectId, editing, billing, onClose, onSaved }: { o
   return (
     <SideDrawer open={open} title={billing ? "Taahhüde Karşı Faturala" : editing ? "Maliyet Düzenle" : "Maliyet Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.amount_try || !!form.cost_category}>
       <div className="space-y-3">
+        {/* CR-024: this entry was captured/imported by AI — surface the confidence. */}
+        {editing?.extraction_confidence != null && (
+          <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-secondary">
+            <span>Bu kayıt yapay zeka ile okundu.</span>
+            <ExtractionConfidenceBadge confidence={editing.extraction_confidence} showLabel />
+          </div>
+        )}
         {/* CR-023: billing-against-commitment context banner. */}
         {billing && (
           <div className="rounded-md border border-accent bg-amber-50 px-3 py-2 text-xs text-text-secondary">

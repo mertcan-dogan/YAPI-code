@@ -1,4 +1,5 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { ExtractionConfidenceBadge } from "@/components/ai/ExtractionConfidenceBadge";
 import { CurrencyToggle, UsdAmountCell, useShowUsd } from "@/components/currency";
 import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
@@ -74,7 +75,17 @@ export default function InvoicesPage() {
       ),
     }] : []),
     { key: "due_date", header: "Vade", align: "right", render: (r) => <span className={daysUntil(r.due_date) < 0 && r.payment_status !== "paid" ? "text-danger" : ""}>{formatDate(r.due_date)}</span> },
-    { key: "payment_status", header: "Durum", render: (r) => <StatusBadge status={r.payment_status} /> },
+    {
+      key: "payment_status",
+      header: "Durum",
+      render: (r) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge status={r.payment_status} />
+          {/* CR-024: AI-read invoices carry a confidence pill (none on manual rows). */}
+          <ExtractionConfidenceBadge confidence={r.extraction_confidence} />
+        </div>
+      ),
+    },
     { key: "outstanding_try", header: "Bakiye", align: "right", render: (r) => formatCurrency(r.outstanding_try) },
     {
       // CR-002-D: Gecikme (Gün) — empty unless overdue & unpaid.
@@ -280,6 +291,13 @@ function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: b
   return (
     <SideDrawer open={open} title={editing ? "Fatura Düzenle" : "Fatura Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.invoice_number}>
       <div className="space-y-3">
+        {/* CR-024: this invoice was captured/imported by AI — surface the confidence. */}
+        {editing?.extraction_confidence != null && (
+          <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-secondary">
+            <span>Bu fatura yapay zeka ile okundu.</span>
+            <ExtractionConfidenceBadge confidence={editing.extraction_confidence} showLabel />
+          </div>
+        )}
         <div><Label required>Fatura No</Label><Input value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
         <div><Label required>Fatura Tarihi</Label><Input type="date" value={form.invoice_date} onChange={(e) => set("invoice_date", e.target.value)} /></div>
         <div><Label>Hakediş Dönemi</Label><Input value={form.hakkedis_period} onChange={(e) => set("hakkedis_period", e.target.value)} placeholder="Mayıs 2025 — 3. Hakediş" /></div>

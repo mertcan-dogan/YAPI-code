@@ -1,3 +1,4 @@
+import { ExtractionConfidenceBadge } from "@/components/ai/ExtractionConfidenceBadge";
 import { SideDrawer } from "@/components/SideDrawer";
 import { StatusBadge } from "@/components/StatusBadge";
 import { COST_CATEGORIES } from "@/constants";
@@ -14,6 +15,7 @@ interface CostRow {
   description?: string | null;
   total_with_vat_try: string;
   payment_status: string;
+  extraction_confidence?: number | null; // CR-024: AI extraction confidence (0..1)
 }
 
 // CR-004-K: "Gerçekleşen Maliyet" drill-down — all cost entries for the project.
@@ -74,7 +76,11 @@ export function CostEntriesDrawer({
                 <span>{r.supplier_name || r.description || "—"}</span>
                 <span>{formatDate(r.entry_date)}</span>
               </div>
-              <div className="mt-1"><StatusBadge status={r.payment_status} /></div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <StatusBadge status={r.payment_status} />
+                {/* CR-024: AI-read rows carry a confidence pill (none on manual rows). */}
+                <ExtractionConfidenceBadge confidence={r.extraction_confidence} />
+              </div>
             </div>
             );
           })}
