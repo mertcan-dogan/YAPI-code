@@ -215,3 +215,80 @@ describe("AIAssistantPage live streaming (CR-011-D)", () => {
     expect(screen.getByText("Veriler çekiliyor…")).toBeInTheDocument();
   });
 });
+
+// Cowork-style collapsible thinking steps: live while running, collapsed group
+// on completion, each past turn re-expandable, each step row individually open.
+describe("AIAssistantPage agent steps (Cowork-style collapse)", () => {
+  it("shows steps live (expanded) while running, then collapses on completion", () => {
+    wrap();
+    submit("Akçansa ne kadar?");
+    const cb = h.streamCalls[0].cb;
+
+    // Two tool steps arrive — the live panel is auto-expanded.
+    act(() => cb.onStep("Düşünüyorum…", ""));
+    act(() => cb.onStep("Tedarikçi harcamaları inceleniyor…", "get_vendor_spend"));
+    expect(screen.getByText("İşlem adımları")).toBeInTheDocument();
+    // The live one-line comments are visible while running.
+    expect(screen.getByText("Tedarikçi harcamaları inceleniyor…")).toBeInTheDocument();
+
+    // On final the live panel is gone and the steps collapse into a group toggle;
+    // the per-step comment is hidden until the group is re-expanded.
+    act(() => cb.onFinal(FINAL));
+    expect(screen.queryByText("İşlem adımları")).not.toBeInTheDocument();
+    expect(screen.getByText("2 adım tamamlandı")).toBeInTheDocument();
+    expect(screen.queryByText("Tedarikçi harcamaları inceleniyor…")).not.toBeInTheDocument();
+  });
+
+  it("expands a collapsed group, then a single step row reveals its detail", () => {
+    wrap();
+    submit("Akçansa ne kadar?");
+    const cb = h.streamCalls[0].cb;
+    act(() => cb.onStep("Tedarikçi harcamaları inceleniyor…", "get_vendor_spend"));
+    act(() => cb.onFinal(FINAL));
+
+    // Collapsed → expand the group toggle to reveal the step rows.
+    fireEvent.click(screen.getByText("1 adım tamamlandı"));
+    expect(screen.getByText("Tedarikçi harcamaları inceleniyor…")).toBeInTheDocument();
+
+    // Each step row is itself collapsible — its detail (raw tool name + row count)
+    // is hidden until the row header is clicked.
+    expect(screen.queryByText("get_vendor_spend")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Tedarikçi harcamaları okundu"));
+    expect(screen.getByText("get_vendor_spend")).toBeInTheDocument();
+    expect(screen.getByText("1 kayıt okundu")).toBeInTheDocument();
+  });
+
+  it("keeps each past turn's step group, expandable independently", () => {
+    wrap();
+    // Turn 1 — one step, then complete.
+    submit("ilk soru");
+    act(() => h.streamCalls[0].cb.onStep("İlk turun adımı…", "get_vendor_spend"));
+    act(() => h.streamCalls[0].cb.onFinal(FINAL));
+
+    // Turn 2 — a different step, then complete.
+    submit("ikinci soru");
+    act(() => h.streamCalls[1].cb.onStep("İkinci turun adımı…", "get_cashflow"));
+    act(() =>
+      h.streamCalls[1].cb.onFinal({ ...FINAL, answer_markdown: "İkinci yanıt.", tools_used: ["get_cashflow"] })
+    );
+
+    // Both past turns keep their own collapsed group; expanding the FIRST turn
+    // reveals only its step, independent of the second.
+    const groups = screen.getAllByText("1 adım tamamlandı");
+    expect(groups).toHaveLength(2);
+    fireEvent.click(groups[0]);
+    expect(screen.getByText("İlk turun adımı…")).toBeInTheDocument();
+    expect(screen.queryByText("İkinci turun adımı…")).not.toBeInTheDocument();
+  });
+
+  it("renders no step group when the answer used no tools (graceful zero steps)", () => {
+    wrap();
+    submit("merhaba");
+    // No step events; final carries no tools.
+    act(() => h.streamCalls[0].cb.onFinal({ ...FINAL, tools_used: [], row_counts: {} }));
+
+    expect(screen.getByText("Akçansa ile toplam 4.500 ₺ harcandı.")).toBeInTheDocument();
+    expect(screen.queryByText(/adım tamamlandı/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/araç kullanıldı/)).not.toBeInTheDocument();
+  });
+});
