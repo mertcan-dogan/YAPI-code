@@ -23,7 +23,10 @@ bleach==6.4.0                  # CR-002-I: XSS sanitisation of text input
 supabase==2.11.0
 
 # AI
-anthropic==0.42.0
+# 0.112.0 (current) — 0.42.0 predated the extended-thinking `thinking` parameter,
+# so messages.create/stream raised TypeError when AI_AGENT_THINKING_ENABLED was on
+# and took the whole agent down. agent.py also guards against this at runtime.
+anthropic==0.112.0
 
 # Email
 resend==2.5.1
