@@ -72,10 +72,17 @@ class Settings(BaseSettings):
     login_lockout_seconds: int = 15 * 60
     import_rate_per_minute: int = 10
     ai_import_rate_per_minute: int = 5
-    # CR-007-E: AI agent safety budget.
+    # CR-007-E: AI agent safety budget. Ceilings raised so extended thinking
+    # (when enabled) + the answer both fit within one response.
     ai_agent_rate_per_minute: int = 10
-    ai_agent_max_tokens: int = 2000
-    ai_agent_timeout_seconds: int = 60
+    ai_agent_max_tokens: int = 5000
+    ai_agent_timeout_seconds: int = 90
+    # Extended thinking for the agent loop. OFF by default; flipped on per-env
+    # (Railway) after deploy. The budget must stay below ai_agent_max_tokens so
+    # the answer still fits. Thinking is never enabled on the forced-final
+    # iteration (the API rejects thinking + a forced tool_choice).
+    ai_agent_thinking_enabled: bool = False
+    ai_agent_thinking_budget: int = 1536
     # CR-008-I: write-endpoint limits (workspace pin/reorder, vendor merge/link).
     workspace_write_rate_per_minute: int = 120
     vendor_write_rate_per_minute: int = 30

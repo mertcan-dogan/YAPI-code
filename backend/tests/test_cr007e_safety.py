@@ -153,5 +153,9 @@ def test_rate_limit_429_after_10_requests(client, seed, monkeypatch):
 
 def test_config_defaults():
     assert settings.ai_agent_rate_per_minute == 10
-    assert settings.ai_agent_timeout_seconds == 60
-    assert settings.ai_agent_max_tokens == 2000
+    # CR-011 rich steps: ceilings raised so extended thinking + the answer both fit.
+    assert settings.ai_agent_timeout_seconds == 90
+    assert settings.ai_agent_max_tokens == 5000
+    # Extended thinking is OFF by default (flipped on per-env after deploy).
+    assert settings.ai_agent_thinking_enabled is False
+    assert settings.ai_agent_thinking_budget == 1536

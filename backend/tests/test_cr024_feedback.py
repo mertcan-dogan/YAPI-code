@@ -223,6 +223,8 @@ def test_agent_response_has_query_log_id_and_row_counts_and_no_other_changes(db,
     assert set(out.keys()) == {
         "answer_markdown", "charts", "citations", "tools_used",
         "generated_at", "notes", "query_log_id", "row_counts", "proposed_actions",
+        # CR-011 rich steps (additive): per-tool aggregate summaries + token usage.
+        "tool_summaries", "usage",
     }
     assert out["proposed_actions"] == []  # read-only answer -> no proposals
     assert out["answer_markdown"] == "Portföy özeti."
@@ -240,6 +242,8 @@ def test_degraded_response_has_consistent_shape():
     assert set(out.keys()) == {
         "answer_markdown", "charts", "citations", "tools_used",
         "generated_at", "notes", "query_log_id", "row_counts", "proposed_actions",
+        # CR-011 rich steps (additive): per-tool aggregate summaries + token usage.
+        "tool_summaries", "usage",
     }
 
 

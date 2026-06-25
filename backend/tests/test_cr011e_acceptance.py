@@ -258,6 +258,8 @@ def test_readonly_answer_shape_unchanged_with_empty_proposals(db, seed, monkeypa
     assert set(out.keys()) == {
         "answer_markdown", "charts", "citations", "tools_used",
         "generated_at", "notes", "query_log_id", "row_counts", "proposed_actions",
+        # CR-011 rich steps (additive): per-tool aggregate summaries + token usage.
+        "tool_summaries", "usage",
     }
 
 

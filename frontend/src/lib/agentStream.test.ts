@@ -32,7 +32,7 @@ describe("streamAgent", () => {
     const frames =
       'event: delta\ndata: {"text":"Mer"}\n\n' +
       'event: delta\ndata: {"text":"haba"}\n\n' +
-      'event: step\ndata: {"tool":"get_vendor_spend","label":"Tedarikçi…"}\n\n' +
+      'event: step\ndata: {"tool":"get_vendor_spend","label":"Tedarikçi…","input":{"vendor_name":"Akçansa"},"note":"tarıyorum","thinking":"düşünce"}\n\n' +
       'event: final\ndata: {"answer_markdown":"Merhaba","charts":[],"citations":[],"tools_used":[],"generated_at":"t","proposed_actions":[]}\n\n';
     (globalThis as any).fetch = vi.fn(() => Promise.resolve({ ok: true, body: streamBody(frames) }));
 
@@ -44,7 +44,13 @@ describe("streamAgent", () => {
     await until(() => onFinal.mock.calls.length > 0);
     expect(onDelta).toHaveBeenNthCalledWith(1, "Mer");
     expect(onDelta).toHaveBeenNthCalledWith(2, "haba");
-    expect(onStep).toHaveBeenCalledWith("Tedarikçi…", "get_vendor_spend");
+    // CR-011 rich steps: the step detail (cleaned args, narration, thinking)
+    // is passed through as the additive 3rd arg.
+    expect(onStep).toHaveBeenCalledWith("Tedarikçi…", "get_vendor_spend", {
+      input: { vendor_name: "Akçansa" },
+      note: "tarıyorum",
+      thinking: "düşünce",
+    });
     expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ answer_markdown: "Merhaba" }));
     // The auth token was attached.
     const [, init] = (globalThis as any).fetch.mock.calls[0];

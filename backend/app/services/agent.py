@@ -669,6 +669,34 @@ def _text_of(content) -> str:
     return "".join(b.text for b in content if getattr(b, "type", "") == "text").strip()
 
 
+def _thinking_of(content) -> str:
+    """The model's extended-thinking text (CR-011 rich steps, PART B). Reads only
+    ``thinking`` blocks, so it never touches the answer text (_text_of keeps the
+    answer clean — it only joins ``text`` blocks)."""
+    return "".join(
+        getattr(b, "thinking", "") for b in content if getattr(b, "type", "") == "thinking"
+    ).strip()
+
+
+def _accumulate_usage(total: dict, usage) -> None:
+    """Sum input/output tokens off one model response's ``usage`` (PART C). With
+    thinking on, thinking tokens are already counted in output_tokens. Missing /
+    None usage (e.g. test doubles) is ignored so the shape is always present."""
+    if usage is None:
+        return
+    total["input_tokens"] += int(getattr(usage, "input_tokens", 0) or 0)
+    total["output_tokens"] += int(getattr(usage, "output_tokens", 0) or 0)
+
+
+def _summary_aggregates(summary: dict) -> dict:
+    """Keep only the SCALAR aggregates (totals/counts) from a tool result's
+    ``summary`` (PART A). Nested breakdowns (by_month, by_project, ranking,
+    matched_names, forecast_at_completion, …) and raw ``records`` never leave the
+    server — the surfaced payload is aggregates-only, not row data, regardless of
+    what the frontend chooses to render."""
+    return {k: v for k, v in summary.items() if isinstance(v, (str, int, float, bool))}
+
+
 # CR-011-A §4.1 — real-time step labels (Turkish), driven by the stream's `step`
 # events so the UI indicator reflects what the agent is actually doing.
 _STEP_LABELS = {
@@ -766,6 +794,11 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
     citations: list[dict] = []
     proposed_actions: list[dict] = []  # CR-011-C — pending approval proposals
     seen_citation_ids: set = set()
+    # CR-011 rich steps (PART A/C): per-tool aggregate summaries surfaced in the
+    # step detail, and the turn's total token usage. Both are in-session display
+    # only (not persisted) — like charts/citations.
+    tool_summaries: dict[str, dict] = {}
+    usage_total: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
 
     timeout = settings.ai_agent_timeout_seconds
     started = time.monotonic()
@@ -787,15 +820,35 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
             messages=convo,
             timeout=timeout,
         )
+        # PART B — extended thinking (env-gated, OFF by default). NEVER on the
+        # forced-final iteration: the API rejects thinking + a forced tool_choice.
+        # No temperature is set (thinking requires the default). The budget must
+        # leave room for the answer within max_tokens.
+        if settings.ai_agent_thinking_enabled and not force_final:
+            assert settings.ai_agent_max_tokens > settings.ai_agent_thinking_budget
+            call_kw["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": settings.ai_agent_thinking_budget,
+            }
         if stream:
             resp = yield from _stream_call(client, call_kw)
         else:
             resp = _create_call(client, call_kw)
 
+        # PART C — sum token usage across every iteration of the turn.
+        _accumulate_usage(usage_total, getattr(resp, "usage", None))
+
         if resp.stop_reason != "tool_use":
             break
 
-        # Append the assistant tool_use turn, then the tool_result turn.
+        # PART A/B — this iteration's pre-tool narration (text blocks) and the
+        # model's extended-thinking text, attached to each step it produced.
+        iter_note = _text_of(resp.content)
+        iter_thinking = _thinking_of(resp.content)
+
+        # Append the assistant tool_use turn, then the tool_result turn. Appending
+        # resp.content verbatim preserves any thinking blocks (required by the API
+        # to continue a thinking turn through tool use).
         convo.append({"role": "assistant", "content": resp.content})
         results_block = []
         for block in resp.content:
@@ -804,13 +857,26 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
             tools_used.append(block.name)
             if stream:
                 # Real-time step indicator (§4.1): the UI clears any preamble
-                # preview on a step and shows the tool's Turkish label.
-                yield {"type": "step", "tool": block.name, "label": _step_label(block.name)}
+                # preview on a step and shows the tool's Turkish label. PART A:
+                # also carry the cleaned tool args, the narration, and (PART B)
+                # the thinking so the collapsed step can show real detail.
+                # create_chart's args are huge (the full series/data) — skip them.
+                step_input = {} if block.name == "create_chart" else dict(block.input or {})
+                yield {
+                    "type": "step", "tool": block.name, "label": _step_label(block.name),
+                    "input": step_input, "note": iter_note, "thinking": iter_thinking,
+                }
             result = execute_tool(db, company_id, block.name, dict(block.input or {}),
                                   charts, citations, seen_citation_ids, today,
                                   user_id, proposed_actions)
             if isinstance(result, dict) and "row_count" in result:
                 row_counts[block.name] = row_counts.get(block.name, 0) + int(result["row_count"])
+            # PART A — the tool's aggregate summary (totals/counts, never raw rows
+            # nor nested breakdowns: pruned to scalars before it leaves the server).
+            if isinstance(result, dict) and isinstance(result.get("summary"), dict):
+                agg = _summary_aggregates(result["summary"])
+                if agg:
+                    tool_summaries[block.name] = agg
             results_block.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
@@ -840,6 +906,10 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
         # CR-011-C — pending approval proposals (Onayla/Reddet cards). Read-only
         # answers carry an empty list, so the response shape is unchanged.
         "proposed_actions": proposed_actions,
+        # CR-011 rich steps (PART A/C, additive, in-session only): per-tool
+        # aggregate summaries for the step detail + the turn's total token usage.
+        "tool_summaries": tool_summaries,
+        "usage": usage_total,
     }}
 
 
@@ -916,7 +986,13 @@ def sse_event(ev: dict) -> str:
     elif etype == "delta":
         data = {"text": ev.get("text", "")}
     elif etype == "step":
-        data = {"tool": ev.get("tool"), "label": ev.get("label")}
+        # PART A/B — pass the cleaned args, narration and thinking through to the
+        # client (additive; absent keys default cleanly on the frontend).
+        data = {
+            "tool": ev.get("tool"), "label": ev.get("label"),
+            "input": ev.get("input"), "note": ev.get("note"),
+            "thinking": ev.get("thinking"),
+        }
     else:
         data = ev
     return f"event: {etype}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
@@ -958,4 +1034,7 @@ def degraded_response() -> dict:
         "query_log_id": None,
         "row_counts": {},
         "proposed_actions": [],
+        # CR-011 rich steps (PART A/C): empty defaults keep the payload shape stable.
+        "tool_summaries": {},
+        "usage": {"input_tokens": 0, "output_tokens": 0},
     }

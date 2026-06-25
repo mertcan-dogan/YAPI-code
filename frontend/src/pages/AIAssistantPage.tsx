@@ -45,6 +45,10 @@ interface Msg {
   // Cowork-style thinking steps recorded during the turn (in-session only;
   // dropped on persist like the other agent extras above).
   steps?: AgentStep[];
+  // CR-011 rich steps (in-session only): per-tool aggregate summaries shown in
+  // the step detail, and the turn's total token usage shown as a subtle counter.
+  tool_summaries?: Record<string, Record<string, unknown>>;
+  usage?: { input_tokens: number; output_tokens: number };
 }
 
 // CR-011-D §4.1: the step label shown before the first server `step` event arrives.
@@ -274,11 +278,22 @@ export default function AIAssistantPage() {
         onDelta: (text) => setLiveText((prev) => prev + text),
         // A tool started: clear the preamble preview, show the real step label,
         // and record the step so it survives into the collapsed group on finish.
-        onStep: (label, tool) => {
+        onStep: (label, tool, detail) => {
           setLiveText("");
           if (label) setThinkingStep(label);
           if (label || tool) {
-            const next = [...stepsRef.current, { label: label ?? "", tool: tool ?? "" }];
+            // CR-011 rich steps: keep the cleaned args, narration and reasoning
+            // the `step` event now carries so the collapsed row shows real detail.
+            const next = [
+              ...stepsRef.current,
+              {
+                label: label ?? "",
+                tool: tool ?? "",
+                input: (detail?.input as Record<string, unknown> | undefined) ?? undefined,
+                note: detail?.note ?? undefined,
+                thinking: detail?.thinking ?? undefined,
+              },
+            ];
             stepsRef.current = next;
             setLiveSteps(next);
           }
@@ -294,6 +309,9 @@ export default function AIAssistantPage() {
             // CR-024: real explainability data + the log id for feedback linkage.
             row_counts: res.row_counts ?? {},
             query_log_id: res.query_log_id ?? null,
+            // CR-011 rich steps: per-tool aggregate summaries + per-chat usage.
+            tool_summaries: res.tool_summaries ?? {},
+            usage: res.usage,
             // Prefer the live-recorded steps (they carry Turkish labels). On the
             // non-stream fallback no `step` events fire, so synthesise steps from
             // the authoritative tools_used list (label fills in from toolLabels).
@@ -386,7 +404,12 @@ export default function AIAssistantPage() {
                   <div className="min-w-0 flex-1 pt-0.5 text-sm leading-relaxed text-text-primary">
                     {/* Cowork-style steps: collapsed group toggle above the answer,
                         expandable per past turn. Renders nothing when no steps. */}
-                    <AgentSteps steps={m.steps ?? []} rowCounts={m.row_counts} />
+                    <AgentSteps
+                      steps={m.steps ?? []}
+                      rowCounts={m.row_counts}
+                      toolSummaries={m.tool_summaries}
+                      usage={m.usage}
+                    />
                     <MarkdownText text={m.text} />
                     {/* CR-007-G: inline charts rendered from the agent's chart specs. */}
                     {(m.charts ?? []).map((spec, ci) => (
