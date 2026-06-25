@@ -9,6 +9,8 @@ no raw-SQL tool, and ``company_id`` is injected here from the authenticated user
 never taken from tool input.
 """
 import calendar
+import functools
+import inspect
 import json
 import logging
 import time
@@ -822,14 +824,25 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
         )
         # PART B — extended thinking (env-gated, OFF by default). NEVER on the
         # forced-final iteration: the API rejects thinking + a forced tool_choice.
-        # No temperature is set (thinking requires the default). The budget must
-        # leave room for the answer within max_tokens.
-        if settings.ai_agent_thinking_enabled and not force_final:
-            assert settings.ai_agent_max_tokens > settings.ai_agent_thinking_budget
-            call_kw["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": settings.ai_agent_thinking_budget,
-            }
+        # No temperature is set (thinking requires the default). Hardened so a
+        # thinking/SDK incompatibility can never down the agent (§SDK-upgrade):
+        #  - capability guard: only pass `thinking` if the SDK accepts it;
+        #  - budget guard: it must leave room for the answer within max_tokens
+        #    (skip thinking instead of crashing if mis-configured);
+        #  - per-call fallback in _create_call/_stream_call retries without it.
+        if (settings.ai_agent_thinking_enabled and not force_final
+                and _thinking_capable(client)):
+            if settings.ai_agent_max_tokens > settings.ai_agent_thinking_budget:
+                call_kw["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": settings.ai_agent_thinking_budget,
+                }
+            else:
+                logger.warning(
+                    "ai_agent_thinking_budget (%s) >= ai_agent_max_tokens (%s); "
+                    "thinking disabled this call to leave room for the answer.",
+                    settings.ai_agent_thinking_budget, settings.ai_agent_max_tokens,
+                )
         if stream:
             resp = yield from _stream_call(client, call_kw)
         else:
@@ -913,13 +926,74 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
     }}
 
 
+# --------------------------------------------------------------------------- #
+# Thinking safety net (SDK-upgrade hardening) — a thinking/SDK incompatibility
+# must NEVER take the agent down again. Two independent guards:
+#   (a) capability guard: if the installed SDK doesn't even accept `thinking`,
+#       never pass it (treat the flag as OFF and warn once);
+#   (b) per-call fallback: if a thinking-enabled call still fails *because of*
+#       thinking, strip it and retry the SAME call once without it.
+# --------------------------------------------------------------------------- #
+def _thinking_capable(client) -> bool:
+    """True if the installed anthropic SDK accepts a ``thinking`` kwarg on
+    messages.create. The pinned 0.42.0 SDK predated it and raised TypeError, taking
+    the agent down when AI_AGENT_THINKING_ENABLED flipped on — this stops that at
+    the source. Introspected once (the create function is a stable object)."""
+    return _create_accepts_thinking(type(client.messages).create)
+
+
+@functools.lru_cache(maxsize=1)
+def _create_accepts_thinking(create_fn) -> bool:
+    try:
+        params = inspect.signature(create_fn).parameters
+    except (TypeError, ValueError):
+        # Can't introspect — assume supported; the per-call fallback below covers a
+        # real incompatibility, so a wrong guess here never downs the agent.
+        return True
+    # "Accepts `thinking`" means passing it won't raise an unexpected-kwarg
+    # TypeError: either an explicit `thinking` parameter (the real SDK ≥ 0.45) or a
+    # **kwargs catch-all. The pinned 0.42.0 create had neither -> correctly OFF.
+    supported = "thinking" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if not supported:
+        logger.warning(
+            "Installed anthropic SDK does not accept a `thinking` parameter; "
+            "treating ai_agent_thinking_enabled as OFF (upgrade the SDK to enable "
+            "extended thinking)."
+        )
+    return supported
+
+
+def _is_thinking_error(exc: Exception) -> bool:
+    """True if ``exc`` is the signature of a thinking/SDK incompatibility: an
+    unexpected-kwarg ``TypeError`` for ``thinking`` or an API error specifically
+    about the ``thinking`` parameter. Only these trigger the strip-and-retry —
+    an unrelated transport failure still degrades normally."""
+    return "thinking" in str(exc).lower()
+
+
 def _create_call(client, call_kw):
-    """One non-stream model call; transport errors -> AIUnavailable (degrade)."""
+    """One non-stream model call; transport errors -> AIUnavailable (degrade).
+    If a thinking-enabled call fails *because of* thinking, strip it and retry once
+    so the user still gets a normal answer (per-call fallback, §SDK-upgrade)."""
     try:
         return client.messages.create(**call_kw)
     except ai_service.AIUnavailable:
         raise
     except Exception as exc:  # network / timeout / API error -> degrade
+        if "thinking" in call_kw and _is_thinking_error(exc):
+            logger.warning("thinking call failed (%s: %s); retrying without thinking",
+                           type(exc).__name__, exc)
+            retry_kw = {k: v for k, v in call_kw.items() if k != "thinking"}
+            try:
+                return client.messages.create(**retry_kw)
+            except ai_service.AIUnavailable:
+                raise
+            except Exception as exc2:
+                logger.warning("Agent Claude call failed (post-downgrade): %s: %s",
+                               type(exc2).__name__, exc2)
+                raise ai_service.AIUnavailable("Claude error") from exc2
         logger.warning("Agent Claude call failed: %s: %s", type(exc).__name__, exc)
         raise ai_service.AIUnavailable("Claude error") from exc
 
@@ -928,16 +1002,35 @@ def _stream_call(client, call_kw):
     """One streaming model call: yields ``{"type": "delta", "text": ...}`` for each
     text chunk and returns the final assembled Message (with tool_use blocks) so
     the loop can continue. If streaming fails before completing, falls back to a
-    single non-stream call so the answer is never lost (§1.1)."""
+    single non-stream call so the answer is never lost (§1.1).
+
+    Thinking-specific failure handling (§SDK-upgrade): strip ``thinking`` and
+    recover once. If nothing has streamed yet, re-stream (the user still gets a
+    *streamed* answer); if deltas were already emitted, drop to a non-stream call
+    so we never re-emit the prefix and show a doubled answer."""
+    emitted = False
     try:
         with client.messages.stream(**call_kw) as s:
             for chunk in s.text_stream:
                 if chunk:
+                    emitted = True
                     yield {"type": "delta", "text": chunk}
             return s.get_final_message()
     except ai_service.AIUnavailable:
         raise
-    except Exception as exc:  # streaming transport error -> non-stream fallback
+    except Exception as exc:  # streaming transport / thinking error
+        if "thinking" in call_kw and _is_thinking_error(exc):
+            retry_kw = {k: v for k, v in call_kw.items() if k != "thinking"}
+            if emitted:
+                # Already streamed a prefix — re-streaming would double it. Recover
+                # via a single non-stream call (the loop reads the returned Message).
+                logger.warning("thinking stream failed mid-stream (%s: %s); recovering "
+                               "without thinking via non-stream", type(exc).__name__, exc)
+                return _create_call(client, retry_kw)
+            logger.warning("thinking stream failed (%s: %s); retrying stream without thinking",
+                           type(exc).__name__, exc)
+            resp = yield from _stream_call(client, retry_kw)
+            return resp
         logger.warning("Agent stream failed, falling back to non-stream: %s: %s",
                        type(exc).__name__, exc)
         return _create_call(client, call_kw)
