@@ -17,7 +17,7 @@ import { apiDelete, apiGet, apiPost, apiPut, api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
-import type { BudgetCategoryRow, CostEntry } from "@/types";
+import type { BudgetCategoryRow, CloseoutResponse, CostEntry } from "@/types";
 import { formatCurrency, formatDate, formatPct, toNumber } from "@/utils/format";
 import { AlertTriangle, ArrowUpRight, Download, FileText, Pencil, Plus, RefreshCw, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -53,6 +53,9 @@ export default function BudgetPage() {
   });
   // CR-023: per-commitment relief progress, keyed by commitment id.
   const commitments = useFetch<{ commitments: Commitment[] }>(`/projects/${id}/commitments`);
+  // Closeout status — a "completed" project warns that new costs affect the report.
+  const closeout = useFetch<CloseoutResponse>(`/projects/${id}/closeout`);
+  const projectCompleted = closeout.data?.project_status === "completed";
   const reliefById: Record<string, Commitment> = {};
   for (const c of commitments.data?.commitments ?? []) reliefById[c.id] = c;
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -441,6 +444,7 @@ export default function BudgetPage() {
         open={drawerOpen}
         projectId={id!}
         editing={editingCost}
+        projectCompleted={projectCompleted}
         onClose={() => { setDrawerOpen(false); setEditingCost(null); }}
         onSaved={() => { setEditingCost(null); refetchAll(); }}
       />
@@ -450,6 +454,7 @@ export default function BudgetPage() {
         open={!!billing}
         projectId={id!}
         billing={billing}
+        projectCompleted={projectCompleted}
         onClose={() => setBilling(null)}
         onSaved={() => { setBilling(null); refetchAll(); }}
       />
@@ -654,7 +659,7 @@ function SubcategoryBreakdown({ projectId, refreshKey }: { projectId: string; re
   );
 }
 
-function CostDrawer({ open, projectId, editing, billing, onClose, onSaved }: { open: boolean; projectId: string; editing?: CostEntry | null; billing?: Commitment | null; onClose: () => void; onSaved: () => void }) {
+function CostDrawer({ open, projectId, editing, billing, projectCompleted, onClose, onSaved }: { open: boolean; projectId: string; editing?: CostEntry | null; billing?: Commitment | null; projectCompleted?: boolean; onClose: () => void; onSaved: () => void }) {
   const empty = {
     entry_date: new Date().toISOString().slice(0, 10),
     entry_type: "actual",
@@ -731,13 +736,16 @@ function CostDrawer({ open, projectId, editing, billing, onClose, onSaved }: { o
         // CR-023: only send a relief link when one is set (Faturala flow).
         commitment_id: form.commitment_id || null,
       };
+      let res: any;
       if (editing) {
-        await apiPut(`/projects/${projectId}/costs/${editing.id}`, body);
+        res = await apiPut(`/projects/${projectId}/costs/${editing.id}`, body);
         toast.success("Maliyet güncellendi");
       } else {
-        await apiPost(`/projects/${projectId}/costs`, body);
+        res = await apiPost(`/projects/${projectId}/costs`, body);
         toast.success("Maliyet kaydedildi");
       }
+      // Completed-project guard: backend flags entries that affect a closed report.
+      if (res?.closeout_warning) toast.warning(res.closeout_warning);
       setForm(empty);
       setAiFields(new Set());
       onSaved();
@@ -777,6 +785,13 @@ function CostDrawer({ open, projectId, editing, billing, onClose, onSaved }: { o
   return (
     <SideDrawer open={open} title={billing ? "Taahhüde Karşı Faturala" : editing ? "Maliyet Düzenle" : "Maliyet Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.amount_try || !!form.cost_category}>
       <div className="space-y-3">
+        {/* Completed-project warning — a new/edited cost may affect the closeout report. */}
+        {projectCompleted && (
+          <div className="flex items-start gap-2 rounded-md border border-accent bg-amber-50 px-3 py-2 text-xs text-text-secondary">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+            <span>Proje tamamlandı olarak işaretli — bu kayıt kapanış raporunu etkileyebilir.</span>
+          </div>
+        )}
         {/* CR-024: this entry was captured/imported by AI — surface the confidence. */}
         {editing?.extraction_confidence != null && (
           <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-secondary">

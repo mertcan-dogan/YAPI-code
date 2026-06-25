@@ -418,3 +418,45 @@ export interface AssuranceScanSummary {
   total_found: number;
   created: number;
 }
+
+// Proje Kapanışı (project closeout) — lifecycle Aktif → Geçici Kabul → Kesin Hesap
+// → Kesin Kabul. `stage` is the FURTHEST stage reached (or null when not started).
+export type CloseoutStage = "gecici_kabul" | "kesin_hesap" | "kesin_kabul";
+
+export interface CloseoutSummary {
+  project_name: string;
+  client_name: string;
+  contract_value: string;
+  total_actual: string;
+  forecast_final: string;
+  margin_pct: string;
+  net_cash: string;
+  report_date: string;
+  generated_at: string;
+}
+
+export interface CloseoutObj {
+  id: string;
+  project_id: string;
+  company_id: string;
+  stage: CloseoutStage | null;
+  gecici_kabul_date: string | null;
+  kesin_hesap_date: string | null;
+  kesin_kabul_date: string | null;
+  is_active: boolean;
+  frozen_at: string | null;
+  reopened_at: string | null;
+  created_at: string;
+  // The /closeouts archive list carries these per record (newest first).
+  summary?: CloseoutSummary | null;
+  report_frozen?: boolean;
+}
+
+// GET /projects/{id}/closeout envelope.
+export interface CloseoutResponse {
+  closeout: CloseoutObj | null;
+  project_status: "active" | "completed";
+  summary: CloseoutSummary | null;
+  report_frozen: boolean;
+  report_stale: boolean;
+}

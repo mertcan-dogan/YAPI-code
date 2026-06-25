@@ -16,10 +16,14 @@ const h = vi.hoisted(() => {
     cashflow: { ...empty },
     bySub: { ...empty },
     milestones: { ...empty, data: [] as any[] },
+    closeout: { ...empty },
+    closeouts: { ...empty },
+    user: { role: "director" } as { role: string },
   };
 });
 
-// Dispatch useFetch by URL: dashboard / period-summary / by-subcategory / cashflow / milestones.
+// Dispatch useFetch by URL: dashboard / period-summary / by-subcategory / cashflow
+// / milestones / closeout(s). `/closeouts` (archive) is checked before `/closeout`.
 vi.mock("@/hooks/useFetch", () => ({
   useFetch: (url: string | null) => {
     if (url == null) return { data: null, meta: null, loading: false, error: null, refetch: () => {} };
@@ -27,6 +31,8 @@ vi.mock("@/hooks/useFetch", () => ({
     if (url.includes("/period-summary")) return h.period;
     if (url.includes("/cashflow")) return h.cashflow;
     if (url.includes("/milestones")) return h.milestones;
+    if (url.includes("/closeouts")) return h.closeouts;
+    if (url.includes("/closeout")) return h.closeout;
     return h.dashboard;
   },
 }));
@@ -36,8 +42,8 @@ vi.mock("@/components/currency", () => ({
   CurrencyToggle: () => null,
   UsdMissingNote: () => null,
 }));
-vi.mock("@/lib/api", () => ({ apiPost: vi.fn(() => Promise.resolve({})), apiPut: vi.fn(() => Promise.resolve({})), apiDelete: vi.fn(() => Promise.resolve({})) }));
-vi.mock("@/store/auth", () => ({ useAuth: (sel: any) => sel({ user: { role: "director" } }) }));
+vi.mock("@/lib/api", () => ({ apiPost: vi.fn(() => Promise.resolve({})), apiPut: vi.fn(() => Promise.resolve({})), apiDelete: vi.fn(() => Promise.resolve({})), api: { get: vi.fn(() => Promise.resolve({ data: new Blob() })) } }));
+vi.mock("@/store/auth", () => ({ useAuth: (sel: any) => sel({ user: h.user }) }));
 vi.mock("@/store/aiSummary", () => ({
   useAISummaryStore: () => ({
     getSummary: () => ({ content: "özet", generatedAt: "2026-06-17T00:00:00Z" }),
@@ -92,6 +98,15 @@ const BY_SUB = {
   ],
 };
 
+const CLOSEOUT_ACTIVE = {
+  closeout: {
+    id: "c1", project_id: "p1", company_id: "co1", stage: "gecici_kabul",
+    gecici_kabul_date: "2026-05-01", kesin_hesap_date: null, kesin_kabul_date: null,
+    is_active: true, frozen_at: null, reopened_at: null, created_at: "2026-05-01T00:00:00Z",
+  },
+  project_status: "active", summary: null, report_frozen: false, report_stale: false,
+};
+
 beforeEach(() => {
   h.showUsd = true;
   h.dashboard = { data: DASHBOARD, meta: null, loading: false, error: null, refetch: () => {} };
@@ -99,6 +114,9 @@ beforeEach(() => {
   h.cashflow = { data: null, meta: null, loading: false, error: null, refetch: () => {} };
   h.bySub = { data: BY_SUB, meta: null, loading: false, error: null, refetch: () => {} };
   h.milestones = { data: [], meta: null, loading: false, error: null, refetch: () => {} };
+  h.closeout = { data: CLOSEOUT_ACTIVE, meta: null, loading: false, error: null, refetch: () => {} };
+  h.closeouts = { data: [], meta: null, loading: false, error: null, refetch: () => {} };
+  h.user = { role: "director" };
 });
 afterEach(cleanup);
 
@@ -286,5 +304,87 @@ describe("ProjectDashboardPage redesign", () => {
     expect(screen.getByText("%10,0")).toBeInTheDocument();   // retention 100/1000
     expect(screen.getByText("%12,5")).toBeInTheDocument();   // güncel kar marjı
     expect(screen.getAllByText("$12,345.00").length).toBeGreaterThan(0); // USD snapshot
+  });
+
+  // --- Proje Kapanışı (closeout) panel -------------------------------------- #
+  it("renders the closeout panel: stage timeline + Aktif status, director sees the advance action", () => {
+    render(createElement(ProjectDashboardPage));
+
+    expect(screen.getByText("Proje Kapanışı")).toBeInTheDocument();
+    // The three lifecycle stages render in the timeline.
+    expect(screen.getAllByText("Geçici Kabul").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Kesin Hesap").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Kesin Kabul").length).toBeGreaterThan(0);
+    // Active status badge.
+    expect(screen.getByText("Aktif")).toBeInTheDocument();
+    // Director-only: advance to the next stage (Kesin Hesap) + reopen.
+    expect(screen.getByText(/Sonraki Aşama:/)).toBeInTheDocument();
+    expect(screen.getByText("Yeniden Aç")).toBeInTheDocument();
+  });
+
+  it("shows the frozen report summary + PDF download once the report is frozen", () => {
+    h.closeout = {
+      data: {
+        closeout: {
+          id: "c1", project_id: "p1", company_id: "co1", stage: "kesin_hesap",
+          gecici_kabul_date: "2026-05-01", kesin_hesap_date: "2026-06-01", kesin_kabul_date: null,
+          is_active: true, frozen_at: "2026-06-01T10:00:00Z", reopened_at: null, created_at: "2026-05-01T00:00:00Z",
+        },
+        project_status: "completed",
+        summary: {
+          project_name: "Test Projesi", client_name: "ACME", contract_value: "₺1.000",
+          total_actual: "₺400", forecast_final: "₺800", margin_pct: "%11,0",
+          net_cash: "₺250", report_date: "01.06.2026", generated_at: "2026-06-01T10:00:00Z",
+        },
+        report_frozen: true, report_stale: false,
+      },
+      meta: null, loading: false, error: null, refetch: () => {},
+    };
+    render(createElement(ProjectDashboardPage));
+
+    expect(screen.getByText("Tamamlandı")).toBeInTheDocument();
+    expect(screen.getByText(/Proje Sonu Raporu \(PDF\) indir/)).toBeInTheDocument();
+    expect(screen.getByText("Net Nakit")).toBeInTheDocument();
+    expect(screen.getByText("₺250")).toBeInTheDocument();
+  });
+
+  it("hides the PDF download from site managers (gated to director/PM/finance)", () => {
+    h.user = { role: "site_manager" };
+    h.closeout = {
+      data: {
+        closeout: {
+          id: "c1", project_id: "p1", company_id: "co1", stage: "kesin_hesap",
+          gecici_kabul_date: "2026-05-01", kesin_hesap_date: "2026-06-01", kesin_kabul_date: null,
+          is_active: true, frozen_at: "2026-06-01T10:00:00Z", reopened_at: null, created_at: "2026-05-01T00:00:00Z",
+        },
+        project_status: "completed",
+        summary: {
+          project_name: "Test Projesi", client_name: "ACME", contract_value: "₺1.000",
+          total_actual: "₺400", forecast_final: "₺800", margin_pct: "%11,0",
+          net_cash: "₺250", report_date: "01.06.2026", generated_at: "2026-06-01T10:00:00Z",
+        },
+        report_frozen: true, report_stale: false,
+      },
+      meta: null, loading: false, error: null, refetch: () => {},
+    };
+    render(createElement(ProjectDashboardPage));
+    // Summary still visible, but the export button is hidden for site managers.
+    expect(screen.getByText("Net Nakit")).toBeInTheDocument();
+    expect(screen.queryByText(/Proje Sonu Raporu \(PDF\) indir/)).not.toBeInTheDocument();
+  });
+
+  it("non-directors see the closeout timeline but NO action buttons", () => {
+    h.user = { role: "accountant" };
+    render(createElement(ProjectDashboardPage));
+    expect(screen.getByText("Proje Kapanışı")).toBeInTheDocument();
+    expect(screen.queryByText(/Sonraki Aşama:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Yeniden Aç")).not.toBeInTheDocument();
+  });
+
+  it("surfaces a retryable error (not a silent empty) when the closeout load fails", () => {
+    const refetch = vi.fn();
+    h.closeout = { data: null, meta: null, loading: false, error: "500", refetch };
+    render(createElement(ProjectDashboardPage));
+    expect(screen.getByText("Proje kapanışı yüklenemedi.")).toBeInTheDocument();
   });
 });

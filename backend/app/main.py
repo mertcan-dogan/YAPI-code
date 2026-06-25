@@ -45,6 +45,7 @@ from app.api import (
     budget_templates,
     auth,
     cashflow,
+    closeout,
     cost_subcategories,
     costs,
     custom_categories,
@@ -180,6 +181,7 @@ API_PREFIX = "/api/v1"
 for r in (
     auth.router,
     projects.router,
+    closeout.router,
     costs.router,
     invoices.router,
     subcontractors.router,

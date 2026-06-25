@@ -14,6 +14,14 @@ INVITE_REVOKED = "revoked"
 INVITE_EXPIRED = "expired"
 INVITE_STATUSES = [INVITE_PENDING, INVITE_ACCEPTED, INVITE_REVOKED, INVITE_EXPIRED]
 
+# --- Project closeout stages (Turkish acceptance lifecycle) ---
+# Aktif → Geçici Kabul → Kesin Hesap → Kesin Kabul. ``stage`` on a closeout row
+# is the FURTHEST stage reached. report_data is frozen at Kesin Hesap.
+CLOSEOUT_GECICI_KABUL = "gecici_kabul"
+CLOSEOUT_KESIN_HESAP = "kesin_hesap"
+CLOSEOUT_KESIN_KABUL = "kesin_kabul"
+CLOSEOUT_STAGES = [CLOSEOUT_GECICI_KABUL, CLOSEOUT_KESIN_HESAP, CLOSEOUT_KESIN_KABUL]
+
 # --- Project types (CR-001-A: 26 types grouped by category) ---
 # key (stored in DB) -> (label, category)
 PROJECT_TYPE_DEFS = [
@@ -267,4 +275,6 @@ AUDITED_TABLES = {
     "landowner_payments",
     # CR-012: automation enable/disable/config changes are audited.
     "automations",
+    # Project closeout lifecycle (Geçici/Kesin Kabul, freeze, reopen) is audited.
+    "project_closeouts",
 }

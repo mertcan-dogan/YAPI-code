@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 # Representative scoped tables to exercise writes against; the fail-closed check
 # below sweeps the full set from the migration.
-SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users"]
+SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts"]
 
 
 def _set_guc(conn, company_id):
@@ -165,3 +165,60 @@ def test_company_b_mirror(seeded, app_engine):
             {"a": seeded["a"]},
         ).scalar()
     assert own >= 1 and other == 0
+
+
+def test_project_closeouts_isolation(seeded, app_engine):
+    """0043: a company-A session cannot read/insert company-B closeout rows."""
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
+
+    co_a, co_b = uuid.uuid4(), uuid.uuid4()
+    # Seed one closeout per company on the A-scoped and B-scoped sessions (each
+    # insert must satisfy WITH CHECK for its own company).
+    with app_engine.connect() as conn:
+        _set_guc(conn, seeded["a"])
+        conn.execute(
+            text(
+                "INSERT INTO project_closeouts (id, company_id, project_id, stage, is_active) "
+                "VALUES (:id, :c, :p, 'gecici_kabul', true)"
+            ),
+            {"id": co_a, "c": seeded["a"], "p": seeded["proj_a"]},
+        )
+        conn.commit()
+    with app_engine.connect() as conn:
+        _set_guc(conn, seeded["b"])
+        conn.execute(
+            text(
+                "INSERT INTO project_closeouts (id, company_id, project_id, stage, is_active) "
+                "VALUES (:id, :c, :p, 'gecici_kabul', true)"
+            ),
+            {"id": co_b, "c": seeded["b"], "p": seeded["proj_b"]},
+        )
+        conn.commit()
+    try:
+        # A sees only its own closeout; B's is invisible.
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            own = conn.execute(text("SELECT count(*) FROM project_closeouts")).scalar()
+            other = conn.execute(
+                text("SELECT count(*) FROM project_closeouts WHERE company_id = :b"),
+                {"b": seeded["b"]},
+            ).scalar()
+            assert own >= 1 and other == 0
+            # A cannot INSERT a closeout into company B (WITH CHECK).
+            with pytest.raises((DBAPIError, ProgrammingError)):
+                conn.execute(
+                    text(
+                        "INSERT INTO project_closeouts (id, company_id, project_id, stage) "
+                        "VALUES (:id, :c, :p, 'gecici_kabul')"
+                    ),
+                    {"id": uuid.uuid4(), "c": seeded["b"], "p": seeded["proj_b"]},
+                )
+                conn.commit()
+    finally:
+        admin = create_engine(ADMIN_URL, future=True)
+        with admin.begin() as conn:
+            conn.execute(
+                text("DELETE FROM project_closeouts WHERE company_id IN (:a, :b)"),
+                {"a": seeded["a"], "b": seeded["b"]},
+            )
+        admin.dispose()

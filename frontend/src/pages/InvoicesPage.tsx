@@ -10,9 +10,9 @@ import { INVOICE_TYPE_LABELS, STATUS_LABELS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { api, apiPost, apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
-import type { ClientInvoice } from "@/types";
+import type { ClientInvoice, CloseoutResponse } from "@/types";
 import { daysUntil, formatCurrency, formatDate, toNumber } from "@/utils/format";
-import { FileText, Pencil, Plus, Upload } from "lucide-react";
+import { AlertTriangle, FileText, Pencil, Plus, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
@@ -28,6 +28,9 @@ function Chip({ label, value }: { label: string; value: string }) {
 export default function InvoicesPage() {
   const { id } = useParams();
   const { data, loading, refetch, error } = useFetch<ClientInvoice[]>(`/projects/${id}/invoices`);
+  // Closeout status — a "completed" project warns that new invoices affect the report.
+  const closeout = useFetch<CloseoutResponse>(`/projects/${id}/closeout`);
+  const projectCompleted = closeout.data?.project_status === "completed";
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ClientInvoice | null>(null);
   const [collecting, setCollecting] = useState<ClientInvoice | null>(null);
@@ -168,7 +171,7 @@ export default function InvoicesPage() {
         </div>
       )}
       <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} highlightId={highlightId} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
-      <InvoiceDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
+      <InvoiceDrawer open={open} projectId={id!} editing={editing} projectCompleted={projectCompleted} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
       {collecting && (
         <CollectModal
           projectId={id!}
@@ -216,7 +219,7 @@ function CollectModal({ projectId, invoice, onClose, onSaved }: { projectId: str
   );
 }
 
-function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: boolean; projectId: string; editing?: ClientInvoice | null; onClose: () => void; onSaved: () => void }) {
+function InvoiceDrawer({ open, projectId, editing, projectCompleted, onClose, onSaved }: { open: boolean; projectId: string; editing?: ClientInvoice | null; projectCompleted?: boolean; onClose: () => void; onSaved: () => void }) {
   const empty = { invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), hakkedis_period: "", invoice_type: "hakedis", description: "", amount_try: "", vat_rate: "20", retention_amount_try: "0", due_date: "", payment_status: "unpaid", amount_received_try: "0", date_received: "", document_url: "" };
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
@@ -267,17 +270,20 @@ function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: b
   const save = async () => {
     setSaving(true);
     try {
+      let res: any;
       if (editing) {
-        await apiPut(`/projects/${projectId}/invoices/${editing.id}`, {
+        res = await apiPut(`/projects/${projectId}/invoices/${editing.id}`, {
           ...form,
           amount_eur: null,
           date_received: form.date_received || null,
         });
         toast.success("Fatura güncellendi");
       } else {
-        await apiPost(`/projects/${projectId}/invoices`, { ...form, amount_eur: null });
+        res = await apiPost(`/projects/${projectId}/invoices`, { ...form, amount_eur: null });
         toast.success("Fatura kaydedildi");
       }
+      // Completed-project guard: backend flags entries that affect a closed report.
+      if (res?.closeout_warning) toast.warning(res.closeout_warning);
       setForm(empty);
       onSaved();
       onClose();
@@ -291,6 +297,13 @@ function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: b
   return (
     <SideDrawer open={open} title={editing ? "Fatura Düzenle" : "Fatura Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.invoice_number}>
       <div className="space-y-3">
+        {/* Completed-project warning — a new/edited invoice may affect the closeout report. */}
+        {projectCompleted && (
+          <div className="flex items-start gap-2 rounded-md border border-accent bg-amber-50 px-3 py-2 text-xs text-text-secondary">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+            <span>Proje tamamlandı olarak işaretli — bu kayıt kapanış raporunu etkileyebilir.</span>
+          </div>
+        )}
         {/* CR-024: this invoice was captured/imported by AI — surface the confidence. */}
         {editing?.extraction_confidence != null && (
           <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-secondary">
