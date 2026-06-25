@@ -11,9 +11,19 @@ import type { AgentResponse } from "@/types/agent";
 import { apiPost, baseURL } from "./api";
 import { supabase } from "./supabase";
 
+// CR-011 rich steps (PART A/B): extra per-step detail the `step` event now
+// carries — the cleaned tool args, the model's pre-tool narration, and (when the
+// thinking flag is on) its reasoning text. All optional/additive.
+export interface StepDetail {
+  input?: Record<string, unknown> | null;
+  note?: string | null;
+  thinking?: string | null;
+}
+
 export interface StreamCallbacks {
   onDelta?: (text: string) => void;
-  onStep?: (label: string, tool: string) => void;
+  // `detail` is additive — older callers that take (label, tool) keep working.
+  onStep?: (label: string, tool: string, detail?: StepDetail) => void;
   onFinal: (res: AgentResponse) => void;
   onError?: (e: unknown) => void;
 }
@@ -83,7 +93,12 @@ export function streamAgent(body: StreamBody, cb: StreamCallbacks): () => void {
           try {
             const parsed = JSON.parse(data);
             if (event === "delta") cb.onDelta?.(parsed.text ?? "");
-            else if (event === "step") cb.onStep?.(parsed.label ?? "", parsed.tool ?? "");
+            else if (event === "step")
+              cb.onStep?.(parsed.label ?? "", parsed.tool ?? "", {
+                input: parsed.input,
+                note: parsed.note,
+                thinking: parsed.thinking,
+              });
             else if (event === "final") {
               cb.onFinal(parsed as AgentResponse);
               finalSeen = true;

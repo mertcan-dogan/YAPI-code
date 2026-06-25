@@ -53,4 +53,9 @@ export interface AgentResponse {
   row_counts?: Record<string, number>;
   // CR-011-C (additive): pending approval proposals (empty for read-only answers).
   proposed_actions?: ProposedAction[];
+  // CR-011 rich steps (additive, in-session only): per-tool aggregate summaries
+  // (totals/counts — never raw rows) shown in the step detail, and the turn's
+  // total token usage shown as a subtle per-chat counter.
+  tool_summaries?: Record<string, Record<string, unknown>>;
+  usage?: { input_tokens: number; output_tokens: number };
 }
