@@ -1,5 +1,15 @@
 import axios from "axios";
 import { supabase } from "./supabase";
+import { cachedGet, invalidate } from "./requestCache";
+import type {
+  ReportListItem,
+  ReportOut,
+  ReportPatchBody,
+  ReportSaveBody,
+  RunResult,
+  StudioCatalog,
+  StudioSpec,
+} from "@/types/studio";
 
 export const baseURL = (import.meta.env.VITE_API_URL as string) || "https://yapi-code-production.up.railway.app/api/v1";
 
@@ -77,7 +87,61 @@ export async function apiPut<T = any>(url: string, body?: unknown): Promise<T> {
   return res.data.data;
 }
 
+export async function apiPatch<T = any>(url: string, body?: unknown): Promise<T> {
+  const res = await api.patch(url, body);
+  return res.data.data;
+}
+
 export async function apiDelete<T = any>(url: string): Promise<T> {
   const res = await api.delete(url);
   return res.data.data;
 }
+
+// Blob download helper — the Supabase JWT is attached by the request interceptor,
+// so this works for authenticated file endpoints (window.open can't carry the
+// token). Returns the raw Blob; the caller triggers the browser download.
+export async function apiPostBlob(
+  url: string,
+  body?: unknown,
+  params?: Record<string, unknown>
+): Promise<Blob> {
+  const res = await api.post(url, body, { responseType: "blob", params });
+  return res.data as Blob;
+}
+
+// CR-033 — Report Studio. Grouped client calls against the FIXED /studio contract.
+// catalog is cached (no per-company data); every mutation invalidates the cached
+// /studio/reports list so the list view re-fetches on next mount.
+const REPORTS_PREFIX = "/studio/reports";
+const dropReportsCache = () => invalidate((url) => url.startsWith(REPORTS_PREFIX));
+
+export const studio = {
+  catalog: () => cachedGet<StudioCatalog>("/studio/catalog").then((r) => r.data),
+  run: (spec: StudioSpec) => apiPost<RunResult>("/studio/run", spec),
+  listReports: (q?: string) =>
+    cachedGet<ReportListItem[]>("/studio/reports", q ? { q } : undefined).then((r) => r.data),
+  getReport: (id: string) => apiGet<ReportOut>(`/studio/reports/${id}`).then((r) => r.data),
+  createReport: async (body: ReportSaveBody) => {
+    const r = await apiPost<ReportOut>("/studio/reports", body);
+    dropReportsCache();
+    return r;
+  },
+  updateReport: async (id: string, body: ReportPatchBody) => {
+    const r = await apiPatch<ReportOut>(`/studio/reports/${id}`, body);
+    dropReportsCache();
+    return r;
+  },
+  deleteReport: async (id: string) => {
+    const r = await apiDelete<{ deleted: boolean }>(`/studio/reports/${id}`);
+    dropReportsCache();
+    return r;
+  },
+  duplicateReport: async (id: string) => {
+    const r = await apiPost<ReportOut>(`/studio/reports/${id}/duplicate`);
+    dropReportsCache();
+    return r;
+  },
+  runReport: (id: string) => apiPost<RunResult>(`/studio/reports/${id}/run`),
+  exportReportBlob: (id: string, format: "pdf" | "xlsx" | "csv") =>
+    apiPostBlob(`/studio/reports/${id}/export`, undefined, { format }),
+};

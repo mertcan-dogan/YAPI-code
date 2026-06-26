@@ -44,14 +44,22 @@ def test_catalog_shape_public_fields_only(client, seed):
     data = body["data"]
     assert isinstance(data["dimensions"], list) and isinstance(data["metrics"], list)
     # ONLY public keys leave the API — the internal source/grain mapping never leaks.
-    allowed = set(PUBLIC_KEYS)
+    # Metrics additionally carry the derived public `windowed` flag (CR-033).
+    for entry in data["dimensions"]:
+        assert set(entry.keys()) <= set(PUBLIC_KEYS)
+    for entry in data["metrics"]:
+        assert set(entry.keys()) <= set(PUBLIC_KEYS) | {"windowed"}
     for entry in data["dimensions"] + data["metrics"]:
-        assert set(entry.keys()) <= allowed
         assert "source" not in entry and "grain" not in entry and "basis" not in entry
     by_id = {m["id"]: m for m in data["metrics"]}
     assert by_id["dso"]["status"] == "coming_soon"
     assert by_id["schedule_progress"]["status"] == "coming_soon"
     assert by_id["cost_try"]["status"] == "available"
+    # windowed (CR-033): cost-line/cash window; project/unit are whole-project.
+    assert by_id["cost_try"]["windowed"] is True
+    assert by_id["cash_in"]["windowed"] is True
+    assert by_id["revenue"]["windowed"] is False
+    assert by_id["margin_pct_current"]["windowed"] is False
     # Cut items are absent entirely (not coming_soon).
     ids = {e["id"] for e in data["dimensions"] + data["metrics"]}
     assert {"block_phase", "currency", "unit", "ar_aging"}.isdisjoint(ids)

@@ -279,8 +279,16 @@ def get_catalog_public() -> dict:
 
     Returns BOTH available and coming_soon entries (the picker greys coming_soon
     with a "Yakında" badge). The internal source/grain mapping is never included.
+
+    Each metric also carries a derived public ``windowed`` flag (CR-033): True for
+    cost-line/cash metrics, which honor the spec's date_range; False for project/
+    unit metrics, which are whole-project snapshots and ignore the window — the UI
+    tags those "tüm proje, bugüne kadar". Derived from grain, not the raw mapping.
     """
-    return {"dimensions": _public(DIMENSIONS), "metrics": _public(METRICS)}
+    metrics = _public(METRICS)
+    for row, entry in zip(metrics, METRICS.values()):
+        row["windowed"] = entry["grain"] in (GRAIN_COST_LINE, GRAIN_CASH)
+    return {"dimensions": _public(DIMENSIONS), "metrics": metrics}
 
 
 # --------------------------------------------------------------------------- #

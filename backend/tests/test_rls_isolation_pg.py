@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 # Representative scoped tables to exercise writes against; the fail-closed check
 # below sweeps the full set from the migration.
-SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts"]
+SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts", "reports"]
 
 
 def _set_guc(conn, company_id):
@@ -221,4 +221,78 @@ def test_project_closeouts_isolation(seeded, app_engine):
                 text("DELETE FROM project_closeouts WHERE company_id IN (:a, :b)"),
                 {"a": seeded["a"], "b": seeded["b"]},
             )
+        admin.dispose()
+
+
+def test_reports_isolation(seeded, app_engine):
+    """0044 (CR-033): a company-A session cannot read or INSERT (WITH CHECK)
+    company-B report rows. reports.owner_id is a NOT NULL FK to users, so we seed
+    one user per company via the owner connection first."""
+    import json
+
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
+
+    user_a, user_b = uuid.uuid4(), uuid.uuid4()
+    rep_a, rep_b = uuid.uuid4(), uuid.uuid4()
+    spec = json.dumps({"metrics": ["cost_try"]})
+
+    admin = create_engine(ADMIN_URL, future=True)
+    with admin.begin() as conn:
+        for uid, cid in ((user_a, seeded["a"]), (user_b, seeded["b"])):
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, company_id, full_name, email, role) "
+                    "VALUES (:id, :c, 'RLS User', :e, 'director')"
+                ),
+                {"id": uid, "c": cid, "e": f"rls-{uid.hex[:8]}@example.com"},
+            )
+    admin.dispose()
+
+    try:
+        # Each company seeds its own report on its own scoped session (each INSERT
+        # must satisfy WITH CHECK for its own company).
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            conn.execute(
+                text(
+                    "INSERT INTO reports (id, company_id, owner_id, title, spec, visibility) "
+                    "VALUES (:id, :c, :o, 'A', :spec, 'private')"
+                ),
+                {"id": rep_a, "c": seeded["a"], "o": user_a, "spec": spec},
+            )
+            conn.commit()
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["b"])
+            conn.execute(
+                text(
+                    "INSERT INTO reports (id, company_id, owner_id, title, spec, visibility) "
+                    "VALUES (:id, :c, :o, 'B', :spec, 'company')"
+                ),
+                {"id": rep_b, "c": seeded["b"], "o": user_b, "spec": spec},
+            )
+            conn.commit()
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            own = conn.execute(text("SELECT count(*) FROM reports")).scalar()
+            other = conn.execute(
+                text("SELECT count(*) FROM reports WHERE company_id = :b"), {"b": seeded["b"]}
+            ).scalar()
+            assert own >= 1 and other == 0
+            # WITH CHECK: A cannot INSERT a report into company B.
+            with pytest.raises((DBAPIError, ProgrammingError)):
+                conn.execute(
+                    text(
+                        "INSERT INTO reports (id, company_id, owner_id, title, spec, visibility) "
+                        "VALUES (:id, :c, :o, 'evil', :spec, 'private')"
+                    ),
+                    {"id": uuid.uuid4(), "c": seeded["b"], "o": user_a, "spec": spec},
+                )
+                conn.commit()
+    finally:
+        admin = create_engine(ADMIN_URL, future=True)
+        with admin.begin() as conn:
+            conn.execute(text("DELETE FROM reports WHERE company_id IN (:a, :b)"),
+                         {"a": seeded["a"], "b": seeded["b"]})
+            conn.execute(text("DELETE FROM users WHERE id IN (:ua, :ub)"),
+                         {"ua": user_a, "ub": user_b})
         admin.dispose()
