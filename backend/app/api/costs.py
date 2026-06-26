@@ -304,7 +304,13 @@ def create_cost(
     db.commit()
     db.refresh(cost)
     _notify_margin(db, project)
-    return success(CostEntryOut.model_validate(cost).model_dump(mode="json"))
+    out = CostEntryOut.model_validate(cost).model_dump(mode="json")
+    # Soft-lock (warn, never block): the project is closed out (Tamamlandı). The
+    # entry still saves; the frontend surfaces a warning banner + a "rapor güncel
+    # değil" hint so the director can re-freeze the closeout report.
+    if project.status == "completed":
+        out["closeout_warning"] = "Proje tamamlandı olarak işaretli — bu kayıt sonrası kapanış raporu güncel olmayabilir"
+    return success(out)
 
 
 def _notify_margin(db: Session, project) -> None:

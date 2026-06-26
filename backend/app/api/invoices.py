@@ -86,7 +86,12 @@ def create_invoice(
     )
     db.commit()
     db.refresh(inv)
-    return success(ClientInvoiceOut.model_validate(inv).model_dump(mode="json"))
+    out = ClientInvoiceOut.model_validate(inv).model_dump(mode="json")
+    # Soft-lock (warn, never block): the project is closed out (Tamamlandı). The
+    # invoice still saves; the frontend surfaces a warning banner.
+    if project.status == "completed":
+        out["closeout_warning"] = "Proje tamamlandı olarak işaretli — bu kayıt sonrası kapanış raporu güncel olmayabilir"
+    return success(out)
 
 
 @router.put("/projects/{project_id}/invoices/{inv_id}")

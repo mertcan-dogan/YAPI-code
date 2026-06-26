@@ -1,5 +1,6 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
 import { AIDisclaimer, Button, Modal, Skeleton } from "@/components/ui";
+import { CloseoutPanel } from "@/components/dashboard/CloseoutPanel";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { KpiDetailModal, type KpiInfo } from "@/components/dashboard/KpiDetailModal";
@@ -633,6 +634,9 @@ export default function ProjectDashboardPage() {
           <p className="text-sm leading-relaxed text-text-primary">{healthExplanation(health)}</p>
         </div>
       </Modal>
+
+      {/* Proje Kapanışı — lifecycle timeline, status, frozen report + archive. */}
+      {id && !loading && <CloseoutPanel projectId={id} isDirector={isDirector} />}
 
       {/* CR-019-C: Aşamalar & Kilometre Taşları (SCHEDULE lane — never money). */}
       {id && !loading && (
