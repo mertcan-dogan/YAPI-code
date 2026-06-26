@@ -1,21 +1,42 @@
-"""CR-032 §5 — Report Studio read-only endpoints.
+"""Report Studio API.
 
-Two endpoints, ``CurrentUser``-gated and company-scoped. ``company_id`` always
-comes from the authenticated user, NEVER from the request body. No persistence,
-no new model, no migration (CR-033 adds ``/studio/reports`` etc.).
+CR-032 §5 — the read-only catalog + ad-hoc run endpoints.
+CR-033 — saved-report persistence (CRUD + duplicate + run + export).
+
+Every endpoint is ``CurrentUser``-gated and company-scoped: ``company_id`` ALWAYS
+comes from the authenticated user, NEVER from the request body. Saved reports are
+soft-deleted (``is_deleted``); visibility is "private" (owner-only) or "company"
+(all same-company users may view). Edit/delete is owner-or-director only. The
+engine and catalog (``run_spec`` / ``validate_spec``) are reused unchanged — the
+AI agent never reaches these write paths (CR-011 holds).
 """
-from fastapi import APIRouter, Body, Depends
+import uuid
+from copy import deepcopy
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Body, Depends, Query
+from fastapi.responses import Response
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from app.constants import ROLE_DIRECTOR
 from app.db import get_db
 from app.deps import CurrentUser
-from app.responses import success
-from app.services.studio.catalog import get_catalog_public
+from app.models.report import Report
+from app.responses import APIError, success
+from app.schemas.report import ReportCreate, ReportListItem, ReportOut, ReportUpdate
+from app.services.studio.catalog import get_catalog_public, validate_spec
 from app.services.studio.engine import run_spec
+from app.services.studio.export import studio_export
 
 router = APIRouter(tags=["studio"])
 
+EXPORT_FORMATS = ("pdf", "xlsx", "csv")
 
+
+# --------------------------------------------------------------------------- #
+# CR-032 §5 — catalog + ad-hoc run
+# --------------------------------------------------------------------------- #
 @router.get("/studio/catalog")
 def studio_catalog(user: CurrentUser):
     """The dimension/metric catalog (id/label/type/group/description/status only)
@@ -29,3 +50,183 @@ def studio_run(user: CurrentUser, spec: dict = Body(...), db: Session = Depends(
     ``APIError(422)`` (handled by the global error middleware). The engine is
     read-only and scoped to ``user.company_id``."""
     return success(run_spec(db, user.company_id, spec))
+
+
+# --------------------------------------------------------------------------- #
+# CR-033 — saved reports
+# --------------------------------------------------------------------------- #
+def _report_out(report: Report, user) -> dict:
+    return ReportOut(
+        id=report.id,
+        title=report.title,
+        spec=report.spec,
+        visibility=report.visibility,
+        labels=report.labels,
+        owner_id=report.owner_id,
+        created_by=report.created_by,
+        created_at=report.created_at,
+        updated_at=report.updated_at,
+        is_owner=(report.owner_id == user.id),
+    ).model_dump(mode="json")
+
+
+def _viewable_q(user):
+    """Reports the user may VIEW: own (any visibility) + company-visible. Always
+    company-scoped and excludes soft-deleted rows. Another user's `private`
+    report is simply not selected — no existence leak."""
+    return select(Report).where(
+        Report.company_id == user.company_id,
+        Report.is_deleted.is_(False),
+        or_(Report.owner_id == user.id, Report.visibility == "company"),
+    )
+
+
+def _get_viewable(db: Session, user, report_id: uuid.UUID) -> Report:
+    report = db.execute(_viewable_q(user).where(Report.id == report_id)).scalar_one_or_none()
+    if report is None:
+        raise APIError(404, "NOT_FOUND", "Rapor bulunamadı")
+    return report
+
+
+def _get_editable(db: Session, user, report_id: uuid.UUID) -> Report:
+    """Reports the user may EDIT/DELETE. Fetch predicate: in-company, not deleted,
+    and (owner OR company-visible OR director). Then gate: a non-director,
+    non-owner is forbidden (403). Net effect — private+stranger → 404 (invisible),
+    company+stranger-non-director → 403, owner/director → ok."""
+    stmt = select(Report).where(
+        Report.id == report_id,
+        Report.company_id == user.company_id,
+        Report.is_deleted.is_(False),
+    )
+    if user.role != ROLE_DIRECTOR:
+        # Directors reach any in-company report; others only own + company-visible.
+        stmt = stmt.where(or_(Report.owner_id == user.id, Report.visibility == "company"))
+    report = db.execute(stmt).scalar_one_or_none()
+    if report is None:
+        raise APIError(404, "NOT_FOUND", "Rapor bulunamadı")
+    if user.role != ROLE_DIRECTOR and report.owner_id != user.id:
+        raise APIError(403, "FORBIDDEN", "Bu raporu düzenleme yetkiniz yok")
+    return report
+
+
+@router.get("/studio/reports")
+def list_reports(user: CurrentUser, q: str | None = None, db: Session = Depends(get_db)):
+    """Saved reports the user may view, newest-edited first. Optional ``q`` does a
+    case-insensitive title contains-match."""
+    stmt = _viewable_q(user)
+    if q:
+        stmt = stmt.where(Report.title.ilike(f"%{q}%"))
+    rows = db.execute(stmt.order_by(Report.updated_at.desc())).scalars().all()
+    items = [
+        ReportListItem(
+            id=r.id,
+            title=r.title,
+            owner_id=r.owner_id,
+            visibility=r.visibility,
+            updated_at=r.updated_at,
+            labels=r.labels,
+            viz=(r.spec or {}).get("viz", "table"),
+        ).model_dump(mode="json")
+        for r in rows
+    ]
+    return success(items)
+
+
+@router.post("/studio/reports")
+def create_report(body: ReportCreate, user: CurrentUser, db: Session = Depends(get_db)):
+    """Save a new report. The spec is validated against the catalog (422 if bad).
+    company_id/owner_id/created_by come from the authenticated user."""
+    validate_spec(body.spec)
+    report = Report(
+        company_id=user.company_id,
+        owner_id=user.id,
+        created_by=user.id,
+        title=body.title,
+        spec=body.spec,
+        visibility=body.visibility,
+        labels=body.labels,
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return success(_report_out(report, user))
+
+
+@router.get("/studio/reports/{report_id}")
+def get_report(report_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    report = _get_viewable(db, user, report_id)
+    return success(_report_out(report, user))
+
+
+@router.patch("/studio/reports/{report_id}")
+def update_report(
+    report_id: uuid.UUID, body: ReportUpdate, user: CurrentUser, db: Session = Depends(get_db)
+):
+    report = _get_editable(db, user, report_id)
+    changes = body.model_dump(exclude_unset=True)
+    if changes.get("spec") is not None:
+        validate_spec(changes["spec"])
+    # Non-nullable columns are only overwritten when a non-null value is supplied.
+    for field in ("title", "spec", "visibility"):
+        if changes.get(field) is not None:
+            setattr(report, field, changes[field])
+    if "labels" in changes:  # labels is nullable — an explicit null clears it
+        report.labels = changes["labels"]
+    report.updated_by = user.id
+    db.commit()
+    db.refresh(report)
+    return success(_report_out(report, user))
+
+
+@router.delete("/studio/reports/{report_id}")
+def delete_report(report_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    report = _get_editable(db, user, report_id)
+    report.is_deleted = True
+    report.deleted_at = datetime.now(timezone.utc)
+    report.updated_by = user.id
+    db.commit()
+    return success({"deleted": True})
+
+
+@router.post("/studio/reports/{report_id}/duplicate")
+def duplicate_report(report_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    """Copy a viewable report into a new PRIVATE report owned by the caller."""
+    src = _get_viewable(db, user, report_id)
+    report = Report(
+        company_id=user.company_id,
+        owner_id=user.id,
+        created_by=user.id,
+        title=f"{src.title} (kopya)",
+        spec=deepcopy(src.spec),
+        visibility="private",
+        labels=deepcopy(src.labels) if src.labels is not None else None,
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return success(_report_out(report, user))
+
+
+@router.post("/studio/reports/{report_id}/run")
+def run_report(report_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
+    """Execute a saved report's spec — identical to POST /studio/run on that spec,
+    company-scoped to the caller. Read-only."""
+    report = _get_viewable(db, user, report_id)
+    return success(run_spec(db, user.company_id, report.spec))
+
+
+@router.post("/studio/reports/{report_id}/export")
+def export_report(
+    report_id: uuid.UUID,
+    user: CurrentUser,
+    format: str = Query("pdf"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export a saved report as pdf/xlsx/csv. Runs the spec read-only and streams a
+    file attachment. Unknown format → 422; cross-company / private-stranger id →
+    404 (via ``_get_viewable``)."""
+    report = _get_viewable(db, user, report_id)
+    if format not in EXPORT_FORMATS:
+        raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf, xlsx veya csv)")
+    result = run_spec(db, user.company_id, report.spec)
+    return studio_export(result, format, report.title)

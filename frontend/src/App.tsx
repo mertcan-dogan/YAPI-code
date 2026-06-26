@@ -26,6 +26,8 @@ import RemindersPage from "./pages/RemindersPage";
 import ReportsPage from "./pages/ReportsPage";
 import SalesPnlPage from "./pages/SalesPnlPage";
 import SettingsPage from "./pages/SettingsPage";
+import StudioReportEditorPage from "./pages/StudioReportEditorPage";
+import StudioReportsPage from "./pages/StudioReportsPage";
 import SubcontractorsPage from "./pages/SubcontractorsPage";
 import TwoFactorSetupPage from "./pages/TwoFactorSetupPage";
 import VariationsPage from "./pages/VariationsPage";
@@ -95,6 +97,9 @@ export default function App() {
           <Route path="/audit-log" element={<AuditLogPage />} />
           <Route path="/reminders" element={<RemindersPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/studio/reports" element={<StudioReportsPage />} />
+          <Route path="/studio/reports/new" element={<StudioReportEditorPage />} />
+          <Route path="/studio/reports/:id" element={<StudioReportEditorPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/ai-assistant" element={<AIAssistantPage />} />
           <Route path="/ai-principles" element={<AiPrinciplesPage />} />

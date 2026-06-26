@@ -29,6 +29,7 @@ from app.models.landowner_payment import LandownerPayment
 from app.models.automation import Automation, AutomationRun
 from app.models.invite import Invite
 from app.models.closeout import ProjectCloseout
+from app.models.report import Report
 
 __all__ = [
     "Base",
@@ -63,4 +64,5 @@ __all__ = [
     "AutomationRun",
     "Invite",
     "ProjectCloseout",
+    "Report",
 ]
