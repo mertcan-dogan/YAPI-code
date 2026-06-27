@@ -2,6 +2,11 @@ import axios from "axios";
 import { supabase } from "./supabase";
 import { cachedGet, invalidate } from "./requestCache";
 import type {
+  Dashboard,
+  DashboardListItem,
+  DashboardPatchBody,
+  DashboardRunResult,
+  DashboardSaveBody,
   ReportListItem,
   ReportOut,
   ReportPatchBody,
@@ -114,6 +119,8 @@ export async function apiPostBlob(
 // /studio/reports list so the list view re-fetches on next mount.
 const REPORTS_PREFIX = "/studio/reports";
 const dropReportsCache = () => invalidate((url) => url.startsWith(REPORTS_PREFIX));
+const DASHBOARDS_PREFIX = "/studio/dashboards";
+const dropDashboardsCache = () => invalidate((url) => url.startsWith(DASHBOARDS_PREFIX));
 
 export const studio = {
   catalog: () => cachedGet<StudioCatalog>("/studio/catalog").then((r) => r.data),
@@ -144,4 +151,34 @@ export const studio = {
   runReport: (id: string) => apiPost<RunResult>(`/studio/reports/${id}/run`),
   exportReportBlob: (id: string, format: "pdf" | "xlsx" | "csv") =>
     apiPostBlob(`/studio/reports/${id}/export`, undefined, { format }),
+
+  // CR-034 — panolar (dashboards). Same caching discipline as reports: the list is
+  // cached via requestCache and every mutation drops the dashboards cache so the
+  // list view re-fetches on next mount. The catalog stays shared/cached above.
+  listDashboards: (q?: string) =>
+    cachedGet<DashboardListItem[]>("/studio/dashboards", q ? { q } : undefined).then((r) => r.data),
+  getDashboard: (id: string) => apiGet<Dashboard>(`/studio/dashboards/${id}`).then((r) => r.data),
+  createDashboard: async (body: DashboardSaveBody) => {
+    const r = await apiPost<Dashboard>("/studio/dashboards", body);
+    dropDashboardsCache();
+    return r;
+  },
+  updateDashboard: async (id: string, body: DashboardPatchBody) => {
+    const r = await apiPatch<Dashboard>(`/studio/dashboards/${id}`, body);
+    dropDashboardsCache();
+    return r;
+  },
+  deleteDashboard: async (id: string) => {
+    const r = await apiDelete<{ deleted: boolean }>(`/studio/dashboards/${id}`);
+    dropDashboardsCache();
+    return r;
+  },
+  duplicateDashboard: async (id: string) => {
+    const r = await apiPost<Dashboard>(`/studio/dashboards/${id}/duplicate`);
+    dropDashboardsCache();
+    return r;
+  },
+  runDashboard: (id: string) => apiPost<DashboardRunResult>(`/studio/dashboards/${id}/run`),
+  exportDashboardBlob: (id: string, format: "pdf" | "xlsx") =>
+    apiPostBlob(`/studio/dashboards/${id}/export`, undefined, { format }),
 };

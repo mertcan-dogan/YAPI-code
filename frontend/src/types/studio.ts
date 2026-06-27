@@ -135,3 +135,80 @@ export interface ReportPatchBody {
   visibility?: Visibility;
   labels?: string[] | null;
 }
+
+// --- panolar / dashboards (CR-034) ----------------------------------------- #
+// A pano is a saved canvas of widgets on a react-grid-layout grid plus
+// dashboard-global date_range/comparison/filters. Mirrors the FIXED backend
+// contract (app/schemas/dashboard.py + app/api/studio.py). One widget carries
+// EXACTLY ONE payload matching its type: kpi/chart/table → `spec`, report →
+// `report_id`, text → `content` (the backend's WidgetSpec envelope invariant).
+export type WidgetType = "kpi" | "chart" | "table" | "text" | "report";
+
+export interface WidgetLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Widget {
+  id: string; // client-generated, unique within the dashboard
+  type: WidgetType;
+  title: string;
+  layout: WidgetLayout;
+  section?: string | null;
+  spec?: StudioSpec; // kpi | chart | table
+  report_id?: string; // report
+  content?: string; // text
+}
+
+export interface DashboardListItem {
+  id: string;
+  title: string;
+  owner_id: string;
+  visibility: string;
+  updated_at: string;
+  labels: string[] | null;
+  widget_count: number;
+}
+
+export interface Dashboard {
+  id: string;
+  title: string;
+  widgets: Widget[];
+  date_range: DateWindow | null;
+  comparison: { preset?: string; from?: string; to?: string } | null;
+  filters: StudioFilter[] | null;
+  visibility: string;
+  labels: string[] | null;
+  owner_id: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  is_owner: boolean;
+}
+
+export interface DashboardSaveBody {
+  title: string;
+  widgets: Widget[];
+  date_range?: DateWindow | null;
+  comparison?: { preset?: string; from?: string; to?: string } | null;
+  filters?: StudioFilter[] | null;
+  visibility: Visibility;
+  labels?: string[] | null;
+}
+
+export interface DashboardPatchBody {
+  title?: string;
+  widgets?: Widget[];
+  date_range?: DateWindow | null;
+  comparison?: { preset?: string; from?: string; to?: string } | null;
+  filters?: StudioFilter[] | null;
+  visibility?: Visibility;
+  labels?: string[] | null;
+}
+
+// POST /studio/dashboards/{id}/run → { [widget_id]: RunResult | {unavailable:true} }
+// (text widgets are absent from the dict — the FE renders their `content`).
+export type WidgetRunResult = RunResult | { unavailable: true };
+export type DashboardRunResult = Record<string, WidgetRunResult>;

@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 # Representative scoped tables to exercise writes against; the fail-closed check
 # below sweeps the full set from the migration.
-SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts", "reports"]
+SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts", "reports", "dashboards"]
 
 
 def _set_guc(conn, company_id):
@@ -292,6 +292,81 @@ def test_reports_isolation(seeded, app_engine):
         admin = create_engine(ADMIN_URL, future=True)
         with admin.begin() as conn:
             conn.execute(text("DELETE FROM reports WHERE company_id IN (:a, :b)"),
+                         {"a": seeded["a"], "b": seeded["b"]})
+            conn.execute(text("DELETE FROM users WHERE id IN (:ua, :ub)"),
+                         {"ua": user_a, "ub": user_b})
+        admin.dispose()
+
+
+def test_dashboards_isolation(seeded, app_engine):
+    """0045 (CR-034): a company-A session cannot read or INSERT (WITH CHECK)
+    company-B dashboard rows. dashboards.owner_id is a NOT NULL FK to users, so we
+    seed one user per company via the owner connection first — exactly like
+    ``test_reports_isolation``."""
+    import json
+
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
+
+    user_a, user_b = uuid.uuid4(), uuid.uuid4()
+    dash_a, dash_b = uuid.uuid4(), uuid.uuid4()
+    widgets = json.dumps([{"id": "w1", "type": "text", "title": "t", "layout": {"x": 0, "y": 0, "w": 6, "h": 4}, "content": "x"}])
+
+    admin = create_engine(ADMIN_URL, future=True)
+    with admin.begin() as conn:
+        for uid, cid in ((user_a, seeded["a"]), (user_b, seeded["b"])):
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, company_id, full_name, email, role) "
+                    "VALUES (:id, :c, 'RLS User', :e, 'director')"
+                ),
+                {"id": uid, "c": cid, "e": f"rls-dash-{uid.hex[:8]}@example.com"},
+            )
+    admin.dispose()
+
+    try:
+        # Each company seeds its own dashboard on its own scoped session (each INSERT
+        # must satisfy WITH CHECK for its own company).
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            conn.execute(
+                text(
+                    "INSERT INTO dashboards (id, company_id, owner_id, title, widgets, visibility) "
+                    "VALUES (:id, :c, :o, 'A', :w, 'private')"
+                ),
+                {"id": dash_a, "c": seeded["a"], "o": user_a, "w": widgets},
+            )
+            conn.commit()
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["b"])
+            conn.execute(
+                text(
+                    "INSERT INTO dashboards (id, company_id, owner_id, title, widgets, visibility) "
+                    "VALUES (:id, :c, :o, 'B', :w, 'company')"
+                ),
+                {"id": dash_b, "c": seeded["b"], "o": user_b, "w": widgets},
+            )
+            conn.commit()
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            own = conn.execute(text("SELECT count(*) FROM dashboards")).scalar()
+            other = conn.execute(
+                text("SELECT count(*) FROM dashboards WHERE company_id = :b"), {"b": seeded["b"]}
+            ).scalar()
+            assert own >= 1 and other == 0
+            # WITH CHECK: A cannot INSERT a dashboard into company B.
+            with pytest.raises((DBAPIError, ProgrammingError)):
+                conn.execute(
+                    text(
+                        "INSERT INTO dashboards (id, company_id, owner_id, title, widgets, visibility) "
+                        "VALUES (:id, :c, :o, 'evil', :w, 'private')"
+                    ),
+                    {"id": uuid.uuid4(), "c": seeded["b"], "o": user_a, "w": widgets},
+                )
+                conn.commit()
+    finally:
+        admin = create_engine(ADMIN_URL, future=True)
+        with admin.begin() as conn:
+            conn.execute(text("DELETE FROM dashboards WHERE company_id IN (:a, :b)"),
                          {"a": seeded["a"], "b": seeded["b"]})
             conn.execute(text("DELETE FROM users WHERE id IN (:ua, :ub)"),
                          {"ua": user_a, "ub": user_b})

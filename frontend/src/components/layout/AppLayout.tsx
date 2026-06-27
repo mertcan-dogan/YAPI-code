@@ -81,7 +81,7 @@ const NAV_GROUPS: { group: string; items: NavEntry[] }[] = [
     group: "Stüdyo",
     items: [
       { icon: BarChart3, label: "Rapor Stüdyosu", to: "/studio/reports" },
-      { icon: LayoutDashboard, label: "Panolar", to: "#panels", comingSoon: true },
+      { icon: LayoutDashboard, label: "Panolar", to: "/studio/dashboards" },
       { icon: Users, label: "Segmentler", to: "#segments", comingSoon: true },
       { icon: Sparkles, label: "Yapı AI", to: "#studio-ai", comingSoon: true },
     ],

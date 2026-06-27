@@ -76,8 +76,36 @@ def _flat_table(result: dict) -> tuple[list, list[list], list]:
 # --------------------------------------------------------------------------- #
 # Cell coercion per format
 # --------------------------------------------------------------------------- #
+# Formula / CSV-injection guard shared by EVERY spreadsheet + csv writer (the
+# per-report _xlsx/_csv and the dashboard deck _dashboard_xlsx).
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(v):
+    """Neutralize spreadsheet formula / CSV injection. A *text* cell beginning with a
+    formula trigger (``= + - @`` or a leading TAB/CR) is prefixed with a single
+    apostrophe so Excel/Sheets/LibreOffice render it as literal text rather than
+    evaluate it (``=WEBSERVICE(...)`` / ``=HYPERLINK(...)`` / legacy DDE). Exports only
+    ever hold the caller's own company data, but dimension labels are user-authored
+    (project / vendor / supplier names), so a lower-privilege user could otherwise
+    plant a payload that runs when a colleague opens the file.
+
+    Only applied to genuine strings — callers must pass numbers as native int/float
+    (never pre-stringified) so a legitimate negative value like ``-5`` is not mistaken
+    for a formula. Numbers and other non-strings pass through unchanged."""
+    if isinstance(v, str) and v[:1] in _FORMULA_TRIGGERS:
+        return "'" + v
+    return v
+
+
 def _csv_cell(v) -> str:
-    return "" if v is None else str(v)
+    # Guard only original text (dimension labels); numbers are stringified WITHOUT the
+    # guard so a negative metric (-5.0) stays a number, not "'-5.0".
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return _safe_cell(v)
+    return str(v)
 
 
 def _pdf_cell(v) -> str:
@@ -97,11 +125,12 @@ def _xlsx(header, data_rows, totals_row) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Rapor"
-    ws.append(header)
+    # None/int/float render natively; text cells are formula-guarded.
+    ws.append([_safe_cell(c) for c in header])
     for r in data_rows:
-        ws.append(list(r))  # None / int / float / str all render natively
+        ws.append([_safe_cell(c) for c in r])
     if totals_row:
-        ws.append(list(totals_row))
+        ws.append([_safe_cell(c) for c in totals_row])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -204,6 +233,176 @@ def studio_export(result: dict, fmt: str, title: str) -> Response:
         media, ext = _PDF_MEDIA, "pdf"
     else:
         raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf, xlsx veya csv)")
+
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{slug}.{ext}"'},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# CR-034 — dashboard (pano) deck export
+# --------------------------------------------------------------------------- #
+# Excel forbids these in a sheet name and caps it at 31 chars; names must also be
+# unique. (Kept separate from studio_export so that path stays byte-for-byte.)
+_XLSX_FORBIDDEN = re.compile(r"[\[\]:*?/\\]")
+
+
+def _ordered_widgets(widgets: list) -> list:
+    """Section-grouped, then dashboard-array order: sections appear in first-seen
+    order, and within a section widgets keep their array order. Widgets without a
+    section group under a stable bucket in array order."""
+    buckets: dict = {}
+    order: list = []
+    for w in widgets or []:
+        sec = w.get("section")
+        if sec not in buckets:
+            buckets[sec] = []
+            order.append(sec)
+        buckets[sec].append(w)
+    ordered: list = []
+    for sec in order:
+        ordered.extend(buckets[sec])
+    return ordered
+
+
+def _is_renderable(res) -> bool:
+    """A widget result carries a table iff it is a dict that is neither empty nor
+    the ``{"unavailable": True}`` status sentinel."""
+    return isinstance(res, dict) and bool(res) and not res.get("unavailable")
+
+
+def _sheet_name(title: str, used: set) -> str:
+    """Sanitised, ≤31-char, de-duplicated openpyxl sheet name."""
+    base = _XLSX_FORBIDDEN.sub(" ", (title or "Sayfa")).strip() or "Sayfa"
+    base = base[:31]
+    name = base
+    i = 1
+    used_cf = {u.casefold() for u in used}
+    while name.casefold() in used_cf:
+        suffix = f" ({i})"
+        name = base[: 31 - len(suffix)] + suffix
+        i += 1
+    return name
+
+
+def _dashboard_pdf(ordered: list, results: dict, title: str) -> bytes:
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, Spacer
+
+    from app.services.reports import _data_table, _render_story, _styles
+    from app.utils.format import format_datetime_tr
+
+    s = _styles()  # registers the Türkçe fonts as a side effect
+    story = [Paragraph(escape(title or "Pano"), s["h2"])]
+
+    last_section = object()  # sentinel so the first (even None) section prints once
+    for w in ordered:
+        wtype = w.get("type")
+        wid = w.get("id")
+        section = w.get("section")
+        if section and section != last_section:
+            story.append(Paragraph(escape(str(section).upper()), s["h3"]))
+        last_section = section
+
+        if wtype == "text":
+            content = w.get("content")
+            if content:
+                story.append(Paragraph(escape(str(content)), s["body"]))
+                story.append(Spacer(1, 6))
+            continue
+
+        res = results.get(wid)
+        if isinstance(res, dict) and res.get("unavailable"):
+            story.append(Paragraph(f"<b>{escape(w.get('title') or '')}</b>", s["body"]))
+            story.append(Paragraph("Bu rapor artık kullanılamıyor", s["note"]))
+            story.append(Spacer(1, 6))
+            continue
+        if not _is_renderable(res):
+            continue
+
+        story.append(Paragraph(f"<b>{escape(w.get('title') or '')}</b>", s["body"]))
+        header, data_rows, totals_row = _flat_table(res)
+        table_rows = [[_pdf_cell(v) for v in header]]
+        table_rows += [[_pdf_cell(v) for v in r] for r in data_rows]
+        if totals_row:
+            table_rows.append([_pdf_cell(v) for v in totals_row])
+        columns = res.get("columns") or []
+        ncols = len(header) or 1
+        col_w = [(17.5 / ncols) * cm] * ncols
+        num_cols = tuple(i for i, c in enumerate(columns) if c.get("kind") == "metric")
+        story.append(_data_table(table_rows, col_widths=col_w, num_cols=num_cols, header=True))
+        story.append(Spacer(1, 10))
+
+    generated_at = format_datetime_tr(datetime.now(timezone.utc))
+    return _render_story(story, generated_at)
+
+
+def _dashboard_xlsx(ordered: list, results: dict) -> bytes:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    default_ws = wb.active
+    used_names: set = set()
+    sheet_count = 0
+    for w in ordered:
+        if w.get("type") == "text":
+            continue
+        res = results.get(w.get("id"))
+        if not _is_renderable(res):
+            continue
+        header, data_rows, totals_row = _flat_table(res)
+        name = _sheet_name(w.get("title"), used_names)
+        used_names.add(name)
+        ws = default_ws if sheet_count == 0 else wb.create_sheet(title=name)
+        if sheet_count == 0:
+            ws.title = name
+        ws.append([_safe_cell(c) for c in header])
+        for r in data_rows:
+            ws.append([_safe_cell(c) for c in r])
+        if totals_row:
+            ws.append([_safe_cell(c) for c in totals_row])
+        sheet_count += 1
+
+    if sheet_count == 0:
+        raise APIError(422, "NO_DATA", "Dışa aktarılacak veri yok")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str) -> Response:
+    """Build a dashboard deck file (pdf/xlsx) from already-computed batch results.
+
+    READ-ONLY: consumes ``results`` ({widget_id: run_spec-result-or-status}) and the
+    ``widgets`` array (each a dict with id/type/title/section/content), grouped by
+    section then dashboard-array order. ``studio_export`` and all its helpers are
+    left untouched.
+
+    * ``pdf`` — title + each renderable widget (text → paragraph; unavailable →
+      a note; data/report → title + flattened table). No renderable widget ⇒ still a
+      title-only PDF (never an error).
+    * ``xlsx`` — one sheet per data/report widget that has a result; zero data
+      sheets ⇒ ``APIError(422)`` (no empty workbook).
+    * ``csv`` — not offered for a multi-widget pano ⇒ ``APIError(422)``.
+    """
+    ordered = _ordered_widgets(widgets)
+    slug = _slug(title)
+
+    if fmt == "pdf":
+        content = _dashboard_pdf(ordered, results, title)
+        media, ext = _PDF_MEDIA, "pdf"
+    elif fmt == "xlsx":
+        content = _dashboard_xlsx(ordered, results)
+        media, ext = _XLSX_MEDIA, "xlsx"
+    elif fmt == "csv":
+        raise APIError(422, "INVALID_FORMAT", "Pano CSV olarak dışa aktarılamaz (pdf veya xlsx)")
+    else:
+        raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf veya xlsx)")
 
     return Response(
         content=content,
