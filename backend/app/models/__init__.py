@@ -30,6 +30,7 @@ from app.models.automation import Automation, AutomationRun
 from app.models.invite import Invite
 from app.models.closeout import ProjectCloseout
 from app.models.report import Report
+from app.models.dashboard import Dashboard
 
 __all__ = [
     "Base",
@@ -65,4 +66,5 @@ __all__ = [
     "Invite",
     "ProjectCloseout",
     "Report",
+    "Dashboard",
 ]

