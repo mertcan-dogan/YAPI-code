@@ -41,6 +41,20 @@ reportlab==4.2.5
 openpyxl==3.1.5
 jinja2==3.1.5
 
+# Charts (CR-036): matplotlib (Agg backend) renders the PDF report charts; the PNGs
+# are embedded via ReportLab. Pins matplotlib + its transitive deps so the Docker
+# image (python:3.12-slim) installs the same cp-manylinux wheels — no new apt system
+# libs needed (freetype/libpng ship inside the Pillow/matplotlib wheels).
+matplotlib==3.11.0
+numpy==2.4.6
+pillow==12.2.0
+contourpy==1.3.3
+cycler==0.12.1
+kiwisolver==1.5.0
+pyparsing==3.3.2
+fonttools==4.63.0
+packaging==26.2
+
 # HTTP / utils
 httpx==0.28.1
 # Verify TLS against the OS trust store so outbound HTTPS works behind corporate
