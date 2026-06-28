@@ -111,6 +111,7 @@ export default function StudioReportEditorPage() {
   const [panel, setPanel] = useState("veri");
   const [labelDraft, setLabelDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   // Catalog (cached client-side) — drives the pickers + windowing flags.
   const loadCatalog = useCallback(() => {
@@ -198,6 +199,10 @@ export default function StudioReportEditorPage() {
     setSpec((s) => ({ ...s, metrics: s.metrics.includes(mid) ? s.metrics.filter((x) => x !== mid) : [...s.metrics, mid] }));
   const toggleDimension = (did: string) =>
     setSpec((s) => ({ ...s, dimensions: s.dimensions.includes(did) ? s.dimensions.filter((x) => x !== did) : [...s.dimensions, did] }));
+  // KPI shows a single total — switching to it clears (and hides) Boyutlar so the
+  // spec doesn't carry silently-ignored dimensions (CR-034.1 Fix 1).
+  const setViz = (viz: Viz) => setSpec((s) => ({ ...s, viz, ...(viz === "kpi" ? { dimensions: [] } : null) }));
+  const isKpi = spec.viz === "kpi";
 
   const dateLabel = DATE_PRESETS.find((p) => p.id === (spec.date_range?.preset ?? null))?.label ?? "Özel aralık";
 
@@ -246,6 +251,7 @@ export default function StudioReportEditorPage() {
 
   const onDownloadPdf = async () => {
     if (!report) return;
+    setPdfExporting(true);
     try {
       const blob = await studio.exportReportBlob(report.id, "pdf");
       const url = URL.createObjectURL(blob);
@@ -258,6 +264,8 @@ export default function StudioReportEditorPage() {
       URL.revokeObjectURL(url);
     } catch (e: any) {
       toast.error(e?.message ?? "PDF indirilemedi");
+    } finally {
+      setPdfExporting(false);
     }
   };
 
@@ -322,8 +330,14 @@ export default function StudioReportEditorPage() {
           <MessageSquare className="h-4 w-4" /> Bu rapor hakkında sor
         </button>
         <ExportMenu rows={result?.rows ?? []} columns={exportColumns} filename={(title || "rapor").replace(/[^\w.-]+/g, "-")} disabled={!result} />
-        <Button variant="outline" onClick={onDownloadPdf} disabled={!report} title={report ? "PDF indir" : "Önce raporu kaydedin"}>
-          PDF indir
+        <Button
+          variant="outline"
+          onClick={onDownloadPdf}
+          loading={pdfExporting}
+          disabled={!report || pdfExporting}
+          title={report ? "PDF indir" : "Önce raporu kaydedin"}
+        >
+          {pdfExporting ? "Dışa aktarılıyor…" : "PDF indir"}
         </Button>
         {!isNew && (
           <Button variant="outline" onClick={onSaveAs} disabled={saving}>
@@ -404,13 +418,24 @@ export default function StudioReportEditorPage() {
 
           {panel === "veri" && (
             <div className="space-y-4">
-              <CatalogPicker
-                title="Boyutlar"
-                hint="neye göre kır"
-                items={catalog.dimensions}
-                selected={spec.dimensions}
-                onToggle={toggleDimension}
-              />
+              {isKpi ? (
+                <div>
+                  <div className="mb-1.5 text-[11px] font-semibold text-text-secondary">
+                    Boyutlar <span className="font-normal text-text-faint">(neye göre kır)</span>
+                  </div>
+                  <div className="rounded-control border border-border bg-surface px-3 py-2.5 text-[11.5px] leading-snug text-text-muted">
+                    KPI tek bir değer gösterir — kırılım için Tablo veya Grafik kullanın.
+                  </div>
+                </div>
+              ) : (
+                <CatalogPicker
+                  title="Boyutlar"
+                  hint="neye göre kır"
+                  items={catalog.dimensions}
+                  selected={spec.dimensions}
+                  onToggle={toggleDimension}
+                />
+              )}
               <CatalogPicker
                 title="Metrikler"
                 hint="ne ölçülecek"
@@ -474,7 +499,7 @@ export default function StudioReportEditorPage() {
                     <button
                       key={o.id}
                       type="button"
-                      onClick={() => patchSpec({ viz: o.id })}
+                      onClick={() => setViz(o.id)}
                       className={cn(
                         "flex items-center gap-1.5 rounded-control border px-2.5 py-1.5 text-xs transition-colors",
                         spec.viz === o.id ? "border-brand bg-blue-soft text-brand" : "border-border bg-surface text-text-secondary hover:bg-surface-hover"

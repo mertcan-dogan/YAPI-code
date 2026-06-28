@@ -48,10 +48,13 @@ import type {
 import {
   ArrowLeft,
   CalendarRange,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   Filter,
   GripVertical,
   LayoutList,
+  Loader2,
   MessageSquare,
   MoreVertical,
   Pencil,
@@ -260,6 +263,9 @@ function WidgetConfigModal({
     setSpec((s) => ({ ...s, metrics: s.metrics.includes(mid) ? s.metrics.filter((x) => x !== mid) : [...s.metrics, mid] }));
   const toggleDimension = (did: string) =>
     setSpec((s) => ({ ...s, dimensions: s.dimensions.includes(did) ? s.dimensions.filter((x) => x !== did) : [...s.dimensions, did] }));
+  // KPI shows a single total — switching to it clears (and hides) Boyutlar (CR-034.1 Fix 1).
+  const setViz = (viz: Viz) => setSpec((s) => ({ ...s, viz, ...(viz === "kpi" ? { dimensions: [] } : null) }));
+  const isKpi = spec.viz === "kpi";
 
   const apply = () => {
     if (spec.metrics.length === 0) {
@@ -326,7 +332,18 @@ function WidgetConfigModal({
 
       {tab === "veri" && (
         <div className="space-y-4">
-          <CatalogPicker title="Boyutlar" hint="neye göre kır" items={catalog.dimensions} selected={spec.dimensions} onToggle={toggleDimension} />
+          {isKpi ? (
+            <div>
+              <div className="mb-1.5 text-[11px] font-semibold text-text-secondary">
+                Boyutlar <span className="font-normal text-text-faint">(neye göre kır)</span>
+              </div>
+              <div className="rounded-control border border-border bg-surface px-3 py-2.5 text-[11.5px] leading-snug text-text-muted">
+                KPI tek bir değer gösterir — kırılım için Tablo veya Grafik kullanın.
+              </div>
+            </div>
+          ) : (
+            <CatalogPicker title="Boyutlar" hint="neye göre kır" items={catalog.dimensions} selected={spec.dimensions} onToggle={toggleDimension} />
+          )}
           <CatalogPicker title="Metrikler" hint="ne ölçülecek" items={catalog.metrics} selected={spec.metrics} onToggle={toggleMetric} />
           <div className="space-y-2 rounded-control border border-border bg-surface p-3">
             <ToggleRow
@@ -366,7 +383,7 @@ function WidgetConfigModal({
         <div className="space-y-4">
           <div>
             <div className="mb-1.5 text-[11px] font-semibold text-text-secondary">Görselleştirme</div>
-            <Segmented full value={spec.viz} options={VIZ_LABELS} onChange={(v) => patchSpec({ viz: v as Viz })} />
+            <Segmented full value={spec.viz} options={VIZ_LABELS} onChange={(v) => setViz(v as Viz)} />
           </div>
           <div className="space-y-2 rounded-control border border-border bg-surface p-3">
             <ToggleRow label="Lejant göster" checked={spec.chart?.legend !== false} onChange={(v) => patchChart({ legend: v })} />
@@ -540,6 +557,7 @@ export default function StudioDashboardCanvasPage() {
   const [labels, setLabels] = useState<string[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // --- catalog ---
   const [catalog, setCatalog] = useState<StudioCatalog | null>(null);
@@ -827,6 +845,29 @@ export default function StudioDashboardCanvasPage() {
     setDirty(true);
   };
 
+  // Move a whole section band up/down (CR-034.1 Fix 2). Sections render in order of
+  // first appearance in widgets[], so we reorder by rebuilding widgets[] grouped by
+  // the new section order — within-section order and each widget's layout{} are
+  // preserved (each band is its own grid, so x/y are band-local). No DB column.
+  const moveSection = (key: string, dir: -1 | 1) => {
+    const order: string[] = [];
+    const bySection = new Map<string, Widget[]>();
+    for (const w of widgets) {
+      const k = (w.section ?? "").trim();
+      if (!bySection.has(k)) {
+        bySection.set(k, []);
+        order.push(k);
+      }
+      bySection.get(k)!.push(w);
+    }
+    const idx = order.indexOf(key);
+    const swap = idx + dir;
+    if (idx < 0 || swap < 0 || swap >= order.length) return;
+    [order[idx], order[swap]] = [order[swap], order[idx]];
+    setWidgets(order.flatMap((k) => bySection.get(k) ?? []));
+    setDirty(true);
+  };
+
   // --- toolbar actions ---
   const applyGlobal = (p: { dateRange?: DateWindow | null; comparison?: { preset?: string } | null; filters?: StudioFilter[] }) => {
     if ("dateRange" in p) setDateRange(p.dateRange ?? null);
@@ -880,11 +921,14 @@ export default function StudioDashboardCanvasPage() {
 
   const onExport = async (fmt: "pdf" | "xlsx") => {
     if (!dashboard) return;
+    setExporting(true);
     try {
       const blob = await studio.exportDashboardBlob(dashboard.id, fmt);
       download(blob, `${(title || "pano").replace(/[^\w.-]+/g, "-")}.${fmt}`);
     } catch (e: any) {
       toast.error(e?.message ?? "Dışa aktarılamadı");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -1195,7 +1239,11 @@ export default function StudioDashboardCanvasPage() {
             }}
           />
         )}
-        {dashboard ? (
+        {exporting ? (
+          <button type="button" disabled aria-busy="true" className={cn(ctrl, "cursor-not-allowed opacity-70")}>
+            <Loader2 className="h-4 w-4 animate-spin" /> Dışa aktarılıyor…
+          </button>
+        ) : dashboard ? (
           <Menu align="right" triggerClassName={ctrl} triggerLabel="Dışa aktar" trigger={<span>Dışa aktar</span>}>
             {(close) => (
               <>
@@ -1309,12 +1357,34 @@ export default function StudioDashboardCanvasPage() {
           />
         </div>
       ) : (
-        groups.map((g) => (
+        groups.map((g, gi) => (
           <div key={g.key || "__default__"} className="mb-2">
             {g.label && (
               <div className="mt-4 mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-text-muted">
                 <GripVertical className="h-3.5 w-3.5 text-text-faint" />
-                {g.label.toLocaleUpperCase("tr")}
+                <span>{g.label.toLocaleUpperCase("tr")}</span>
+                {canEdit && (
+                  <div className="flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      aria-label={`${g.label} bölümünü yukarı taşı`}
+                      disabled={gi === 0}
+                      onClick={() => moveSection(g.key, -1)}
+                      className="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-surface text-text-muted transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`${g.label} bölümünü aşağı taşı`}
+                      disabled={gi === groups.length - 1}
+                      onClick={() => moveSection(g.key, 1)}
+                      className="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-surface text-text-muted transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
             <SectionGrid items={g.items} isDesktop={isDesktop} editable={!!canEdit} onPersist={persistLayout} renderItem={renderCard} />

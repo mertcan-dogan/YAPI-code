@@ -205,3 +205,121 @@ it("tags a windowed:false metric 'tüm proje, bugüne kadar' under a global date
   await screen.findByText("Bütçe"); // table header (windowed:false metric)
   expect(screen.getAllByText("tüm proje, bugüne kadar").length).toBeGreaterThan(0);
 });
+
+// --- CR-034.1 Fix 1: KPI hides Boyutlar in the widget config modal ---
+
+it("KPI widget hides Boyutlar + shows the hint in the config modal", async () => {
+  h.params = {}; // new pano → canEdit, no fetch
+  render(<StudioDashboardCanvasPage />);
+  await screen.findByLabelText("Widget ekle");
+
+  fireEvent.click(screen.getByLabelText("Widget ekle"));
+  fireEvent.click(screen.getByText("KPI")); // → draft at viz:"kpi", modal opens on the Veri tab
+
+  // The Veri tab shows the KPI hint, not the Boyutlar picker.
+  expect(
+    screen.getByText("KPI tek bir değer gösterir — kırılım için Tablo veya Grafik kullanın.")
+  ).toBeInTheDocument();
+  expect(screen.queryByLabelText("Boyutlar ara")).toBeNull();
+  // The metric picker still renders.
+  expect(screen.getByLabelText("Metrikler ara")).toBeInTheDocument();
+});
+
+it("switching a data widget's viz to KPI clears + hides Boyutlar in the modal", async () => {
+  h.params = {};
+  render(<StudioDashboardCanvasPage />);
+  await screen.findByLabelText("Widget ekle");
+
+  fireEvent.click(screen.getByLabelText("Widget ekle"));
+  fireEvent.click(screen.getByText("Tablo")); // a Tablo widget opens at viz:"table"
+
+  // The Boyutlar picker is present for a table; pick the "Proje" item (not its header).
+  expect(screen.getByLabelText("Boyutlar ara")).toBeInTheDocument();
+  const proje = screen
+    .getAllByText("Proje")
+    .map((el) => el.closest("button"))
+    .find((b): b is HTMLButtonElement => !!b);
+  fireEvent.click(proje!);
+
+  // Flip the Segmented to KPI on the Grafik tab → the Boyutlar picker is replaced by
+  // the hint (dimensions are cleared + hidden).
+  fireEvent.click(screen.getByText("Grafik"));
+  fireEvent.click(screen.getByText("KPI"));
+  fireEvent.click(screen.getByText("Veri"));
+
+  expect(
+    screen.getByText("KPI tek bir değer gösterir — kırılım için Tablo veya Grafik kullanın.")
+  ).toBeInTheDocument();
+  expect(screen.queryByLabelText("Boyutlar ara")).toBeNull();
+});
+
+// --- CR-034.1 Fix 2: section move-up/down reorders bands via widgets[] order ---
+
+it("section move up/down reorders bands and persists via widgets[] order", async () => {
+  const wa = widget("wa", "kpi", { title: "A widget", section: "Bölüm A", spec: { metrics: ["cost_try"], dimensions: [], viz: "kpi" } });
+  const wb = widget("wb", "table", { title: "B widget", section: "Bölüm B", spec: { metrics: ["revenue"], dimensions: ["project"], viz: "table" } });
+  h.dashboard = { id: "d1", owner_id: "me", is_owner: true, created_at: TS, updated_at: TS, title: "Pano", date_range: null, comparison: null, filters: [], visibility: "private", labels: [], widgets: [wa, wb] };
+  h.batch = { wa: h.buildResult(wa.spec), wb: h.buildResult(wb.spec) };
+  h.saved = { ...h.dashboard }; // updateDashboard echo
+
+  render(<StudioDashboardCanvasPage />);
+  await screen.findByText("BÖLÜM A"); // band label is uppercased
+  expect(screen.getByText("BÖLÜM B")).toBeInTheDocument();
+
+  // Ends are disabled: the first band can't go up, the last band can't go down. The
+  // aria-labels use the RAW (not uppercased) section label.
+  expect(screen.getByLabelText("Bölüm A bölümünü yukarı taşı")).toBeDisabled();
+  expect(screen.getByLabelText("Bölüm B bölümünü aşağı taşı")).toBeDisabled();
+  expect(screen.getByLabelText("Bölüm A bölümünü aşağı taşı")).not.toBeDisabled();
+
+  // Move "Bölüm A" down → B becomes the first widget block.
+  fireEvent.click(screen.getByLabelText("Bölüm A bölümünü aşağı taşı"));
+  fireEvent.click(screen.getByText("Kaydet"));
+
+  await waitFor(() => expect(studio.updateDashboard).toHaveBeenCalled());
+  const [savedId, body] = (studio.updateDashboard as any).mock.calls[0];
+  expect(savedId).toBe("d1");
+  expect(body.widgets.map((w: any) => w.id)).toEqual(["wb", "wa"]);
+});
+
+// --- CR-034.1 Fix 4: dashboard export loading state ---
+
+it("dashboard export shows a loading state until the blob resolves", async () => {
+  const wk = widget("wk", "kpi", { title: "KPI widget", spec: { metrics: ["cost_try"], dimensions: [], viz: "kpi" } });
+  h.dashboard = { id: "d1", owner_id: "me", is_owner: true, created_at: TS, updated_at: TS, title: "Pano", date_range: null, comparison: null, filters: [], visibility: "private", labels: [], widgets: [wk] };
+  h.batch = { wk: h.buildResult(wk.spec) };
+
+  // A deferred export blob we resolve by hand.
+  let resolveFn: (b: Blob) => void;
+  const deferred = new Promise<Blob>((r) => {
+    resolveFn = r;
+  });
+  (studio.exportDashboardBlob as any).mockReturnValue(deferred);
+
+  // jsdom has no object-URL plumbing — stub it (restored in finally).
+  const origCreate = (URL as any).createObjectURL;
+  const origRevoke = (URL as any).revokeObjectURL;
+  (URL as any).createObjectURL = vi.fn(() => "blob:mock");
+  (URL as any).revokeObjectURL = vi.fn();
+
+  try {
+    render(<StudioDashboardCanvasPage />);
+    await screen.findByText("Maliyet (₺)");
+
+    fireEvent.click(screen.getByLabelText("Dışa aktar")); // open the export menu
+    fireEvent.click(screen.getByText("PDF"));
+
+    // While the blob is in flight: the busy indicator replaces the trigger.
+    expect(await screen.findByText("Dışa aktarılıyor…")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Dışa aktar")).toBeNull();
+    expect(studio.exportDashboardBlob).toHaveBeenCalledWith("d1", "pdf");
+
+    // Resolve → it restores to the normal "Dışa aktar" trigger.
+    resolveFn!(new Blob());
+    await waitFor(() => expect(screen.getByLabelText("Dışa aktar")).toBeInTheDocument());
+    expect(screen.queryByText("Dışa aktarılıyor…")).toBeNull();
+  } finally {
+    (URL as any).createObjectURL = origCreate;
+    (URL as any).revokeObjectURL = origRevoke;
+  }
+});

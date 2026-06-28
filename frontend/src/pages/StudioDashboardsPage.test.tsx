@@ -166,3 +166,31 @@ it("shows an error + retry (never reads as empty) and recovers on retry", async 
   fireEvent.click(retry);
   expect(await screen.findByText("Benim Panom")).toBeInTheDocument();
 });
+
+// --- CR-034.1 Fix 3: the row "…" menu renders via a portal (un-clipped) ---
+
+it("renders the row … menu through a portal on <body> (not clipped inside the table)", async () => {
+  render(<StudioDashboardsPage />);
+  await screen.findByText("Benim Panom");
+
+  fireEvent.click(screen.getByLabelText("Pano işlemleri: Benim Panom"));
+  // The items are reachable…
+  expect(screen.getByText("Çoğalt")).toBeInTheDocument();
+  expect(screen.getByText("Bağlantıyı kopyala")).toBeInTheDocument();
+  // …and the panel is portaled to document.body, OUTSIDE the table's overflow box.
+  const menu = document.body.querySelector('[role="menu"]') as HTMLElement | null;
+  expect(menu).not.toBeNull();
+  expect(menu!.closest("table")).toBeNull();
+  expect(within(menu!).getByText("Çoğalt")).toBeInTheDocument();
+});
+
+it("keeps the portaled menu open on a mousedown inside it (two-ref outside-click)", async () => {
+  render(<StudioDashboardsPage />);
+  await screen.findByText("Benim Panom");
+
+  fireEvent.click(screen.getByLabelText("Pano işlemleri: Benim Panom"));
+  const item = screen.getByText("Çoğalt");
+  // A mousedown on the panel (separate portal ref from the trigger) must NOT close it.
+  fireEvent.mouseDown(item);
+  expect(screen.getByText("Çoğalt")).toBeInTheDocument();
+});

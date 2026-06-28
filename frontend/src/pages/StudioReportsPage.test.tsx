@@ -80,3 +80,31 @@ it("renders a Görünürlük chip per report (Özel / Herkes)", async () => {
   const row = (await screen.findByText("Başkasının Raporu")).closest("tr") as HTMLElement;
   expect(within(row).getByText("Herkes")).toBeInTheDocument();
 });
+
+// --- CR-034.1 Fix 3: the row "…" menu renders via a portal (un-clipped) ---
+
+it("renders the row … menu through a portal on <body> (not clipped inside the table)", async () => {
+  render(<StudioReportsPage />);
+  await screen.findByText("Benim Raporum");
+
+  fireEvent.click(screen.getByLabelText("Rapor işlemleri: Benim Raporum"));
+  // The items are reachable…
+  expect(screen.getByText("Çoğalt")).toBeInTheDocument();
+  // …and the panel is portaled to document.body, OUTSIDE the table's overflow box,
+  // so it can't be clipped by the list container.
+  const menu = document.body.querySelector('[role="menu"]') as HTMLElement | null;
+  expect(menu).not.toBeNull();
+  expect(menu!.closest("table")).toBeNull();
+  expect(within(menu!).getByText("Çoğalt")).toBeInTheDocument();
+});
+
+it("keeps the portaled menu open on a mousedown inside it (two-ref outside-click)", async () => {
+  render(<StudioReportsPage />);
+  await screen.findByText("Benim Raporum");
+
+  fireEvent.click(screen.getByLabelText("Rapor işlemleri: Benim Raporum"));
+  const item = screen.getByText("Çoğalt");
+  // A mousedown on the panel (separate portal ref from the trigger) must NOT close it.
+  fireEvent.mouseDown(item);
+  expect(screen.getByText("Çoğalt")).toBeInTheDocument();
+});

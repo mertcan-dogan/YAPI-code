@@ -154,3 +154,91 @@ it("Save calls POST /studio/reports for a new report", async () => {
     expect(studio.createReport).toHaveBeenCalledWith(expect.objectContaining({ spec: expect.objectContaining({ metrics: ["cost_try"] }) }))
   );
 });
+
+// --- CR-034.1 Fix 1: KPI hides Boyutlar + clears dimensions ---
+
+it("selecting KPI hides Boyutlar + shows the hint and clears dimensions", async () => {
+  render(<StudioReportEditorPage />);
+  await screen.findByText("Metrikler");
+
+  // A metric is required for /studio/run to fire.
+  fireEvent.click(screen.getByText("Maliyet (₺)"));
+  // Pick a dimension first (the "Proje" item button, NOT its group header) so we can
+  // prove it is cleared once KPI is chosen.
+  const proje = screen
+    .getAllByText("Proje")
+    .map((el) => el.closest("button"))
+    .find((b): b is HTMLButtonElement => !!b);
+  fireEvent.click(proje!);
+  await waitFor(() => expect(studio.run).toHaveBeenLastCalledWith(expect.objectContaining({ dimensions: ["project"] })));
+
+  // Switch viz → KPI on the Grafik tab.
+  fireEvent.click(screen.getByText("Grafik"));
+  fireEvent.click(screen.getByText("KPI"));
+
+  // Back on the Veri tab the Boyutlar picker is replaced by the KPI hint.
+  fireEvent.click(screen.getByText("Veri"));
+  expect(
+    screen.getByText("KPI tek bir değer gösterir — kırılım için Tablo veya Grafik kullanın.")
+  ).toBeInTheDocument();
+  expect(screen.queryByLabelText("Boyutlar ara")).toBeNull();
+  // The metric picker still renders.
+  expect(screen.getByLabelText("Metrikler ara")).toBeInTheDocument();
+
+  // Dimensions are not applied for a KPI (the spec is cleared, not silently ignored).
+  await waitFor(() =>
+    expect(studio.run).toHaveBeenLastCalledWith(expect.objectContaining({ viz: "kpi", dimensions: [] }))
+  );
+});
+
+// --- CR-034.1 Fix 4: PDF export loading state ---
+
+it("PDF export shows a loading state until the blob resolves", async () => {
+  // "PDF indir" only shows for a SAVED report → load a real report.
+  h.params = { id: "r1" };
+  (studio.getReport as any).mockResolvedValue({
+    id: "r1",
+    owner_id: "me",
+    is_owner: true,
+    created_at: "2026-06-26T00:00:00Z",
+    updated_at: "2026-06-26T00:00:00Z",
+    title: "R",
+    visibility: "private",
+    labels: [],
+    spec: { metrics: ["cost_try"], dimensions: [], viz: "table" },
+  });
+
+  // A deferred export blob we resolve by hand.
+  let resolveFn: (b: Blob) => void;
+  const deferred = new Promise<Blob>((r) => {
+    resolveFn = r;
+  });
+  (studio.exportReportBlob as any).mockReturnValue(deferred);
+
+  // jsdom has no object-URL plumbing — stub it (restored in finally).
+  const origCreate = (URL as any).createObjectURL;
+  const origRevoke = (URL as any).revokeObjectURL;
+  (URL as any).createObjectURL = vi.fn(() => "blob:mock");
+  (URL as any).revokeObjectURL = vi.fn();
+
+  try {
+    render(<StudioReportEditorPage />);
+    const pdfBtn = await screen.findByText("PDF indir");
+    expect(pdfBtn.closest("button")).not.toBeDisabled();
+
+    fireEvent.click(pdfBtn);
+
+    // While the blob is in flight: label flips + button disabled.
+    const busy = await screen.findByText("Dışa aktarılıyor…");
+    expect(busy.closest("button")).toBeDisabled();
+    expect(studio.exportReportBlob).toHaveBeenCalledWith("r1", "pdf");
+
+    // Resolve → it restores to the normal enabled "PDF indir".
+    resolveFn!(new Blob());
+    await waitFor(() => expect(screen.getByText("PDF indir")).toBeInTheDocument());
+    expect(screen.getByText("PDF indir").closest("button")).not.toBeDisabled();
+  } finally {
+    (URL as any).createObjectURL = origCreate;
+    (URL as any).revokeObjectURL = origRevoke;
+  }
+});
