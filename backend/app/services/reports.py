@@ -138,6 +138,12 @@ def build_project_report_data(db: Session, project: Project, company: Company) -
             "variance": format_currency_tr(c["variance_try"]),
             "status": c["status"],
             "status_label": STATUS_LABELS.get(c["status"], ""),
+            # CR-037: raw numeric mirrors for the category budget chart. Additive —
+            # the formatted strings above are untouched (frozen-snapshot equality
+            # tests stay green); an OLD snapshot simply lacks these and omits the chart.
+            "revised_num": float(c["revised_budget_try"] or 0),
+            "invoiced_num": float(c["invoiced_try"] or 0),
+            "forecast_num": float(c["forecast_final"] or 0),
         }
         for c in f["categories"]
     ]
@@ -1357,65 +1363,192 @@ def _render_story(story, generated_at, footer_note=None) -> bytes:
     return buf.getvalue()
 
 
-def _project_report_pdf(d: dict) -> bytes:
+def _project_page_furniture(company_name, generated_at):
+    """``onFirstPage``/``onLaterPages`` painter for the single-project report: light
+    BG, a slim running header (eyebrow left, company right) and a footer (generated-by
+    left, page number right). Modelled on ``_mgmt_page_furniture`` minus the period."""
+    def paint(c, doc):
+        from reportlab.lib.colors import HexColor
+        from reportlab.lib.pagesizes import A4
+
+        from app.services.report_theme import (
+            BG, FNT, HAIR, MUT, register_lato_fonts, LATO_REGULAR, LATO_SEMIBOLD,
+        )
+
+        register_lato_fonts()
+        Wd, H = A4
+        M = 40
+        c.saveState()
+        c.setFillColor(HexColor(BG)); c.rect(0, 0, Wd, H, fill=1, stroke=0)
+        c.setFillColor(HexColor(MUT)); c.setFont(LATO_SEMIBOLD, 7)
+        c.drawString(M, H - 30, "PROJE RAPORU")
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 8)
+        c.drawRightString(Wd - M, H - 30, str(company_name or ""))
+        c.setStrokeColor(HexColor(HAIR)); c.setLineWidth(0.6)
+        c.line(M, H - 38, Wd - M, H - 38); c.line(M, 40, Wd - M, 40)
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 7.5)
+        c.drawString(M, 28, f"Yapı tarafından {generated_at} tarihinde oluşturuldu")
+        c.drawRightString(Wd - M, 28, f"Sayfa {doc.page}")
+        c.restoreState()
+
+    return paint
+
+
+def _project_report_pdf(d: dict, closeout_ctx: dict | None = None) -> bytes:
+    """CR-037 — single-project status report on the report_theme/report_charts toolkit
+    (a single-project cut of the Aylık Yönetim Raporu look). Rendered DEFENSIVELY:
+    every section is guarded on key presence so a FROZEN closeout snapshot (built by an
+    OLDER ``build_project_report_data`` shape) still renders — a missing key omits its
+    section, never KeyErrors. ``closeout_ctx`` (optional) adds the closeout stage +
+    'donduruldu' stamp for the Proje Sonu Raporu. Charts are PNGs in a
+    ``tempfile.mkdtemp()`` cleaned up after ``doc.build()``."""
+    import shutil
+    import tempfile
+    from io import BytesIO
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    s = _styles()
-    story = [
-        _header_table(s, d["logo_url"], d["company_name"], d["report_title"], d["report_date"]),
-        Spacer(1, 10),
-        Paragraph(f"{d['project_name']} — {d['client_name']}", s["h2"]),
-    ]
+    from app.services import report_charts as ch
+    from app.services.report_theme import (
+        MUT, NAVY,
+        LATO_BOLD, LATO_MEDIUM,
+        chartcard, dtable, kpirow, pill, register_lato_fonts, s as TS, sect,
+    )
 
-    # KPI strip as a 4-column table.
-    def kpi(label, value):
-        return [Paragraph(label, s["kpi_label"]), Paragraph(value, s["kpi_value"])]
+    register_lato_fonts()
+    ch.setup_matplotlib_fonts()
+    tmpdir = tempfile.mkdtemp(prefix="yapi_proj_")
 
-    kpi_row = [
-        kpi("Sözleşme Değeri", d["contract_value"]),
-        kpi("Gerçekleşen Maliyet", d["total_actual"]),
-        kpi("Final Tahmin", d["forecast_final"]),
-        kpi("Kar Marjı", d["margin_pct"]),
-    ]
-    from reportlab.lib import colors
-    from reportlab.platypus import Table, TableStyle
+    CW = 15.6 * cm          # chart image width
+    CHh = 5.2 * cm          # chart image height
+    RAG_KEY = {"red": "r", "amber": "a", "green": "g"}  # status → toolkit pill key
 
-    kt = Table([kpi_row], colWidths=[4.375 * cm] * 4)
-    kt.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    story += [kt, Spacer(1, 6)]
+    company_name = d.get("company_name") or "Yapı"
+    project_name = d.get("project_name") or ""
+    client_name = d.get("client_name") or ""
+    report_title = d.get("report_title") or "Proje Durum Raporu"
+    report_date = d.get("report_date") or ""
+    generated_at = d.get("generated_at") or format_datetime_tr(datetime.now(timezone.utc))
 
-    # Budget vs actual by category.
-    story.append(Paragraph("Bütçe & Gerçekleşen (Kategori Bazında)", s["h2"]))
-    rows = [["Kategori", "Revize Bütçe", "Faturalanan", "Final Tahmin", "Sapma", "Durum"]]
-    rags = []
-    for c in d["categories"]:
-        rows.append([c["label"], c["revised"], c["invoiced"], c["forecast"], c["variance"], c["status_label"]])
-        rags.append(c["status"])
-    story.append(_data_table(
-        rows, col_widths=[5 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm, 2.4 * cm, 2.1 * cm],
-        num_cols=(1, 2, 3, 4), rag_col=5, rag_values=rags,
-    ))
+    try:
+        story: list = []
 
-    # Income & collection summary.
-    story.append(Paragraph("Gelir & Tahsilat Özeti", s["h2"]))
-    summary = [
-        ["İşverene Faturalanan", d["total_invoiced"]],
-        ["Tahsil Edilen", d["total_collected"]],
-        ["Bekleyen Tahsilat", d["total_outstanding"]],
-        ["Hakediş Kesintisi", d["total_retention"]],
-        ["Net Nakit Pozisyonu", d["net_cash"]],
-    ]
-    story.append(_data_table(summary, col_widths=[12 * cm, 5.6 * cm], num_cols=(1,), header=False))
+        # ---- Header band (logo + brand eyebrow + title + project/client + stamp) ----
+        logo = _logo_flowable(d.get("logo_url"), max_h=38.0, max_w=120.0)
+        if logo:
+            logo_row = Table([[logo]], colWidths=[17.6 * cm])
+            logo_row.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]))
+            story.append(logo_row)
+        # sect()/chartcard() do NOT escape their title args (CR-036 H1) → escape here.
+        story += sect(escape(_tr_upper(company_name)), escape(report_title))
+        proj_line = escape(f"{project_name} — {client_name}") if client_name else escape(project_name)
+        if proj_line:
+            story.append(Paragraph(proj_line, TS("h2", LATO_BOLD, 13, NAVY, leading=16)))
+        meta_bits: list = []
+        if report_date:
+            meta_bits.append(escape(str(report_date)))
+        if closeout_ctx:
+            stage = closeout_ctx.get("stage_label")
+            frozen_at = closeout_ctx.get("frozen_at_label")
+            stamp = f"{frozen_at} tarihinde donduruldu" if frozen_at else "donduruldu"
+            meta_bits.append(escape(" · ".join(x for x in [stage, stamp] if x)))
+        if meta_bits:
+            story.append(Spacer(1, 2))
+            story.append(Paragraph("  ·  ".join(meta_bits), TS("meta", LATO_MEDIUM, 8.5, MUT)))
+        rag = d.get("rag_status")
+        if rag in RAG_KEY:
+            story.append(Spacer(1, 5))
+            story.append(pill(STATUS_LABELS.get(rag, ""), RAG_KEY[rag]))
+        story.append(Spacer(1, 12))
 
-    return _render_story(story, d["generated_at"])
+        # ---- KPI row (omit any card whose value is absent; skip row if all absent) ----
+        kpi_items = [
+            (lbl, str(d[key])) for lbl, key in (
+                ("Sözleşme Değeri", "contract_value"),
+                ("Gerçekleşen Maliyet", "total_actual"),
+                ("Final Tahmin", "forecast_final"),
+                ("Kar Marjı", "margin_pct"),
+            ) if d.get(key) is not None
+        ]
+        if kpi_items:
+            story += [kpirow(kpi_items, colw=4.07), Spacer(1, 14)]
+
+        # ---- Bütçe & Kategori (table always; chart only when numeric mirrors exist) ----
+        cats = d.get("categories") or []
+        if cats:
+            story += sect("MALİYET", "Bütçe & Kategori")
+            header = ["Kategori", "Revize Bütçe", "Faturalanan", "Tahmini Final", "Sapma", "Durum"]
+            rows = [
+                [c.get("label", ""), c.get("revised", ""), c.get("invoiced", ""),
+                 c.get("forecast", ""), c.get("variance", ""),
+                 (c.get("status_label") or "—", RAG_KEY.get(c.get("status"), "a"))]
+                for c in cats
+            ]
+            story += [
+                dtable(header, rows,
+                       [4.2 * cm, 2.7 * cm, 2.6 * cm, 2.6 * cm, 2.4 * cm, 2.1 * cm],
+                       aligns=[0, 2, 2, 2, 2, 1]),
+                Spacer(1, 10),
+            ]
+            if all(all(k in c for k in ("revised_num", "invoiced_num", "forecast_num")) for c in cats):
+                labels = [_short(c.get("label", ""), 14) for c in cats]
+                series = [
+                    ("Revize Bütçe", [float(c["revised_num"]) for c in cats]),
+                    ("Faturalanan", [float(c["invoiced_num"]) for c in cats]),
+                    ("Tahmini Final", [float(c["forecast_num"]) for c in cats]),
+                ]
+                img = ch.chart_grouped_bar(labels, series, tmpdir)
+                story += [chartcard("Kategori Bütçe Dağılımı", img, CW, CHh), Spacer(1, 12)]
+
+        # ---- Gelir & Kâr/Zarar (sales_pnl) — omitted on snapshots predating CR-031 ----
+        pnl = d.get("sales_pnl") or {}
+        pnl_rows = [
+            [lbl, str(pnl[key])] for lbl, key in (
+                ("Gelir", "revenue"),
+                ("Maliyet", "cost"),
+                ("Finansman Maliyeti", "financing"),
+                ("Net (Finansman Hariç)", "net_excl_financing"),
+                ("Net (Finansman Dahil)", "net_incl_financing"),
+                ("Kâr Marjı", "margin_pct"),
+                ("Kur Etkisi", "fx_effect"),
+            ) if pnl.get(key) is not None
+        ]
+        if pnl_rows:
+            story += sect("KÂRLILIK", "Gelir & Kâr / Zarar")
+            story += [dtable(["Kalem", "Tutar"], pnl_rows, [12.0 * cm, 5.6 * cm], aligns=[0, 2]), Spacer(1, 12)]
+
+        # ---- Gelir & Tahsilat ----
+        collection_rows = [
+            [lbl, str(d[key])] for lbl, key in (
+                ("İşverene Faturalanan", "total_invoiced"),
+                ("Tahsil Edilen", "total_collected"),
+                ("Bekleyen Tahsilat", "total_outstanding"),
+                ("Hakediş Kesintisi", "total_retention"),
+                ("Net Nakit Pozisyonu", "net_cash"),
+            ) if d.get(key) is not None
+        ]
+        if collection_rows:
+            story += sect("NAKİT", "Gelir & Tahsilat")
+            story += [dtable(["Kalem", "Tutar"], collection_rows, [12.0 * cm, 5.6 * cm], aligns=[0, 2])]
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            topMargin=1.7 * cm, bottomMargin=1.6 * cm, leftMargin=1.4 * cm, rightMargin=1.4 * cm,
+            title="Yapı Proje Raporu",
+        )
+        paint = _project_page_furniture(company_name, generated_at)
+        doc.build(story, onFirstPage=paint, onLaterPages=paint)
+        return buf.getvalue()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 _TR_MONTHS_SHORT = [

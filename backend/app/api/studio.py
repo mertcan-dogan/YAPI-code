@@ -236,7 +236,7 @@ def export_report(
     if format not in EXPORT_FORMATS:
         raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf, xlsx veya csv)")
     result = run_spec(db, user.company_id, report.spec)
-    return studio_export(result, format, report.title)
+    return studio_export(result, format, report.title, viz=(report.spec or {}).get("viz"))
 
 
 # --------------------------------------------------------------------------- #

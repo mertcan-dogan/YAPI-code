@@ -180,42 +180,193 @@ def _meta_line(result: dict) -> str:
     return "  ·  ".join(parts)
 
 
-def _pdf(header, data_rows, totals_row, title: str, result: dict) -> bytes:
+# --------------------------------------------------------------------------- #
+# CR-037 — chart + toolkit rendering helpers (report_theme / report_charts)
+# --------------------------------------------------------------------------- #
+def _chart_inputs(result: dict):
+    """Flatten ``result['series']`` into (labels, [(name,[y…])…]) aligned to one
+    unified, order-preserving x-axis across all series (missing point → 0). Returns
+    None when there is no plottable series."""
+    series = result.get("series") or []
+    if not series:
+        return None
+    labels: list[str] = []
+    seen: set[str] = set()
+    for se in series:
+        for pt in se.get("points") or []:
+            xs = "" if pt.get("x") is None else str(pt.get("x"))
+            if xs not in seen:
+                seen.add(xs)
+                labels.append(xs)
+    if not labels:
+        return None
+    aligned: list = []
+    for se in series:
+        ymap: dict = {}
+        for pt in se.get("points") or []:
+            xs = "" if pt.get("x") is None else str(pt.get("x"))
+            try:
+                ymap[xs] = float(pt.get("y")) if pt.get("y") is not None else 0.0
+            except (TypeError, ValueError):
+                ymap[xs] = 0.0
+        aligned.append((str(se.get("name") or se.get("metric") or ""), [ymap.get(l, 0.0) for l in labels]))
+    return labels, aligned
+
+
+def _studio_chart_img(viz: str, result: dict, dest_dir: str):
+    """Render the result's series as the chart matching ``viz`` → PNG path, or None.
+    bar → grouped bars; line/area → line (1 series) else grouped bars (no chart_combo
+    — that's bars+line and would misrepresent multiple line series)."""
+    from app.services import report_charts as ch
+
+    inp = _chart_inputs(result)
+    if not inp:
+        return None
+    labels, series = inp
+    if viz == "bar":
+        return ch.chart_grouped_bar(labels, series, dest_dir)
+    if viz in ("line", "area"):
+        if len(series) == 1:
+            return ch.chart_line(labels, series[0][1], dest_dir, fill=(viz == "area"))
+        return ch.chart_grouped_bar(labels, series, dest_dir)
+    return None
+
+
+def _kpi_items(result: dict) -> list:
+    """(metric label, formatted total) pairs from result totals — for kpi cards."""
+    totals = (result.get("totals") or {}).get("metrics") or {}
+    out = []
+    for c in result.get("columns") or []:
+        if c.get("kind") == "metric":
+            out.append((str(c.get("label") or c.get("id")), _pdf_cell(totals.get(c["id"]))))
+    return out
+
+
+def _kpi_flowables(result: dict) -> list:
+    """KPI cards from totals, tiled ≤4 per row (kpi viz / kpi widget)."""
+    from reportlab.platypus import Spacer
+
+    from app.services.report_theme import kpirow
+
+    items = _kpi_items(result)
+    out: list = []
+    for i in range(0, len(items), 4):
+        out.append(kpirow(items[i:i + 4], colw=4.07))
+        out.append(Spacer(1, 8))
+    return out
+
+
+def _studio_dtable(header, data_rows, totals_row, columns):
+    """Toolkit data table (NAVY header, zebra, optional bold totals). Metric columns
+    right-aligned. dtable() escapes every cell, so user-authored dim labels are safe."""
+    from reportlab.lib.units import cm
+
+    from app.services.report_theme import dtable
+
+    ncols = len(header) or 1
+    colw = [(17.5 / ncols) * cm] * ncols
+    aligns = [2 if (i < len(columns) and columns[i].get("kind") == "metric") else 0 for i in range(ncols)]
+    rows = [[_pdf_cell(v) for v in r] for r in data_rows]
+    totals = [_pdf_cell(v) for v in totals_row] if totals_row else None
+    return dtable(header, rows, colw, aligns=aligns, totals=totals)
+
+
+def _studio_furniture(eyebrow: str, generated_at: str):
+    """Themed page painter (light BG, running eyebrow, footer) — the report_theme look."""
+    def paint(c, doc):
+        from reportlab.lib.colors import HexColor
+        from reportlab.lib.pagesizes import A4
+
+        from app.services.report_theme import (
+            BG, FNT, HAIR, MUT, register_lato_fonts, LATO_REGULAR, LATO_SEMIBOLD,
+        )
+
+        register_lato_fonts()
+        Wd, H = A4
+        M = 40
+        c.saveState()
+        c.setFillColor(HexColor(BG)); c.rect(0, 0, Wd, H, fill=1, stroke=0)
+        c.setFillColor(HexColor(MUT)); c.setFont(LATO_SEMIBOLD, 7)
+        c.drawString(M, H - 30, eyebrow)
+        c.setStrokeColor(HexColor(HAIR)); c.setLineWidth(0.6)
+        c.line(M, H - 38, Wd - M, H - 38); c.line(M, 40, Wd - M, 40)
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 7.5)
+        c.drawString(M, 28, f"Yapı tarafından {generated_at} tarihinde oluşturuldu")
+        c.drawRightString(Wd - M, 28, f"Sayfa {doc.page}")
+        c.restoreState()
+
+    return paint
+
+
+def _studio_doc(story: list, eyebrow: str, generated_at: str) -> bytes:
+    """Build the story into PDF bytes with the themed page furniture."""
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=1.7 * cm, bottomMargin=1.6 * cm, leftMargin=1.4 * cm, rightMargin=1.4 * cm,
+        title="Yapı Stüdyo",
+    )
+    paint = _studio_furniture(eyebrow, generated_at)
+    doc.build(story, onFirstPage=paint, onLaterPages=paint)
+    return buf.getvalue()
+
+
+def _pdf(header, data_rows, totals_row, title: str, result: dict, viz: str | None = None) -> bytes:
+    """CR-037 — report PDF on the report_theme toolkit. ``viz`` (from the report spec)
+    decides the lead element: kpi → KPI cards from totals; line/area/bar → the matching
+    chart in a chart card ABOVE the data table; table/other → table only. The data
+    table (with totals + per-row deltas) is kept for every non-kpi viz. Read-only.
+    Charts are PNGs in a tempfile.mkdtemp() cleaned up after doc.build()."""
+    import shutil
+    import tempfile
     from xml.sax.saxutils import escape
 
     from reportlab.lib.units import cm
     from reportlab.platypus import Paragraph, Spacer
 
-    from app.services.reports import _data_table, _render_story, _styles
+    from app.services.report_theme import chartcard, register_lato_fonts, s as TS, sect, LATO_REGULAR, MUT
     from app.utils.format import format_datetime_tr
 
-    s = _styles()  # registers the Türkçe fonts as a side effect
-    story = [Paragraph(escape(title or "Rapor"), s["h2"])]
-    meta_line = _meta_line(result)
-    if meta_line:
-        story.append(Paragraph(escape(meta_line), s["note"]))
-    story.append(Spacer(1, 6))
+    register_lato_fonts()
+    tmpdir = tempfile.mkdtemp(prefix="yapi_studio_")
+    CW = 16.0 * cm
+    CHh = 5.0 * cm
+    try:
+        # sect()/chartcard() titles are NOT escaped by the toolkit → escape user title here.
+        story = list(sect("RAPOR STÜDYOSU", escape(title or "Rapor")))
+        meta_line = _meta_line(result)
+        if meta_line:
+            story += [Paragraph(escape(meta_line), TS("note", LATO_REGULAR, 8, MUT)), Spacer(1, 8)]
 
-    table_rows = [[_pdf_cell(v) for v in header]]
-    table_rows += [[_pdf_cell(v) for v in r] for r in data_rows]
-    if totals_row:
-        table_rows.append([_pdf_cell(v) for v in totals_row])
+        if viz == "kpi":
+            story += _kpi_flowables(result)
+        else:
+            if viz in ("line", "area", "bar"):
+                img = _studio_chart_img(viz, result, tmpdir)
+                if img:
+                    story += [chartcard(escape(title or "Grafik"), img, CW, CHh), Spacer(1, 10)]
+            story.append(_studio_dtable(header, data_rows, totals_row, result.get("columns") or []))
 
-    columns = result.get("columns") or []
-    ncols = len(header) or 1
-    col_w = [(17.5 / ncols) * cm] * ncols
-    num_cols = tuple(i for i, c in enumerate(columns) if c.get("kind") == "metric")
-    story.append(_data_table(table_rows, col_widths=col_w, num_cols=num_cols, header=True))
-
-    generated_at = format_datetime_tr(datetime.now(timezone.utc))
-    return _render_story(story, generated_at)
+        generated_at = format_datetime_tr(datetime.now(timezone.utc))
+        return _studio_doc(story, "RAPOR STÜDYOSU", generated_at)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------- #
 # Public entrypoint
 # --------------------------------------------------------------------------- #
-def studio_export(result: dict, fmt: str, title: str) -> Response:
+def studio_export(result: dict, fmt: str, title: str, viz: str | None = None) -> Response:
     """Build a downloadable file (pdf/xlsx/csv) from a run_spec result. Read-only.
+
+    ``viz`` (the report spec's visualization) drives the PDF chart (CR-037); it is
+    ignored by the xlsx/csv paths, which stay byte-for-byte as before.
 
     Raises ``APIError(422, INVALID_FORMAT)`` for an unknown format (the router also
     guards, so this is defense-in-depth)."""
@@ -229,7 +380,7 @@ def studio_export(result: dict, fmt: str, title: str) -> Response:
         content = _csv(header, data_rows, totals_row)
         media, ext = _CSV_MEDIA, "csv"
     elif fmt == "pdf":
-        content = _pdf(header, data_rows, totals_row, title, result)
+        content = _pdf(header, data_rows, totals_row, title, result, viz=viz)
         media, ext = _PDF_MEDIA, "pdf"
     else:
         raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf, xlsx veya csv)")
@@ -288,57 +439,89 @@ def _sheet_name(title: str, used: set) -> str:
 
 
 def _dashboard_pdf(ordered: list, results: dict, title: str) -> bytes:
+    """CR-037 — dashboard deck PDF on the report_theme toolkit, each widget rendered as
+    the right element in reading order: kpi → KPI cards; chart → its chart (the widget
+    spec's viz) in a chart card; table → data table; text → paragraph; report → its chart
+    (inferred from the result's series) + table; unavailable → a calm placeholder. A deck
+    with no renderable widget still returns a header-only PDF (never an error). Read-only;
+    charts are PNGs in a tempfile.mkdtemp() cleaned up after doc.build()."""
+    import shutil
+    import tempfile
     from xml.sax.saxutils import escape
 
-    from reportlab.lib.units import cm
     from reportlab.platypus import Paragraph, Spacer
 
-    from app.services.reports import _data_table, _render_story, _styles
+    from reportlab.lib.units import cm
+
+    from app.services.report_theme import (
+        chartcard, register_lato_fonts, s as TS, sect,
+        INK, MUT, NAVY, LATO_BOLD, LATO_REGULAR, LATO_SEMIBOLD,
+    )
     from app.utils.format import format_datetime_tr
 
-    s = _styles()  # registers the Türkçe fonts as a side effect
-    story = [Paragraph(escape(title or "Pano"), s["h2"])]
+    register_lato_fonts()
+    tmpdir = tempfile.mkdtemp(prefix="yapi_pano_")
+    CW = 16.0 * cm
+    CHh = 5.0 * cm
+    try:
+        story = list(sect("PANO", escape(title or "Pano")))
 
-    last_section = object()  # sentinel so the first (even None) section prints once
-    for w in ordered:
-        wtype = w.get("type")
-        wid = w.get("id")
-        section = w.get("section")
-        if section and section != last_section:
-            story.append(Paragraph(escape(str(section).upper()), s["h3"]))
-        last_section = section
+        last_section = object()  # sentinel so the first (even None) section prints once
+        for w in ordered:
+            wtype = w.get("type")
+            wid = w.get("id")
+            section = w.get("section")
+            if section and section != last_section:
+                story.append(Paragraph(escape(str(section).upper()), TS("sec", LATO_SEMIBOLD, 8.5, MUT, spaceBefore=6)))
+            last_section = section
 
-        if wtype == "text":
-            content = w.get("content")
-            if content:
-                story.append(Paragraph(escape(str(content)), s["body"]))
-                story.append(Spacer(1, 6))
-            continue
+            if wtype == "text":
+                content = w.get("content")
+                if content:
+                    story.append(Paragraph(escape(str(content)), TS("body", LATO_REGULAR, 9, INK, leading=13)))
+                    story.append(Spacer(1, 6))
+                continue
 
-        res = results.get(wid)
-        if isinstance(res, dict) and res.get("unavailable"):
-            story.append(Paragraph(f"<b>{escape(w.get('title') or '')}</b>", s["body"]))
-            story.append(Paragraph("Bu rapor artık kullanılamıyor", s["note"]))
-            story.append(Spacer(1, 6))
-            continue
-        if not _is_renderable(res):
-            continue
+            res = results.get(wid)
+            wtitle = escape(w.get("title") or "")
+            if isinstance(res, dict) and res.get("unavailable"):
+                story.append(Paragraph(f"<b>{wtitle}</b>", TS("wt", LATO_BOLD, 9.5, NAVY)))
+                story.append(Paragraph("Bu rapor artık kullanılamıyor", TS("note", LATO_REGULAR, 8, MUT)))
+                story.append(Spacer(1, 8))
+                continue
+            if not _is_renderable(res):
+                continue
 
-        story.append(Paragraph(f"<b>{escape(w.get('title') or '')}</b>", s["body"]))
-        header, data_rows, totals_row = _flat_table(res)
-        table_rows = [[_pdf_cell(v) for v in header]]
-        table_rows += [[_pdf_cell(v) for v in r] for r in data_rows]
-        if totals_row:
-            table_rows.append([_pdf_cell(v) for v in totals_row])
-        columns = res.get("columns") or []
-        ncols = len(header) or 1
-        col_w = [(17.5 / ncols) * cm] * ncols
-        num_cols = tuple(i for i, c in enumerate(columns) if c.get("kind") == "metric")
-        story.append(_data_table(table_rows, col_widths=col_w, num_cols=num_cols, header=True))
-        story.append(Spacer(1, 10))
+            story.append(Paragraph(f"<b>{wtitle}</b>", TS("wt", LATO_BOLD, 9.5, NAVY)))
+            header, data_rows, totals_row = _flat_table(res)
+            columns = res.get("columns") or []
 
-    generated_at = format_datetime_tr(datetime.now(timezone.utc))
-    return _render_story(story, generated_at)
+            if wtype == "kpi":
+                story += _kpi_flowables(res)
+            elif wtype == "chart":
+                viz = (w.get("spec") or {}).get("viz") or "line"
+                img = _studio_chart_img(viz, res, tmpdir)
+                if img:
+                    story.append(chartcard(wtitle, img, CW, CHh))
+                else:
+                    story.append(_studio_dtable(header, data_rows, totals_row, columns))
+            elif wtype == "report":
+                # The deck payload carries no resolved viz for a report widget → infer
+                # the chart family from the result's series (1 → line, ≥2 → grouped bars);
+                # always keep the table beneath it.
+                if res.get("series"):
+                    img = _studio_chart_img("line", res, tmpdir)
+                    if img:
+                        story += [chartcard(wtitle, img, CW, CHh), Spacer(1, 6)]
+                story.append(_studio_dtable(header, data_rows, totals_row, columns))
+            else:  # table (and any unknown data widget) → table
+                story.append(_studio_dtable(header, data_rows, totals_row, columns))
+            story.append(Spacer(1, 12))
+
+        generated_at = format_datetime_tr(datetime.now(timezone.utc))
+        return _studio_doc(story, "PANO", generated_at)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _dashboard_xlsx(ordered: list, results: dict) -> bytes:

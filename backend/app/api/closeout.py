@@ -161,13 +161,29 @@ def list_closeouts(project_id: uuid.UUID, user: CurrentUser, db: Session = Depen
 
 
 def _frozen_pdf_response(project, closeout) -> Response:
-    """Regenerate the PDF on demand from the FROZEN dict — never recompute live."""
+    """Regenerate the PDF on demand from the FROZEN dict — never recompute live.
+
+    CR-037: pass the closeout stage + freeze timestamp so the (now toolkit-restyled)
+    project renderer stamps the cover as final/archival. The frozen ``report_data``
+    is rendered defensively, so an OLD-shape snapshot still produces a PDF. Read-only.
+    """
     if closeout is None or not closeout.report_data:
         raise APIError(404, "NOT_FROZEN", "Proje sonu raporu henüz dondurulmadı (kesin hesap gerekli)")
     try:
         from app.services.reports import _project_report_pdf
+        from app.utils.format import format_datetime_tr
 
-        pdf = _project_report_pdf(closeout.report_data)
+        stage_labels = {
+            closeout_service.CLOSEOUT_GECICI_KABUL: "Geçici Kabul",
+            closeout_service.CLOSEOUT_KESIN_HESAP: "Kesin Hesap",
+            closeout_service.CLOSEOUT_KESIN_KABUL: "Kesin Kabul",
+        }
+        closeout_ctx = {
+            "stage_label": stage_labels.get(closeout.stage, ""),
+            "frozen_at_label": format_datetime_tr(closeout.frozen_at) if closeout.frozen_at else None,
+            "frozen": True,
+        }
+        pdf = _project_report_pdf(closeout.report_data, closeout_ctx=closeout_ctx)
     except Exception as exc:  # ReportLab/render issues
         raise APIError(500, "REPORT_ERROR", f"Rapor oluşturulamadı: {exc}")
     filename = f"proje-sonu-raporu-{project.project_code}.pdf"
