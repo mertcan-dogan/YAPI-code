@@ -42,7 +42,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 const DATE_PRESETS: { id: string | null; label: string }[] = [
   { id: null, label: "Tüm zamanlar" },
@@ -77,12 +77,18 @@ const BLANK_SPEC: StudioSpec = {
 export default function StudioReportEditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useAuth((s) => s.user);
   const isNew = !id;
 
+  // CR-035 — "Düzenle" on an AI report proposal opens this editor on the /new route
+  // with an UNSAVED draft spec/title in location.state. Seed state from it (nothing
+  // persists until Save). Read once via useState initialisers.
+  const draft = isNew ? ((location.state as { draftSpec?: StudioSpec; draftTitle?: string } | null) ?? null) : null;
+
   // --- report meta + spec ---
-  const [spec, setSpec] = useState<StudioSpec>(BLANK_SPEC);
-  const [title, setTitle] = useState("Adsız rapor");
+  const [spec, setSpec] = useState<StudioSpec>(draft?.draftSpec ? { ...BLANK_SPEC, ...draft.draftSpec } : BLANK_SPEC);
+  const [title, setTitle] = useState(draft?.draftTitle || "Adsız rapor");
   const [visibility, setVisibility] = useState<Visibility>("private");
   const [labels, setLabels] = useState<string[]>([]);
   const [starred, setStarred] = useState(false);
@@ -323,9 +329,15 @@ export default function StudioReportEditorPage() {
         <div className="flex-1" />
         <button
           type="button"
-          disabled
-          title="Yapay zekâ yakında (CR-035)"
-          className="flex h-9 cursor-not-allowed items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px] text-text-faint opacity-60"
+          disabled={!report?.id}
+          onClick={() => report?.id && navigate("/ai-assistant", { state: { report_id: report.id } })}
+          title={report?.id ? "Bu rapor hakkında Yapı AI'ya sorun" : "Önce raporu kaydedin"}
+          className={cn(
+            "flex h-9 items-center gap-2 rounded-control border border-border bg-surface px-3 text-[13px]",
+            report?.id
+              ? "text-text-secondary hover:bg-surface-hover"
+              : "cursor-not-allowed text-text-faint opacity-60"
+          )}
         >
           <MessageSquare className="h-4 w-4" /> Bu rapor hakkında sor
         </button>

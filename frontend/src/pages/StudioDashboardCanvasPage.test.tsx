@@ -59,6 +59,7 @@ const h = vi.hoisted(() => {
   };
   return {
     params: {} as any,
+    location: { state: null } as any,
     user: { id: "me", role: "director", full_name: "Ben" },
     dashboard: null as any,
     batch: {} as any,
@@ -86,7 +87,7 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/store/auth", () => ({ useAuth: (sel: any) => sel({ user: h.user }) }));
 vi.mock("@/store/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 const navigate = vi.fn();
-vi.mock("react-router-dom", () => ({ useParams: () => h.params, useNavigate: () => navigate }));
+vi.mock("react-router-dom", () => ({ useParams: () => h.params, useNavigate: () => navigate, useLocation: () => h.location }));
 
 import { studio } from "@/lib/api";
 import StudioDashboardCanvasPage from "./StudioDashboardCanvasPage";
@@ -97,6 +98,7 @@ const widget = (id: string, type: string, extra: any) => ({ id, type, title: ext
 
 beforeEach(() => {
   h.params = { id: "d1" };
+  h.location = { state: null };
   h.user = { id: "me", role: "director", full_name: "Ben" };
   h.dashboard = null;
   h.batch = {};
@@ -280,6 +282,25 @@ it("section move up/down reorders bands and persists via widgets[] order", async
   const [savedId, body] = (studio.updateDashboard as any).mock.calls[0];
   expect(savedId).toBe("d1");
   expect(body.widgets.map((w: any) => w.id)).toEqual(["wb", "wa"]);
+});
+
+// --- CR-035: AI authoring hand-off (draft widgets on /new) ---
+
+it("initializes widgets/title from draftWidgets on /new (Düzenle from an AI pano proposal), creating nothing", async () => {
+  h.params = {}; // /new route
+  const wk = widget("wk", "kpi", { title: "KPI widget", spec: { metrics: ["cost_try"], dimensions: [], viz: "kpi" } });
+  h.location = { state: { draftTitle: "AI panosu", draftWidgets: [wk] } };
+
+  render(<StudioDashboardCanvasPage />);
+
+  // The draft widget renders (per-widget POST /studio/run on an unsaved pano).
+  expect(await screen.findByText("Maliyet (₺)")).toBeInTheDocument();
+  // The title is seeded from the draft.
+  expect((screen.getByLabelText("Pano başlığı") as HTMLInputElement).value).toBe("AI panosu");
+  expect(studio.run).toHaveBeenCalled();
+  // Nothing is persisted until the user clicks Kaydet.
+  expect(studio.createDashboard).not.toHaveBeenCalled();
+  expect(studio.updateDashboard).not.toHaveBeenCalled();
 });
 
 // --- CR-034.1 Fix 4: dashboard export loading state ---

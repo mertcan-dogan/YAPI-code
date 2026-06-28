@@ -123,6 +123,14 @@ export default function AIAssistantPage() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // CR-035 — Rapor Stüdyosu hand-off. `report_id` grounds this session in a saved
+  // report (read-only Q&A); `studioIntent` ('report'|'dashboard') tunes the input
+  // hint. Read ONCE from location.state on mount so the first `ask` already carries
+  // them (useState initialisers run on the first render only).
+  const handoff = (location.state as { report_id?: string | null; studioIntent?: "report" | "dashboard" } | null) ?? null;
+  const [studioReportId] = useState<string | null>(handoff?.report_id ?? null);
+  const [studioIntent] = useState<"report" | "dashboard" | null>(handoff?.studioIntent ?? null);
+
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
   const messages = activeConv?.messages ?? [];
 
@@ -272,7 +280,7 @@ export default function AIAssistantPage() {
     };
 
     abortRef.current = streamAgent(
-      { messages: toAgentMessages(afterUser), project_id: projectId || null },
+      { messages: toAgentMessages(afterUser), project_id: projectId || null, report_id: studioReportId || null },
       {
         // Live answer tokens — append as they arrive for a token-by-token render.
         onDelta: (text) => setLiveText((prev) => prev + text),
@@ -374,6 +382,18 @@ export default function AIAssistantPage() {
               <Plus className="h-3.5 w-3.5" /> Yeni Sohbet
             </button>
           </div>
+
+          {/* CR-035 — Rapor Stüdyosu hand-off hint (studio "Yapay zekâ ile oluştur"). */}
+          {studioIntent && messages.length === 0 && (
+            <div className="mb-4 flex items-start gap-2 rounded-control border border-brand/40 bg-navy-50/60 p-3 text-[13px] text-text-primary">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+              <span>
+                {studioIntent === "dashboard"
+                  ? "Nasıl bir pano istediğinizi anlatın — Yapı AI önerip onayınıza sunar."
+                  : "Nasıl bir rapor istediğinizi anlatın — Yapı AI önerip onayınıza sunar."}
+              </span>
+            </div>
+          )}
 
           {/* Preset questions — only on an empty chat */}
           {messages.length === 0 && (
@@ -501,7 +521,11 @@ export default function AIAssistantPage() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Sorunuzu yazın…"
+                placeholder={
+                  studioIntent
+                    ? "Ne görmek istediğinizi yazın — örn. 'daire tipine göre kâr/zarar raporu yap'"
+                    : "Sorunuzu yazın…"
+                }
                 className="w-full bg-transparent py-3 pl-4 pr-14 text-sm outline-none"
               />
               <button

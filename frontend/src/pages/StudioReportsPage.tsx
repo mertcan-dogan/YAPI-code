@@ -228,10 +228,10 @@ export default function StudioReportsPage() {
         }
       />
 
-      {/* AI hero — CR-035 not wired; routes to the blank editor, no agent call. */}
+      {/* AI hero — CR-035: hand off to the Yapı Agent to author a report by proposal. */}
       <button
         type="button"
-        onClick={() => navigate("/studio/reports/new")}
+        onClick={() => navigate("/ai-assistant", { state: { studioIntent: "report" } })}
         className="mb-5 flex w-full items-center gap-3 rounded-card border border-blue-border bg-gradient-to-r from-blue-soft to-purple-soft px-4 py-3 text-left transition-colors hover:brightness-[0.98]"
       >
         <span className="flex h-9 w-9 items-center justify-center rounded-control bg-white text-purple">
@@ -240,7 +240,7 @@ export default function StudioReportsPage() {
         <span className="min-w-0">
           <span className="block text-sm font-semibold text-text-primary">Yapay zekâ ile oluştur</span>
           <span className="block text-xs text-text-secondary">
-            Ne görmek istediğinizi yazın — Yapı AI raporu sizin için kursun (yakında).
+            Ne görmek istediğinizi yazın — Yapı AI raporu sizin için kursun.
           </span>
         </span>
       </button>

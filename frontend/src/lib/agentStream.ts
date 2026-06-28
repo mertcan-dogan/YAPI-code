@@ -32,6 +32,9 @@ export interface StreamBody {
   messages: { role: string; content: string }[];
   project_id?: string | null;
   scope?: string | null;
+  // CR-035 (additive): when set, the backend grounds a READ-ONLY Q&A in this saved
+  // report. Forwarded verbatim on both the SSE POST and the non-stream fallback.
+  report_id?: string | null;
 }
 
 function parseFrame(frame: string): { event?: string; data?: string } {

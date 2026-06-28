@@ -45,7 +45,7 @@ const h = vi.hoisted(() => {
       usd_missing_count: 0,
     },
   });
-  return { params: {} as any, user: { id: "me", role: "director", full_name: "Ben" }, runMode: "ok" as "ok" | "fail", CATALOG, buildResult };
+  return { params: {} as any, location: { state: null } as any, user: { id: "me", role: "director", full_name: "Ben" }, runMode: "ok" as "ok" | "fail", CATALOG, buildResult };
 });
 
 vi.mock("@/lib/api", () => ({
@@ -60,15 +60,18 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/store/auth", () => ({ useAuth: (sel: any) => sel({ user: h.user }) }));
 vi.mock("@/store/toast", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
-vi.mock("react-router-dom", () => ({ useParams: () => h.params, useNavigate: () => vi.fn() }));
+const navigate = vi.fn();
+vi.mock("react-router-dom", () => ({ useParams: () => h.params, useNavigate: () => navigate, useLocation: () => h.location }));
 
 import { studio } from "@/lib/api";
 import StudioReportEditorPage from "./StudioReportEditorPage";
 
 beforeEach(() => {
   h.params = {};
+  h.location = { state: null };
   h.user = { id: "me", role: "director", full_name: "Ben" };
   h.runMode = "ok";
+  navigate.mockClear();
   vi.clearAllMocks();
 });
 afterEach(cleanup);
@@ -189,6 +192,49 @@ it("selecting KPI hides Boyutlar + shows the hint and clears dimensions", async 
   await waitFor(() =>
     expect(studio.run).toHaveBeenLastCalledWith(expect.objectContaining({ viz: "kpi", dimensions: [] }))
   );
+});
+
+// --- CR-035: AI authoring hand-off (draft spec + "Bu rapor hakkında sor") ---
+
+it("initializes spec/title from a draftSpec on /new (Düzenle from an AI proposal), creating nothing", async () => {
+  h.location = { state: { draftSpec: { metrics: ["cost_try"], dimensions: ["project"], viz: "table" }, draftTitle: "AI taslağı" } };
+  render(<StudioReportEditorPage />);
+  await screen.findByText("Metrikler");
+
+  // Title is seeded from the draft, not the blank "Adsız rapor".
+  expect((screen.getByLabelText("Rapor başlığı") as HTMLInputElement).value).toBe("AI taslağı");
+  // The draft's metric is already selected → the live preview runs with it.
+  await waitFor(() =>
+    expect(studio.run).toHaveBeenCalledWith(expect.objectContaining({ metrics: ["cost_try"], dimensions: ["project"] }))
+  );
+  // Nothing is persisted until the user clicks Kaydet.
+  expect(studio.createReport).not.toHaveBeenCalled();
+});
+
+it("'Bu rapor hakkında sor' is disabled on a new/unsaved report", async () => {
+  render(<StudioReportEditorPage />);
+  const btn = (await screen.findByText("Bu rapor hakkında sor")).closest("button") as HTMLButtonElement;
+  expect(btn).toBeDisabled();
+});
+
+it("'Bu rapor hakkında sor' is enabled for a saved report and navigates with report_id", async () => {
+  h.params = { id: "r1" };
+  (studio.getReport as any).mockResolvedValue({
+    id: "r1",
+    owner_id: "me",
+    is_owner: true,
+    created_at: "2026-06-26T00:00:00Z",
+    updated_at: "2026-06-26T00:00:00Z",
+    title: "R",
+    visibility: "private",
+    labels: [],
+    spec: { metrics: ["cost_try"], dimensions: [], viz: "table" },
+  });
+  render(<StudioReportEditorPage />);
+  const btn = (await screen.findByText("Bu rapor hakkında sor")).closest("button") as HTMLButtonElement;
+  expect(btn).not.toBeDisabled();
+  fireEvent.click(btn);
+  expect(navigate).toHaveBeenCalledWith("/ai-assistant", { state: { report_id: "r1" } });
 });
 
 // --- CR-034.1 Fix 4: PDF export loading state ---

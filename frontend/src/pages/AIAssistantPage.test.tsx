@@ -316,3 +316,36 @@ describe("AIAssistantPage agent steps (Cowork-style collapse)", () => {
     expect(screen.queryByText(/adım tamamlandı/)).not.toBeInTheDocument();
   });
 });
+
+// CR-035 — Rapor Stüdyosu hand-off: a saved-report Q&A grounds the session in a
+// report_id (threaded into every stream body); a studioIntent tunes the input hint.
+describe("AIAssistantPage Rapor Stüdyosu hand-off (CR-035)", () => {
+  const wrapWithState = (state: any) =>
+    render(
+      createElement(
+        MemoryRouter,
+        { initialEntries: [{ pathname: "/ai-assistant", state }] },
+        createElement(AIAssistantPage)
+      )
+    );
+
+  it("threads report_id from location.state into the stream body", () => {
+    wrapWithState({ report_id: "rep-9" });
+    submit("bu raporu özetle");
+    expect(h.streamCalls).toHaveLength(1);
+    expect(h.streamCalls[0].body.report_id).toBe("rep-9");
+  });
+
+  it("shows the studio-intent placeholder hint when handed studioIntent", () => {
+    wrapWithState({ studioIntent: "report" });
+    expect(
+      screen.getByPlaceholderText("Ne görmek istediğinizi yazın — örn. 'daire tipine göre kâr/zarar raporu yap'")
+    ).toBeInTheDocument();
+  });
+
+  it("defaults report_id to null when no hand-off state is present", () => {
+    wrap();
+    submit("normal soru");
+    expect(h.streamCalls[0].body.report_id).toBeNull();
+  });
+});
