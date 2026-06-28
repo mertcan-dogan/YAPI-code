@@ -66,7 +66,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -543,6 +543,7 @@ function ReportPickerModal({ onPick, onClose }: { onPick: (r: ReportListItem) =>
 export default function StudioDashboardCanvasPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useAuth((s) => s.user);
   const isDesktop = useIsDesktop();
 
@@ -615,15 +616,21 @@ export default function StudioDashboardCanvasPage() {
     setResults({});
     reportInfoRef.current = {};
     if (!id) {
+      // CR-035 — "Düzenle" on an AI pano proposal opens this canvas on the /new route
+      // with UNSAVED draft widgets/title/date_range in location.state. Seed from it
+      // (nothing persists until Save); otherwise start a blank pano.
+      const draft =
+        (location.state as { draftWidgets?: Widget[]; draftTitle?: string; draftDateRange?: DateWindow | null } | null) ??
+        null;
       setDashboard(null);
-      setTitle("Adsız pano");
-      setWidgets([]);
-      setDateRange(null);
+      setTitle(draft?.draftTitle || "Adsız pano");
+      setWidgets((draft?.draftWidgets ?? []).map((w) => ({ ...w, layout: w.layout ?? { x: 0, y: 0, w: 6, h: 4 } })));
+      setDateRange(draft?.draftDateRange ?? null);
       setComparison(null);
       setFilters([]);
       setVisibility("private");
       setLabels([]);
-      setDirty(false);
+      setDirty(!!(draft?.draftWidgets && draft.draftWidgets.length > 0));
       setLoadError(null);
       setLoading(false);
       setReady(true);

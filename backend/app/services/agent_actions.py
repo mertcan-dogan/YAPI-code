@@ -21,7 +21,10 @@ from sqlalchemy.orm import Session
 
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.responses import APIError
 from app.services import approvals as approvals_service
+from app.services.studio import creators as studio_creators
+from app.services.studio.catalog import validate_spec as validate_report_spec
 
 
 class ActionError(Exception):
@@ -34,6 +37,9 @@ ACTION_KIND_LABELS = {
     "agent_reminder": "Hatırlatıcı (AI önerisi)",
     "agent_flag_invoice": "İnceleme İşareti (AI önerisi)",
     "agent_task": "Görev (AI önerisi)",
+    # CR-035 — agent-authored Report Studio report / dashboard proposals.
+    "agent_create_report": "Rapor (AI önerisi)",
+    "agent_create_dashboard": "Pano (AI önerisi)",
 }
 
 _PENDING_MESSAGE = (
@@ -51,9 +57,14 @@ def _parse_date(value) -> date | None:
         return None
 
 
-def _confirmation(req) -> dict:
+def _confirmation(req, extra: dict | None = None) -> dict:
     """Build the model-facing result + the UI proposed_action block. The agent is
-    instructed to say 'öneri oluşturuldu', never 'yaptım'."""
+    instructed to say 'öneri oluşturuldu', never 'yaptım'.
+
+    CR-035: ``extra`` enriches the proposed_action with the proposed artifact
+    (a report ``spec`` or a dashboard's ``widgets``) so the chat card can render a
+    LIVE PREVIEW without a second fetch. It is display-only — the authoritative copy
+    is in ``req.payload`` and the row is still created only on human approval."""
     pa = {
         "request_id": str(req.id),
         "kind": req.kind,
@@ -64,6 +75,8 @@ def _confirmation(req) -> dict:
         "status": req.status,  # always "pending"
         "deep_link": "/approvals",
     }
+    if extra:
+        pa.update(extra)
     return {
         "ok": True,
         "proposed": True,
@@ -186,6 +199,86 @@ def propose_followup_task(db: Session, company_id, user_id, *, title: str,
         requested_by=user_id,
     )
     return _confirmation(req)
+
+
+# --------------------------------------------------------------------------- #
+# CR-035 — Action tool: propose_report (author a Report Studio report)
+# --------------------------------------------------------------------------- #
+def propose_report(db: Session, company_id, user_id, *, title: str, spec,
+                   visibility: str = "private", labels=None, project_id=None) -> dict:
+    """Propose creating a Report Studio report from an agent-built CR-032 spec.
+    Propose-only: validates the spec against the catalog (NO request is created on
+    an invalid spec — the model gets the error and corrects), then opens a pending
+    ``ApprovalRequest``. The Report row itself is created only in
+    ``approvals._apply_agent_create_report`` after a human approves (CR-011)."""
+    title = (title or "").strip()
+    if not title:
+        raise ActionError("Rapor için bir başlık gerekli.")
+    if not isinstance(spec, dict):
+        raise ActionError("Rapor tanımı (spec) bir nesne olmalı.")
+    try:
+        validate_report_spec(spec)
+    except APIError as exc:
+        raise ActionError(
+            f"Rapor tanımı geçersiz: {exc.message} "
+            "Yalnızca studio_catalog'daki metrik/boyut kimliklerini kullan."
+        )
+    vis = visibility if visibility in ("private", "company") else "private"
+    req = _create_and_commit(
+        db,
+        company_id=company_id,
+        project_id=_as_uuid(project_id),
+        kind="agent_create_report",
+        target_table="reports",
+        target_id=None,
+        payload={"title": title, "spec": spec, "visibility": vis, "labels": labels},
+        description=f"Rapor önerisi: {title}",
+        requested_by=user_id,
+    )
+    return _confirmation(req, extra={"title": title, "spec": spec})
+
+
+# --------------------------------------------------------------------------- #
+# CR-035 — Action tool: propose_dashboard (author a Report Studio pano)
+# --------------------------------------------------------------------------- #
+def propose_dashboard(db: Session, company_id, user_id, *, title: str, widgets,
+                      date_range=None, comparison=None, filters=None,
+                      visibility: str = "private", labels=None, project_id=None) -> dict:
+    """Propose creating a Report Studio dashboard (pano) of widgets. Propose-only:
+    validates every widget (envelope + each data widget's inner spec against the
+    catalog + report-widget viewability + unique ids; NO request on an invalid
+    deck), then opens a pending ``ApprovalRequest``. The Dashboard row is created
+    only in ``approvals._apply_agent_create_dashboard`` after approval (CR-011)."""
+    title = (title or "").strip()
+    if not title:
+        raise ActionError("Pano için bir başlık gerekli.")
+    if not isinstance(widgets, list) or not widgets:
+        raise ActionError("Pano için en az bir widget gerekli.")
+    try:
+        normalised = studio_creators.validate_widgets(db, company_id, user_id, widgets)
+    except APIError as exc:
+        raise ActionError(
+            f"Pano tanımı geçersiz: {exc.message} "
+            "Yalnızca studio_catalog'daki metrik/boyut kimliklerini kullan."
+        )
+    widgets_json = [w.model_dump(mode="json") for w in normalised]
+    vis = visibility if visibility in ("private", "company") else "private"
+    req = _create_and_commit(
+        db,
+        company_id=company_id,
+        project_id=_as_uuid(project_id),
+        kind="agent_create_dashboard",
+        target_table="dashboards",
+        target_id=None,
+        payload={"title": title, "widgets": widgets_json, "date_range": date_range,
+                 "comparison": comparison, "filters": filters,
+                 "visibility": vis, "labels": labels},
+        description=f"Pano önerisi: {title}",
+        requested_by=user_id,
+    )
+    return _confirmation(req, extra={"title": title, "widgets": widgets_json,
+                                     "date_range": date_range, "comparison": comparison,
+                                     "filters": filters})
 
 
 def _as_uuid(value):

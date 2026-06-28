@@ -62,8 +62,12 @@ def create_request(
     return req
 
 
-def apply_request(db: Session, req: ApprovalRequest) -> None:
-    """Apply the requested change to its target row. Called on approval."""
+def apply_request(db: Session, req: ApprovalRequest) -> dict | None:
+    """Apply the requested change to its target row. Called on approval.
+
+    Returns a ``{"table", "id"}`` descriptor of a row this approval CREATED (CR-035
+    report/dashboard), so the caller can deep-link to it; ``None`` for kinds that
+    mutate an existing row in place."""
     if req.kind == "budget_change":
         _apply_budget_change(db, req)
     elif req.kind == "subcontractor_change":
@@ -83,6 +87,15 @@ def apply_request(db: Session, req: ApprovalRequest) -> None:
     # after a human approves; the automation itself never writes a record.
     elif req.kind == "agent_file_document":
         _apply_agent_file_document(db, req)
+    # CR-035 — agent-authored Report Studio report / dashboard. Runs ONLY here,
+    # after a human approves; the agent only ever PROPOSED it. Uses the SAME shared
+    # creators as the human endpoints, with company_id/owner from the request row
+    # (never the payload) so a proposal can only create a row in its own company.
+    elif req.kind == "agent_create_report":
+        return _apply_agent_create_report(db, req)
+    elif req.kind == "agent_create_dashboard":
+        return _apply_agent_create_dashboard(db, req)
+    return None
 
 
 def mark_decided(req: ApprovalRequest, *, user_id: uuid.UUID, status: str, reason: str | None = None) -> None:
@@ -309,3 +322,55 @@ def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
         from app.responses import APIError as _APIError
 
         raise _APIError(422, "VALIDATION_ERROR", "Bilinmeyen belge hedefi")
+
+
+# --- CR-035 agent-authored report/dashboard appliers --------------------------
+def _apply_agent_create_report(db: Session, req: ApprovalRequest) -> dict:
+    """Create the proposed Report on approval, reusing the SAME ``creators`` path as
+    POST /studio/reports. ``company_id`` / ``owner`` come from the request row, never
+    the payload — tenant isolation. The spec is re-validated by the creator."""
+    from app.services.audit import record_audit, snapshot
+    from app.services.studio import creators
+
+    payload = req.payload or {}
+    report = creators.create_report(
+        db,
+        company_id=req.company_id,
+        owner_id=req.requested_by,
+        created_by=req.requested_by,
+        title=(payload.get("title") or req.description or "Rapor")[:200],
+        spec=payload.get("spec") or {},
+        visibility=payload.get("visibility") or "private",
+        labels=payload.get("labels"),
+    )
+    record_audit(db, company_id=req.company_id, user_id=req.requested_by,
+                 table_name="reports", record_id=report.id, action="INSERT",
+                 new_values=snapshot(report))
+    return {"table": "reports", "id": str(report.id)}
+
+
+def _apply_agent_create_dashboard(db: Session, req: ApprovalRequest) -> dict:
+    """Create the proposed Dashboard (pano) on approval, reusing the SAME
+    ``creators`` path as POST /studio/dashboards. ``company_id`` / ``owner`` come
+    from the request row, never the payload. Widgets are re-validated by the creator."""
+    from app.services.audit import record_audit, snapshot
+    from app.services.studio import creators
+
+    payload = req.payload or {}
+    dashboard = creators.create_dashboard(
+        db,
+        company_id=req.company_id,
+        owner_id=req.requested_by,
+        created_by=req.requested_by,
+        title=(payload.get("title") or req.description or "Pano")[:200],
+        widgets=payload.get("widgets") or [],
+        date_range=payload.get("date_range"),
+        comparison=payload.get("comparison"),
+        filters=payload.get("filters"),
+        visibility=payload.get("visibility") or "private",
+        labels=payload.get("labels"),
+    )
+    record_audit(db, company_id=req.company_id, user_id=req.requested_by,
+                 table_name="dashboards", record_id=dashboard.id, action="INSERT",
+                 new_values=snapshot(dashboard))
+    return {"table": "dashboards", "id": str(dashboard.id)}

@@ -50,6 +50,44 @@ class AgentRequest(BaseModel):
     # null/unknown = the general agent. Validated leniently: an unknown value is
     # treated as genel rather than rejected.
     scope: str | None = None
+    # CR-035 — "Bu rapor hakkında sor": ground a read-only Q&A in a saved report.
+    # The server loads the report (company-scoped; 404 if not viewable), runs its
+    # spec for fresh totals/rows, and injects that as read-only system context.
+    report_id: uuid.UUID | None = None
+
+
+def _report_grounding(db: Session, user, report_id: uuid.UUID) -> str:
+    """CR-035 — build a compact, read-only Turkish grounding block for "Bu rapor
+    hakkında sor": the report's spec + a fresh server-run of its result (trusted
+    totals/rows). Company-scoped via ``_get_viewable`` (404 if the caller can't see
+    it). The numbers come from the server's own ``run_spec`` — never the client."""
+    import json
+
+    from app.api.studio import _get_viewable
+    from app.services.studio.engine import run_spec
+
+    report = _get_viewable(db, user, report_id)  # 404 if cross-company / private-stranger
+    spec = report.spec or {}
+    parts = [
+        f"Kullanıcı şu kayıtlı rapor hakkında soru soruyor: «{report.title}». "
+        "Yanıtını YALNIZCA bu raporun verilerine dayandır; yeni bir rapor/pano ÖNERME.",
+        f"Spec — metrikler: {spec.get('metrics')}; boyutlar: {spec.get('dimensions') or '—'}; "
+        f"görsel: {spec.get('viz', 'table')}; tarih: {spec.get('date_range') or 'varsayılan'}.",
+    ]
+    try:
+        result = run_spec(db, user.company_id, spec)
+        totals = (result.get("totals") or {}).get("metrics") or {}
+        rows = result.get("rows") or []
+        parts.append("Toplamlar: " + json.dumps(totals, ensure_ascii=False, default=str))
+        parts.append(f"Satır sayısı: {len(rows)}.")
+        if rows:
+            parts.append(
+                "Satırlar (örnek): "
+                + json.dumps(rows[:15], ensure_ascii=False, default=str)[:2000]
+            )
+    except Exception:  # grounding is best-effort; degrade to spec-only context
+        parts.append("(Rapor sonucu şu an çalıştırılamadı; spec'e göre yanıtla.)")
+    return "\n".join(parts)
 
 
 def _active_projects(db: Session, company_id):
@@ -124,6 +162,10 @@ def agent(
 
     messages = [{"role": m.role, "content": m.content} for m in payload.messages]
 
+    # CR-035 — "Bu rapor hakkında sor": ground the answer in a saved report. Built
+    # synchronously so a bad/cross-company report_id 404s BEFORE any streaming starts.
+    extra_context = _report_grounding(db, user, payload.report_id) if payload.report_id else ""
+
     if stream:
         import anyio
         from fastapi.responses import StreamingResponse
@@ -139,7 +181,8 @@ def agent(
         # loop responsive; the generator is always closed on completion/disconnect.
         async def event_stream():
             gen = agent_service.run_agent_stream(
-                db, company_id, messages, project_id=pid, user_id=uid, scope=scope
+                db, company_id, messages, project_id=pid, user_id=uid, scope=scope,
+                extra_context=extra_context,
             )
             sentinel = object()
 
@@ -172,7 +215,7 @@ def agent(
     try:
         result = agent_service.run_agent(
             db, user.company_id, messages, project_id=payload.project_id,
-            user_id=user.id, scope=payload.scope,
+            user_id=user.id, scope=payload.scope, extra_context=extra_context,
         )
     except ai_service.AIUnavailable:
         return success(agent_service.degraded_response())

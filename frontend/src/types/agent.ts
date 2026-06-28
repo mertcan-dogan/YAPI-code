@@ -38,6 +38,16 @@ export interface ProposedAction {
   project_id?: string | null;
   status: string; // "pending"
   deep_link: string; // "/approvals"
+  // CR-035 (additive): the two Rapor Stüdyosu authoring kinds carry the proposed
+  // artefact so the card can render a spec summary + a live preview before approval.
+  // kind "agent_create_report"    → title + spec (a CR-032 StudioSpec).
+  // kind "agent_create_dashboard" → title + widgets[] (+ date_range/comparison/filters).
+  title?: string;
+  spec?: any;
+  widgets?: any[];
+  date_range?: any;
+  comparison?: any;
+  filters?: any;
 }
 
 export interface AgentResponse {

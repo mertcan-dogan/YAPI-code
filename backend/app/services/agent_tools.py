@@ -50,6 +50,38 @@ class ToolError(Exception):
 
 
 # --------------------------------------------------------------------------- #
+# Tool: studio_catalog (CR-035) — the Report Studio dimension/metric catalog
+# --------------------------------------------------------------------------- #
+def studio_catalog(db: Session, company_id) -> dict:
+    """Read-only: the VALID dimension/metric ids (with labels/group/status) the
+    agent must use to build a report/dashboard spec for propose_report /
+    propose_dashboard. The catalog is GLOBAL (no per-company data); ``db`` /
+    ``company_id`` are accepted only for a uniform read-tool signature. A compact
+    id/label/group/status projection (no ``records`` key → contributes no
+    citations) to keep the tool result small. ``status='coming_soon'`` ids exist
+    but must NOT be used in a spec (they return null at run time)."""
+    from app.services.studio.catalog import get_catalog_public
+
+    cat = get_catalog_public()
+
+    def _trim(rows, extra=()):
+        out = []
+        for r in rows:
+            row = {"id": r.get("id"), "label": r.get("label"),
+                   "group": r.get("group"), "status": r.get("status")}
+            for k in extra:
+                row[k] = r.get(k)
+            out.append(row)
+        return out
+
+    return {
+        "dimensions": _trim(cat.get("dimensions", [])),
+        "metrics": _trim(cat.get("metrics", []), extra=("windowed",)),
+        "viz": ["line", "area", "bar", "kpi", "table"],
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Tool: create_chart (CR-007-C) — does NOT query data
 # --------------------------------------------------------------------------- #
 def create_chart(**spec) -> dict:

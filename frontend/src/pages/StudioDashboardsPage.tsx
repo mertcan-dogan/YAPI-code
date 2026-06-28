@@ -12,7 +12,7 @@ import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { DashboardListItem } from "@/types/studio";
 import { formatDateTime } from "@/utils/format";
-import { Copy, LayoutDashboard, Link2, Lock, MoreHorizontal, Plus, Search, Trash2, Users } from "lucide-react";
+import { Copy, LayoutDashboard, Link2, Lock, MoreHorizontal, Plus, Search, Sparkles, Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -223,6 +223,23 @@ export default function StudioDashboardsPage() {
           </Button>
         }
       />
+
+      {/* AI hero — CR-035: hand off to the Yapı Agent to author a pano by proposal. */}
+      <button
+        type="button"
+        onClick={() => navigate("/ai-assistant", { state: { studioIntent: "dashboard" } })}
+        className="mb-5 flex w-full items-center gap-3 rounded-card border border-blue-border bg-gradient-to-r from-blue-soft to-purple-soft px-4 py-3 text-left transition-colors hover:brightness-[0.98]"
+      >
+        <span className="flex h-9 w-9 items-center justify-center rounded-control bg-white text-purple">
+          <Sparkles className="h-5 w-5" />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-text-primary">Yapay zekâ ile oluştur</span>
+          <span className="block text-xs text-text-secondary">
+            Ne görmek istediğinizi yazın — Yapı AI panoyu sizin için kursun.
+          </span>
+        </span>
+      </button>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Tabs

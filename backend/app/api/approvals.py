@@ -31,6 +31,9 @@ KIND_LABELS = {
     "agent_task": "Görev (AI önerisi)",
     # CR-012 Template A — document auto-file proposal.
     "agent_file_document": "Belge Dosyalama (AI önerisi)",
+    # CR-035 — agent-authored Report Studio report / dashboard.
+    "agent_create_report": "Rapor (AI önerisi)",
+    "agent_create_dashboard": "Pano (AI önerisi)",
 }
 
 
@@ -141,10 +144,15 @@ def approve_request(
 
             get_company_project(db, payload.project_id, user)  # 404s if not in company
             req.project_id = payload.project_id
-    approvals_service.apply_request(db, req)
+    created = approvals_service.apply_request(db, req)
     approvals_service.mark_decided(req, user_id=user.id, status="approved")
     db.commit()
-    return success({"id": str(req_id), "message": "Onaylandı"})
+    resp = {"id": str(req_id), "message": "Onaylandı"}
+    # CR-035: a report/dashboard proposal creates a row on approval — surface its
+    # {table, id} so the chat card can navigate straight to the new report/pano.
+    if created:
+        resp["created"] = created
+    return success(resp)
 
 
 @router.put("/approvals/request/{req_id}/reject")
