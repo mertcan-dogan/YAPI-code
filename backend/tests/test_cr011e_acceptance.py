@@ -156,18 +156,31 @@ def test_full_loop_all_action_tools_propose_zero_mutations(db, seed, monkeypatch
                 _tool("propose_flag_invoice",
                       {"target_kind": "client_invoice", "target_id": str(inv.id), "reason": "yüksek"}, "t1"),
                 _tool("propose_followup_task", {"title": "Teklif"}, "t2"),
+                # CR-035 — authoring a report/dashboard goes through the same propose path.
+                _tool("propose_report",
+                      {"title": "Kârlılık", "spec": {"metrics": ["cost_try"],
+                       "dimensions": ["project"], "viz": "table"}}, "t3"),
+                _tool("propose_dashboard",
+                      {"title": "Pano", "widgets": [
+                          {"id": "w1", "type": "kpi", "title": "Maliyet",
+                           "layout": {"x": 0, "y": 0, "w": 3, "h": 2},
+                           "spec": {"metrics": ["cost_try"], "viz": "kpi"}}]}, "t4"),
             ])
-        return _Resp("end_turn", [_text("Üç öneri oluşturuldu, onayınızı bekliyor.")])
+        return _Resp("end_turn", [_text("Öneriler oluşturuldu, onayınızı bekliyor.")])
 
     _patch(monkeypatch, responder)
-    out = agent_service.run_agent(db, cid, [{"role": "user", "content": "üç eylem"}], user_id=uid)
+    out = agent_service.run_agent(db, cid, [{"role": "user", "content": "beş eylem"}], user_id=uid)
 
-    # Three proposals surfaced, three pending requests, all agent-proposed.
-    assert len(out["proposed_actions"]) == 3
+    # Five proposals surfaced, five pending requests, all agent-proposed.
+    assert len(out["proposed_actions"]) == 5
     pend = db.execute(
         select(ApprovalRequest).where(ApprovalRequest.company_id == cid, ApprovalRequest.status == "pending")
     ).scalars().all()
-    assert len(pend) == 3 and all(p.proposed_by_agent for p in pend)
+    assert len(pend) == 5 and all(p.proposed_by_agent for p in pend)
+    assert {p.kind for p in pend} == {
+        "agent_reminder", "agent_flag_invoice", "agent_task",
+        "agent_create_report", "agent_create_dashboard",
+    }
     # The whole loop wrote ZERO business rows (the invariant, end-to-end §7).
     assert _business_counts(db) == before
 

@@ -174,6 +174,9 @@ TOOL_REGISTRY = {
     "get_budget_variance": (tools.get_budget_variance, {"project_id", "cost_category"}),
     "get_retention_summary": (tools.get_retention_summary, {"project_id"}),
     "get_assurance_findings": (tools.get_assurance_findings, {"project_id", "severity"}),
+    # CR-035 — read-only Report Studio catalog (valid dimension/metric ids the
+    # agent uses to build a report/dashboard spec before proposing one).
+    "studio_catalog": (tools.studio_catalog, set()),
 }
 
 # CR-011-C — ACTION tools (propose-only). Kept in a SEPARATE registry so the
@@ -184,6 +187,14 @@ ACTION_TOOL_REGISTRY = {
     "propose_flag_invoice": (actions.propose_flag_invoice,
                              {"target_kind", "target_id", "reason", "project_id"}),
     "propose_followup_task": (actions.propose_followup_task, {"title", "note", "project_id"}),
+    # CR-035 — author a Report Studio report / dashboard (propose-only). The Spec /
+    # widget payload is validated against the catalog before the pending request is
+    # opened; the row is created only on human approval (CR-011 invariant).
+    "propose_report": (actions.propose_report,
+                       {"title", "spec", "visibility", "labels", "project_id"}),
+    "propose_dashboard": (actions.propose_dashboard,
+                          {"title", "widgets", "date_range", "comparison", "filters",
+                           "visibility", "labels", "project_id"}),
 }
 ACTION_TOOL_NAMES = set(ACTION_TOOL_REGISTRY)
 
@@ -203,6 +214,57 @@ def build_tool_schemas() -> list[dict]:
             "Göreli dönem (sunucu birebir ISO tarihlere çevirir). Açık tarih "
             "verilmediyse göreli dönemler için bunu kullan; tarihi kendin hesaplama."
         ),
+    }
+    # CR-035 — the CR-032 Spec shape the agent emits for propose_report and for each
+    # data widget of propose_dashboard. metrics[] is required; metrics/dimensions/
+    # filter-fields MUST be ids from studio_catalog (validate_spec rejects others).
+    spec_obj = {
+        "type": "object",
+        "description": (
+            "CR-032 Rapor Spec'i. metrics[] ZORUNLU. metrics, dimensions ve "
+            "filtre alanları SADECE studio_catalog'daki kimliklerden olmalı "
+            "('coming_soon' olanları kullanma). viz: line|area|bar|kpi|table."
+        ),
+        "properties": {
+            "metrics": {"type": "array", "items": {"type": "string"},
+                        "description": "Katalog metrik kimlikleri (en az bir; ZORUNLU)."},
+            "dimensions": {"type": "array", "items": {"type": "string"},
+                           "description": "Katalog boyut kimlikleri (kırılım)."},
+            "viz": {"type": "string", "enum": ["line", "area", "bar", "kpi", "table"]},
+            "filters": {"type": "array", "items": {
+                "type": "object", "properties": {
+                    "field": {"type": "string", "description": "Katalog boyut kimliği"},
+                    "op": {"type": "string", "enum": ["=", "!=", "in", "not_in"]},
+                    "value": {},
+                }, "required": ["field", "op", "value"]}},
+            "date_range": {"type": "object",
+                           "description": "{preset} (örn. bu_yil) veya {from,to} ISO tarih."},
+            "sort": {"type": "object", "description": "{by: metrik/boyut kimliği, dir: asc|desc}"},
+            "limit": {"type": "integer"},
+            "basis": {"type": "object",
+                      "description": "Opsiyonel {cost, currency, financing, vat} hesap bazı."},
+        },
+        "required": ["metrics"],
+    }
+    widget_obj = {
+        "type": "object",
+        "description": (
+            "Pano widget'ı. Veri widget'ı (kpi/chart/table) bir 'spec' içermeli; "
+            "'text' widget'ı 'content' içermeli. Her widget benzersiz bir 'id' ve "
+            "bir 'layout' (x,y,w,h grid hücresi) almalı."
+        ),
+        "properties": {
+            "id": {"type": "string", "description": "Pano içinde benzersiz"},
+            "type": {"type": "string", "enum": ["kpi", "chart", "table", "text"]},
+            "title": {"type": "string"},
+            "layout": {"type": "object", "properties": {
+                "x": {"type": "integer"}, "y": {"type": "integer"},
+                "w": {"type": "integer"}, "h": {"type": "integer"},
+            }, "required": ["x", "y", "w", "h"]},
+            "spec": spec_obj,
+            "content": {"type": "string", "description": "Yalnızca type='text' için"},
+        },
+        "required": ["id", "type", "title", "layout"],
     }
 
     return [
@@ -317,6 +379,17 @@ def build_tool_schemas() -> list[dict]:
                 "severity": {"type": "string", "enum": ["high", "medium", "low"]},
             }},
         },
+        {
+            "name": "studio_catalog",
+            "description": (
+                "Rapor Stüdyosu kataloğu: rapor/pano önermek için kullanabileceğin "
+                "GEÇERLİ boyut (dimension) ve metrik kimliklerini etiketleriyle "
+                "döndürür. propose_report / propose_dashboard çağırmadan ÖNCE bunu "
+                "çağır; spec'teki metrics/dimensions yalnızca buradaki id'ler olmalı. "
+                "status='coming_soon' olanları KULLANMA."
+            ),
+            "input_schema": {"type": "object", "properties": {}},
+        },
         # CR-011-C — ACTION tools. These do NOT change anything directly; each one
         # creates a PENDING approval request that a human must approve. Use them
         # ONLY when the user explicitly asks for an action, and always say it is a
@@ -368,6 +441,42 @@ def build_tool_schemas() -> list[dict]:
             }, "required": ["title"]},
         },
         {
+            "name": "propose_report",
+            "description": (
+                "ÖNERİ (doğrudan yazmaz): kullanıcının istediği bir Rapor Stüdyosu "
+                "raporu OLUŞTURMAYI önerir — onay bekleyen bir talep açar. Kullanıcı "
+                "bir rapor isterse ('… raporu yap/oluştur', 'şunu gösteren bir rapor') "
+                "MUTLAKA bunu çağır; serbest metinle geçme. ÖNCE studio_catalog ile "
+                "geçerli metrik/boyut kimliklerini al, spec'i o kimliklerle kur "
+                "(metrics ZORUNLU). Title açıklayıcı ve Türkçe olsun."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "title": {"type": "string"},
+                "spec": spec_obj,
+                "visibility": {"type": "string", "enum": ["private", "company"]},
+                "project_id": pid,
+            }, "required": ["title", "spec"]},
+        },
+        {
+            "name": "propose_dashboard",
+            "description": (
+                "ÖNERİ (doğrudan yazmaz): birden çok widget içeren bir Rapor Stüdyosu "
+                "panosu OLUŞTURMAYI önerir — onay bekleyen bir talep açar. Kullanıcı "
+                "bir pano/gösterge paneli isterse ('… panosu yap', 'bir pano oluştur') "
+                "bunu çağır. ÖNCE studio_catalog ile kimlikleri al. Her veri widget'ı "
+                "(kpi/chart/table) bir spec içermeli; her widget benzersiz bir id ve "
+                "bir layout (x,y,w,h) almalı."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "title": {"type": "string"},
+                "widgets": {"type": "array", "items": widget_obj},
+                "date_range": {"type": "object",
+                               "description": "Pano geneli tarih: {preset} veya {from,to}."},
+                "visibility": {"type": "string", "enum": ["private", "company"]},
+                "project_id": pid,
+            }, "required": ["title", "widgets"]},
+        },
+        {
             "name": "create_chart",
             "description": (
                 "Az önce hesapladığın herhangi bir zaman serisini (aylık kırılım) veya "
@@ -399,7 +508,9 @@ def build_tool_schemas() -> list[dict]:
 # domain preamble + a prioritized read-only tool subset + a cheap pre-loaded
 # headline figure. null / "genel" = today's general agent, unchanged.
 # --------------------------------------------------------------------------- #
-ALWAYS_SCOPED_TOOLS = {"create_chart", "list_projects"}
+# CR-035: studio_catalog is always available so the agent can author a report/pano
+# from any scope (the propose_* action tools are already always-on via ACTION_TOOL_NAMES).
+ALWAYS_SCOPED_TOOLS = {"create_chart", "list_projects", "studio_catalog"}
 
 SCOPES: dict[str, dict] = {
     "gider": {
@@ -719,6 +830,10 @@ _STEP_LABELS = {
     "propose_reminder": "Hatırlatıcı önerisi hazırlanıyor…",
     "propose_flag_invoice": "İnceleme önerisi hazırlanıyor…",
     "propose_followup_task": "Görev önerisi hazırlanıyor…",
+    # CR-035 — Report Studio AI authoring.
+    "studio_catalog": "Stüdyo kataloğu inceleniyor…",
+    "propose_report": "Rapor önerisi hazırlanıyor…",
+    "propose_dashboard": "Pano önerisi hazırlanıyor…",
 }
 
 
@@ -729,7 +844,8 @@ def _step_label(name: str) -> str:
 # CR-011-C — propose-only action guidance (always present; the agent has action
 # tools in every scope). Reinforces the §0.2.1 invariant in the model's own words.
 _ACTION_GUIDANCE = (
-    "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, propose_followup_task): "
+    "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, propose_followup_task, "
+    "propose_report, propose_dashboard): "
     "Bu araçlar HİÇBİR ŞEYİ DOĞRUDAN DEĞİŞTİRMEZ — yalnızca ONAY BEKLEYEN bir öneri "
     "oluştururlar; değişiklik ancak kullanıcı /approvals sayfasından onaylarsa uygulanır.\n"
     "NE ZAMAN ÇAĞIRMALISIN (ZORUNLU): Kullanıcı somut bir EYLEM yapılmasını isterse, "
@@ -742,6 +858,13 @@ _ACTION_GUIDANCE = (
     "propose_flag_invoice (target_kind + target_id + reason). target_id'yi query_* / "
     "get_assurance_findings sonuçlarından al.\n"
     "- 'takip görevi oluştur', 'görev/yapılacak ekle' → propose_followup_task (somut title).\n"
+    "- 'rapor yap/oluştur', 'şunu gösteren bir rapor', 'X'e göre Y raporu çıkar' → "
+    "propose_report. ÖNCE studio_catalog'u çağırıp geçerli metrik/boyut kimliklerini "
+    "al; spec'i SADECE o kimliklerle kur (metrics ZORUNLU; kırılım için dimensions; "
+    "uygun viz: line/area/bar/kpi/table).\n"
+    "- 'pano/gösterge paneli yap/oluştur', 'şunları tek ekranda gösteren bir pano' → "
+    "propose_dashboard. ÖNCE studio_catalog; her veri widget'ı (kpi/chart/table) bir "
+    "spec, benzersiz bir id ve bir layout (x,y,w,h) almalı.\n"
     "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
     "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
     "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "
@@ -752,16 +875,20 @@ _ACTION_GUIDANCE = (
 
 
 def _build_system(today: date | None, project_id, scope: str | None = None,
-                  scope_context: str = "") -> str:
+                  scope_context: str = "", extra_context: str = "") -> str:
     """Assemble the system prompt: base + server-date rules + action guidance +
     optional domain `scope` preamble + cheap pre-loaded scope context + active
-    project (§2.1, §3.1)."""
+    project (§2.1, §3.1) + optional CR-035 grounding (e.g. "Bu rapor hakkında sor")."""
     system = SYSTEM_PROMPT + _date_guidance(today or date.today()) + _ACTION_GUIDANCE
     pre = _scope_preamble(scope)
     if pre:
         system += "\n\nALAN ODAĞI: " + pre
     if scope_context:
         system += "\n\nALAN BAĞLAMI (ön-yükleme): " + scope_context
+    if extra_context:
+        # CR-035 — grounded read-only Q&A over a specific saved report (spec + run
+        # result). Read-only: it adds context, never a write path.
+        system += "\n\nRAPOR BAĞLAMI (salt-okunur): " + extra_context
     if project_id is not None:
         system += (
             f"\n\nAKTİF PROJE BAĞLAMI: Kullanıcı şu an proje {project_id} bağlamında "
@@ -771,7 +898,8 @@ def _build_system(today: date | None, project_id, scope: str | None = None,
 
 
 def _agent_events(db: Session, company_id, messages: list[dict], project_id, user_id,
-                  today: date, stream: bool, scope: str | None = None):
+                  today: date, stream: bool, scope: str | None = None,
+                  extra_context: str = ""):
     """Shared tool-use loop, expressed as an event generator (CR-011-A §1.1).
 
     Yields ``{"type": "delta", "text": ...}`` for live answer tokens (streaming
@@ -787,7 +915,7 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
     client = ai_service._client()  # raises AIUnavailable when no key/SDK
     tool_schemas = scoped_tool_schemas(scope)
     scope_ctx = _scope_context(db, company_id, scope, today)
-    system = _build_system(today, project_id, scope, scope_ctx)
+    system = _build_system(today, project_id, scope, scope_ctx, extra_context)
 
     convo: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     tools_used: list[str] = []
@@ -1037,7 +1165,8 @@ def _stream_call(client, call_kw):
 
 
 def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None,
-              today: date | None = None, scope: str | None = None) -> dict:
+              today: date | None = None, scope: str | None = None,
+              extra_context: str = "") -> dict:
     """Execute the tool-use loop (non-stream) and return the structured response
     (§3.1) — the long-standing entry point, unchanged for callers/tests.
 
@@ -1055,20 +1184,24 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
     a pre-loaded headline figure. None / unknown = the general agent."""
     final = None
     for ev in _agent_events(db, company_id, messages, project_id, user_id,
-                            today or date.today(), stream=False, scope=scope):
+                            today or date.today(), stream=False, scope=scope,
+                            extra_context=extra_context):
         if ev.get("type") == "final":
             final = ev["data"]
     return final if final is not None else degraded_response()
 
 
 def run_agent_stream(db: Session, company_id, messages: list[dict], project_id=None,
-                     user_id=None, today: date | None = None, scope: str | None = None):
+                     user_id=None, today: date | None = None, scope: str | None = None,
+                     extra_context: str = ""):
     """Streaming variant of run_agent (CR-011-A §1.1): yields delta/step/final
     events for the SSE endpoint. The final event carries the identical structured
     payload as run_agent (charts/citations/log), finalized at stream end.
-    ``scope`` (CR-011-B) narrows the agent to a domain as in run_agent."""
+    ``scope`` (CR-011-B) narrows the agent to a domain as in run_agent.
+    ``extra_context`` (CR-035) grounds the answer in a specific saved report."""
     yield from _agent_events(db, company_id, messages, project_id, user_id,
-                             today or date.today(), stream=True, scope=scope)
+                             today or date.today(), stream=True, scope=scope,
+                             extra_context=extra_context)
 
 
 def sse_event(ev: dict) -> str:

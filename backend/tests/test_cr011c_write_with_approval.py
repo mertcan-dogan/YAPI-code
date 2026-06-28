@@ -72,9 +72,16 @@ def test_action_tools_create_only_pending_requests_zero_mutations(db, seed):
     r2 = actions.propose_flag_invoice(db, cid, uid, target_kind="client_invoice",
                                       target_id=str(inv.id), reason="Tutar yüksek")
     r3 = actions.propose_followup_task(db, cid, uid, title="Müşteriyi ara")
+    # CR-035 — authoring a report/dashboard is propose-only too.
+    r4 = actions.propose_report(db, cid, uid, title="Proje Kârlılığı",
+                                spec={"metrics": ["cost_try"], "dimensions": ["project"], "viz": "table"})
+    r5 = actions.propose_dashboard(db, cid, uid, title="Özet Pano", widgets=[
+        {"id": "w1", "type": "kpi", "title": "Maliyet", "layout": {"x": 0, "y": 0, "w": 3, "h": 2},
+         "spec": {"metrics": ["cost_try"], "viz": "kpi"}},
+    ])
 
     # Every action returned a pending proposal (never "done").
-    for r in (r1, r2, r3):
+    for r in (r1, r2, r3, r4, r5):
         assert r["status"] == "pending"
         assert r["proposed_action"]["status"] == "pending"
         assert "onayınızı bekliyor" in r["message"]
@@ -82,11 +89,14 @@ def test_action_tools_create_only_pending_requests_zero_mutations(db, seed):
     # ZERO direct mutations to any business table.
     assert _business_counts(db) == before
 
-    # Exactly three PENDING approval requests, all tagged proposed_by_agent.
+    # Exactly five PENDING approval requests, all tagged proposed_by_agent.
     pend = _pending_requests(db, cid)
-    assert len(pend) == 3
+    assert len(pend) == 5
     assert all(p.proposed_by_agent for p in pend)
-    assert {p.kind for p in pend} == {"agent_reminder", "agent_flag_invoice", "agent_task"}
+    assert {p.kind for p in pend} == {
+        "agent_reminder", "agent_flag_invoice", "agent_task",
+        "agent_create_report", "agent_create_dashboard",
+    }
 
 
 def test_registries_are_disjoint_actions_not_in_readonly():
@@ -94,7 +104,9 @@ def test_registries_are_disjoint_actions_not_in_readonly():
     guarantee on TOOL_REGISTRY is untouched."""
     assert agent_service.ACTION_TOOL_NAMES.isdisjoint(set(agent_service.TOOL_REGISTRY))
     assert agent_service.ACTION_TOOL_NAMES == {
-        "propose_reminder", "propose_flag_invoice", "propose_followup_task"
+        "propose_reminder", "propose_flag_invoice", "propose_followup_task",
+        # CR-035 — Report Studio AI authoring.
+        "propose_report", "propose_dashboard",
     }
 
 

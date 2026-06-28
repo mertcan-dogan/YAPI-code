@@ -32,6 +32,7 @@ from app.schemas.dashboard import (
     DashboardUpdate,
 )
 from app.schemas.report import ReportCreate, ReportListItem, ReportOut, ReportUpdate
+from app.services.studio import creators
 from app.services.studio.catalog import get_catalog_public, validate_spec
 from app.services.studio.engine import run_spec
 from app.services.studio.export import studio_export, studio_export_dashboard
@@ -142,9 +143,11 @@ def list_reports(user: CurrentUser, q: str | None = None, db: Session = Depends(
 @router.post("/studio/reports")
 def create_report(body: ReportCreate, user: CurrentUser, db: Session = Depends(get_db)):
     """Save a new report. The spec is validated against the catalog (422 if bad).
-    company_id/owner_id/created_by come from the authenticated user."""
-    validate_spec(body.spec)
-    report = Report(
+    company_id/owner_id/created_by come from the authenticated user. CR-035: the
+    create logic is factored into ``creators.create_report`` so the agent-proposal
+    applier shares the exact same path."""
+    report = creators.create_report(
+        db,
         company_id=user.company_id,
         owner_id=user.id,
         created_by=user.id,
@@ -153,7 +156,6 @@ def create_report(body: ReportCreate, user: CurrentUser, db: Session = Depends(g
         visibility=body.visibility,
         labels=body.labels,
     )
-    db.add(report)
     db.commit()
     db.refresh(report)
     return success(_report_out(report, user))
@@ -321,26 +323,12 @@ def _resolve_report_widget(db: Session, user, report_id):
 
 
 def _validate_widgets(db: Session, user, widgets) -> None:
-    """Validate a dashboard's widget array before persisting: each kpi/chart/table
-    widget's inner CR-032 spec against the catalog (422 via ``validate_spec``), each
-    report widget's ``report_id`` must reference a report the creator can view
-    (422), and widget ids must be unique within the deck (422). The envelope (one
-    payload per type) is already enforced by ``WidgetSpec``'s model_validator."""
-    seen: set[str] = set()
-    for w in widgets:
-        if w.id in seen:
-            raise APIError(422, "VALIDATION_ERROR", f"Yinelenen widget kimliği: {w.id!r}", "widgets")
-        seen.add(w.id)
-        if w.type in ("kpi", "chart", "table"):
-            validate_spec(w.spec)
-        elif w.type == "report":
-            if _resolve_report_widget(db, user, w.report_id) is None:
-                raise APIError(
-                    422,
-                    "VALIDATION_ERROR",
-                    "Rapor widget'ı görüntülenebilir bir rapora başvurmalı",
-                    "widgets",
-                )
+    """Validate a dashboard's widget array before persisting. CR-035: delegates to
+    ``creators.validate_widgets`` (the shared validator used by both this endpoint
+    and the agent-proposal applier) so the rules stay in one place — each kpi/chart/
+    table widget's inner CR-032 spec against the catalog, each report widget's
+    ``report_id`` viewable by the creator, and unique widget ids (422 on any)."""
+    creators.validate_widgets(db, user.company_id, user.id, widgets)
 
 
 def _global_merge(spec: dict, dashboard: Dashboard) -> dict:
@@ -409,21 +397,21 @@ def create_dashboard(body: DashboardCreate, user: CurrentUser, db: Session = Dep
     """Save a new dashboard. Every kpi/chart/table widget's spec is validated against
     the catalog, each report widget must reference a viewable report, and widget ids
     must be unique (422 on any violation). company_id/owner_id/created_by come from
-    the authenticated user — never the body."""
-    _validate_widgets(db, user, body.widgets)
-    dashboard = Dashboard(
+    the authenticated user — never the body. CR-035: the create logic is factored
+    into ``creators.create_dashboard`` so the agent-proposal applier shares it."""
+    dashboard = creators.create_dashboard(
+        db,
         company_id=user.company_id,
         owner_id=user.id,
         created_by=user.id,
         title=body.title,
-        widgets=[w.model_dump(mode="json") for w in body.widgets],
+        widgets=body.widgets,
         date_range=body.date_range,
         comparison=body.comparison,
         filters=body.filters,
         visibility=body.visibility,
         labels=body.labels,
     )
-    db.add(dashboard)
     db.commit()
     db.refresh(dashboard)
     return success(_dashboard_out(dashboard, user))

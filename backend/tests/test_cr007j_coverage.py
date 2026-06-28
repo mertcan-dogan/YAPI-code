@@ -148,7 +148,8 @@ def test_tools_never_write_to_db(db, seed):
 
 def test_registry_has_no_write_capable_tool():
     """The registry exposes only the fixed read-only tools — no raw-SQL / write tool.
-    CR-011-B adds four more read-only tools; the read-only guarantee is unchanged."""
+    CR-011-B adds four more read-only tools; CR-035 adds the read-only studio_catalog
+    (catalog ids only, no data write); the read-only guarantee is unchanged."""
     names = set(agent_service.TOOL_REGISTRY)
     assert names == {
         "list_projects", "get_project_financials", "query_cost_entries",
@@ -157,6 +158,8 @@ def test_registry_has_no_write_capable_tool():
         # CR-011-B
         "get_equipment_utilisation", "get_budget_variance",
         "get_retention_summary", "get_assurance_findings",
+        # CR-035 — read-only Report Studio catalog (valid dimension/metric ids).
+        "studio_catalog",
     }
     for forbidden in ("run_sql", "execute_sql", "raw_sql", "insert", "update", "delete"):
         assert forbidden not in names
