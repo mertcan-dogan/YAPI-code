@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/layout/AppLayout";
 import { DataTable, type Column } from "@/components/DataTable";
-import { Avatar, Badge, Button, Menu, MenuItem, Tabs } from "@/components/ui";
+import { Avatar, Badge, Button, MenuItem, RowMenu, Tabs } from "@/components/ui";
 import { studio } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
@@ -168,7 +168,7 @@ export default function StudioReportsPage() {
       render: (row) => (
         // Stop row-click navigation from firing when interacting with the menu.
         <div onClick={(e) => e.stopPropagation()}>
-          <Menu
+          <RowMenu
             align="right"
             triggerLabel={`Rapor işlemleri: ${row.title}`}
             trigger={<MoreHorizontal className="h-[18px] w-[18px] text-text-muted" />}
@@ -209,7 +209,7 @@ export default function StudioReportsPage() {
                 )}
               </>
             )}
-          </Menu>
+          </RowMenu>
         </div>
       ),
     },

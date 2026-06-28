@@ -1,5 +1,6 @@
 import { cn } from "@/lib/cn";
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Info, Loader2, X } from "lucide-react";
 
 // --- Button ---
@@ -419,6 +420,100 @@ export function MenuItem({
       {Icon && <Icon className="h-4 w-4 shrink-0 text-text-muted" />}
       {children}
     </button>
+  );
+}
+
+// --- RowMenu (CR-034.1) — like Menu, but the dropdown panel is rendered through a
+// React portal to document.body and positioned (position:fixed) at the trigger.
+// This keeps the per-row "…" menu from being clipped by a table/list's overflow
+// container (the shared Menu uses absolute positioning inside the row and gets cut
+// off). Closes on outside mousedown / Escape / scroll / resize. Reuses MenuItem.
+// The panel and trigger are tracked by SEPARATE refs because they no longer share
+// a DOM ancestor — the outside-click check must treat BOTH as "inside" or a
+// mousedown on an item would close the menu before its click lands. ---
+export function RowMenu({
+  trigger,
+  triggerLabel,
+  align = "right",
+  children,
+}: {
+  trigger: React.ReactNode;
+  triggerLabel?: string; // aria-label for the icon-only trigger
+  align?: "left" | "right";
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState<{ top: number; left?: number; right?: number } | null>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+
+  const place = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos(
+      align === "right"
+        ? { top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) }
+        : { top: r.bottom + 4, left: r.left }
+    );
+  };
+  const close = () => setOpen(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (triggerRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onShift = () => setOpen(false); // stale position on scroll/resize → just close
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onShift, true); // capture: any scrollable ancestor
+    window.addEventListener("resize", onShift);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onShift, true);
+      window.removeEventListener("resize", onShift);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={triggerLabel}
+        onClick={() => {
+          if (open) {
+            setOpen(false);
+          } else {
+            place();
+            setOpen(true);
+          }
+        }}
+        className="focus-ring"
+      >
+        {trigger}
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            role="menu"
+            style={{ position: "fixed", top: pos.top, left: pos.left, right: pos.right }}
+            className="z-[60] min-w-[180px] overflow-hidden rounded-control border border-border bg-surface py-1 shadow-pop animate-fade-in"
+          >
+            {typeof children === "function" ? children(close) : children}
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 

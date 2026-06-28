@@ -6,7 +6,7 @@
 // error states are handled by DataTable (a failed fetch never reads as empty).
 import { PageHeader } from "@/components/layout/AppLayout";
 import { DataTable, type Column } from "@/components/DataTable";
-import { Avatar, Badge, Menu, MenuItem, Tabs, Button } from "@/components/ui";
+import { Avatar, Badge, MenuItem, RowMenu, Tabs, Button } from "@/components/ui";
 import { studio } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
@@ -166,7 +166,7 @@ export default function StudioDashboardsPage() {
       render: (row) => (
         // Stop row-click navigation from firing when interacting with the menu.
         <div onClick={(e) => e.stopPropagation()}>
-          <Menu
+          <RowMenu
             align="right"
             triggerLabel={`Pano işlemleri: ${row.title}`}
             trigger={<MoreHorizontal className="h-[18px] w-[18px] text-text-muted" />}
@@ -205,7 +205,7 @@ export default function StudioDashboardsPage() {
                 )}
               </>
             )}
-          </Menu>
+          </RowMenu>
         </div>
       ),
     },
