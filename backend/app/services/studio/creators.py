@@ -27,6 +27,15 @@ from app.responses import APIError
 from app.schemas.dashboard import WidgetSpec
 from app.services.studio.catalog import validate_spec
 
+# Defense-in-depth caps / normalisation shared by both the endpoint and the agent
+# applier (a future payload source can't store junk or a pathological deck).
+MAX_DASHBOARD_WIDGETS = 50
+_VALID_VISIBILITY = ("private", "company")
+
+
+def _clamp_visibility(value) -> str:
+    return value if value in _VALID_VISIBILITY else "private"
+
 
 def report_viewable_select(company_id, user_id):
     """Reports ``user_id`` may VIEW within ``company_id``: own (any visibility) +
@@ -57,6 +66,9 @@ def validate_widgets(db: Session, company_id, user_id, widgets) -> list[WidgetSp
     catalog + each report widget's ``report_id`` viewable by the creator + unique
     widget ids. Accepts dicts or ``WidgetSpec`` objects; returns the normalised
     ``WidgetSpec`` list. Raises ``APIError(422)`` on any violation."""
+    if widgets and len(widgets) > MAX_DASHBOARD_WIDGETS:
+        raise APIError(422, "VALIDATION_ERROR",
+                       f"Bir panoda en fazla {MAX_DASHBOARD_WIDGETS} widget olabilir", "widgets")
     seen: set[str] = set()
     normalised: list[WidgetSpec] = []
     for raw in widgets or []:
@@ -95,7 +107,7 @@ def create_report(
         created_by=created_by,
         title=title,
         spec=spec,
-        visibility=visibility,
+        visibility=_clamp_visibility(visibility),
         labels=labels,
     )
     db.add(report)
@@ -122,7 +134,7 @@ def create_dashboard(
         date_range=date_range,
         comparison=comparison,
         filters=filters,
-        visibility=visibility,
+        visibility=_clamp_visibility(visibility),
         labels=labels,
     )
     db.add(dashboard)

@@ -19,6 +19,7 @@ from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
 from app.models.dashboard import Dashboard
 from app.models.report import Report
+from app.services import agent as agent_service
 from app.services import agent_actions as actions
 from app.services import ai as ai_service
 from app.services import approvals as approvals_service
@@ -126,6 +127,40 @@ def test_propose_report_requires_title(db, seed):
     cid, uid, _ = _ids(seed)
     with pytest.raises(actions.ActionError):
         actions.propose_report(db, cid, uid, title="   ", spec=SPEC_TABLE)
+
+
+def test_invalid_spec_through_agent_loop_is_recoverable(db, seed, monkeypatch):
+    """An out-of-catalog spec must surface as a RECOVERABLE tool error inside the
+    agent loop (the model can correct), NOT a 500 — and create nothing."""
+    cid, uid, _ = _ids(seed)
+
+    def responder(call, kw):
+        if call == 0:
+            return _Resp("tool_use", [_Block(type="tool_use", name="propose_report",
+                         input={"title": "X", "spec": {"metrics": ["nope_metric"]}}, id="t0")])
+        return _Resp("end_turn", [_Block(type="text", text="Spec geçersizdi, düzeltmem gerek.")])
+
+    monkeypatch.setattr(ai_service, "_client", lambda: _Client(responder))
+    out = agent_service.run_agent(db, cid, [{"role": "user", "content": "rapor yap"}], user_id=uid)
+
+    # The loop recovered (no exception) and still produced an answer.
+    assert out["answer_markdown"]
+    assert "propose_report" in out["tools_used"]
+    # The invalid spec created neither a pending request nor a report.
+    assert _pending(db, cid, "agent_create_report") == []
+    assert _counts(db)["reports"] == 0
+
+
+def test_dashboard_widget_cap_rejected_no_request(db, seed):
+    cid, uid, _ = _ids(seed)
+    too_many = [
+        {"id": f"w{i}", "type": "kpi", "title": f"K{i}",
+         "layout": {"x": 0, "y": i, "w": 3, "h": 2}, "spec": dict(SPEC_KPI)}
+        for i in range(creators.MAX_DASHBOARD_WIDGETS + 1)
+    ]
+    with pytest.raises(actions.ActionError):
+        actions.propose_dashboard(db, cid, uid, title="Çok büyük", widgets=too_many)
+    assert _pending(db, cid, "agent_create_dashboard") == []
 
 
 # --------------------------------------------------------------------------- #

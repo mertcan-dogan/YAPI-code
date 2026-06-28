@@ -16,15 +16,20 @@ from app.models.approval_request import ApprovalRequest
 from app.models.budget_line_item import BudgetLineItem
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.models.dashboard import Dashboard
 from app.models.notification import Notification
+from app.models.report import Report
 from app.models.subcontractor import Subcontractor
 from app.services import agent as agent_service
 from app.services import agent_actions as actions
 from app.services import ai as ai_service
 from app.services import approvals as approvals_service
 
-# Business tables an action tool must NEVER mutate directly.
-BUSINESS_MODELS = [Notification, AIAlert, CostEntry, ClientInvoice, Subcontractor, BudgetLineItem]
+# Business tables an action tool must NEVER mutate directly. CR-035: Report/Dashboard
+# are included too — authoring a report/pano is propose-only, so a propose call must
+# leave these counts unchanged (the row appears only on approval).
+BUSINESS_MODELS = [Notification, AIAlert, CostEntry, ClientInvoice, Subcontractor,
+                   BudgetLineItem, Report, Dashboard]
 
 
 def _ids(seed, label="a"):

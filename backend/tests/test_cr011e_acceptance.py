@@ -16,14 +16,18 @@ from app.models.approval_request import ApprovalRequest
 from app.models.budget_line_item import BudgetLineItem
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.models.dashboard import Dashboard
 from app.models.notification import Notification
+from app.models.report import Report
 from app.models.subcontractor import Subcontractor
 from app.services import agent as agent_service
 from app.services import agent_actions as actions
 from app.services import ai as ai_service
 from app.services import approvals as approvals_service
 
-BUSINESS_MODELS = [Notification, AIAlert, CostEntry, ClientInvoice, Subcontractor, BudgetLineItem]
+# CR-035: Report/Dashboard included — authoring is propose-only (zero direct write).
+BUSINESS_MODELS = [Notification, AIAlert, CostEntry, ClientInvoice, Subcontractor,
+                   BudgetLineItem, Report, Dashboard]
 
 
 # --------------------------------------------------------------------------- #
