@@ -1,5 +1,6 @@
 """Yapı FastAPI application entrypoint (Section 2.5, 8.1, 13.2)."""
 import logging
+import os
 from contextlib import asynccontextmanager
 
 # Verify TLS against the OS trust store (Windows/macOS/Linux system CAs) rather
@@ -147,6 +148,10 @@ def health():
     # mistaken for a schema mismatch. The real mismatch signal is the boot-time
     # ERROR log + Sentry alert from verify_migration_head_on_boot().
     expected_head = get_expected_head()
+    # CR-037: surface the deployed git SHA so every deploy — including no-migration
+    # ones — is externally confirmable from /health. Railway sets this per build;
+    # falls back to "dev" locally / when unset.
+    version = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "dev"
     try:
         # CR-040: use the escalated (RLS-bypassing) session for the alembic_version
         # read so the NOBYPASSRLS app role never trips it. Falls back to the normal
@@ -160,6 +165,7 @@ def health():
             db.close()
         return {
             "status": "ok",
+            "version": version,
             "db_migration_ok": status.ok,
             "db_revision": status.current,
             "expected_revision": status.expected,
@@ -170,6 +176,7 @@ def health():
         )
         return {
             "status": "ok",
+            "version": version,
             "db_migration_ok": None,
             "db_revision": None,
             "expected_revision": expected_head,
