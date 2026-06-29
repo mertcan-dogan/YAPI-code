@@ -54,6 +54,12 @@ class AgentRequest(BaseModel):
     # The server loads the report (company-scoped; 404 if not viewable), runs its
     # spec for fresh totals/rows, and injects that as read-only system context.
     report_id: uuid.UUID | None = None
+    # CR-039 — the active authoring DRAFT the user is refining ({kind, spec|widgets,
+    # title}). Threaded back so the agent edits the real spec instead of rebuilding
+    # from prose. Request-only context (mirrors scope/report_id) — never persisted,
+    # no schema/migration. The agent still writes nothing; creation is the user's
+    # explicit OLUŞTUR click.
+    draft: dict | None = None
 
 
 def _report_grounding(db: Session, user, report_id: uuid.UUID) -> str:
@@ -172,6 +178,7 @@ def agent(
 
         company_id, uid, pid = user.company_id, user.id, payload.project_id
         scope = payload.scope
+        draft = payload.draft  # CR-039 — active authoring draft (refine context)
 
         # ASYNC generator (CR-011 streaming fix): an async iterator is driven in
         # the event loop, NOT via Starlette's iterate_in_threadpool — so it never
@@ -182,7 +189,7 @@ def agent(
         async def event_stream():
             gen = agent_service.run_agent_stream(
                 db, company_id, messages, project_id=pid, user_id=uid, scope=scope,
-                extra_context=extra_context,
+                extra_context=extra_context, draft=draft,
             )
             sentinel = object()
 
@@ -216,6 +223,7 @@ def agent(
         result = agent_service.run_agent(
             db, user.company_id, messages, project_id=payload.project_id,
             user_id=user.id, scope=payload.scope, extra_context=extra_context,
+            draft=payload.draft,
         )
     except ai_service.AIUnavailable:
         return success(agent_service.degraded_response())

@@ -2,11 +2,12 @@ import { DataTable, type Column } from "@/components/DataTable";
 import { KPICard } from "@/components/KPICard";
 import { StudioChart, formatMetricValue } from "@/components/StudioChart";
 import { apiPut, studio } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { ProposedAction } from "@/types/agent";
 import type { CatalogDimension, CatalogMetric, RunResult, RunRow, StudioSpec } from "@/types/studio";
-import { Check, Pencil, Sparkles, X } from "lucide-react";
+import { ArrowRight, Check, Pencil, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -58,7 +59,15 @@ function Chip({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function ProposedActionCard({ action }: { action: ProposedAction }) {
+export function ProposedActionCard({
+  action,
+  onResolve,
+}: {
+  action: ProposedAction;
+  // CR-039 — fired when a DRAFT is created (Oluştur) or dismissed (İptal/Düzenle)
+  // so the page stops threading it as the active refine draft.
+  onResolve?: (action: ProposedAction) => void;
+}) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const isDirector = user?.role === "director";
@@ -66,17 +75,29 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
   const [busy, setBusy] = useState(false);
   const [showReject, setShowReject] = useState(false);
   const [reason, setReason] = useState("");
+  // CR-039 — the visibility the user picks before creating (default Özel/private).
+  const [vis, setVis] = useState<"private" | "company">(action.visibility === "company" ? "company" : "private");
+  // CR-039 — after Oluştur we STAY in chat and offer an "Aç" button to this target
+  // (rather than auto-navigating), so the user can keep iterating in the thread.
+  const [createdTarget, setCreatedTarget] = useState<string | null>(null);
 
+  // CR-035 legacy approval kinds (dormant) + CR-039 authoring DRAFT kinds.
   const isReport = action.kind === "agent_create_report";
   const isDashboard = action.kind === "agent_create_dashboard";
-  const isStudio = isReport || isDashboard;
+  const isDraftReport = action.kind === "draft_report";
+  const isDraftDashboard = action.kind === "draft_dashboard";
+  const isDraft = isDraftReport || isDraftDashboard;
+  const isLegacyStudio = isReport || isDashboard;
+  const isReportKind = isReport || isDraftReport;
+  const isDashboardKind = isDashboard || isDraftDashboard;
+  const isAuthoring = isReportKind || isDashboardKind;
 
   // Catalog (cached) — used ONLY for the studio kinds to label dimension/metric
   // ids. Falls back to raw ids if it can't load (ids are acceptable per CR-035).
   const [metricById, setMetricById] = useState<Map<string, CatalogMetric>>(new Map());
   const [dimById, setDimById] = useState<Map<string, CatalogDimension>>(new Map());
   useEffect(() => {
-    if (!isStudio) return;
+    if (!isAuthoring) return;
     let alive = true;
     studio
       .catalog()
@@ -91,21 +112,21 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
     return () => {
       alive = false;
     };
-  }, [isStudio]);
+  }, [isAuthoring]);
 
   const labelOf = (id: string) => metricById.get(id)?.label ?? dimById.get(id)?.label ?? id;
 
   // The spec we live-preview: the report's own spec, or a dashboard's first data widget.
   const previewSpec: StudioSpec | null = useMemo(() => {
-    if (isReport) return (action.spec as StudioSpec) ?? null;
-    if (isDashboard) {
+    if (isReportKind) return (action.spec as StudioSpec) ?? null;
+    if (isDashboardKind) {
       const specs = (action.widgets ?? [])
         .map((w: any) => w?.spec as StudioSpec | undefined)
         .filter((s): s is StudioSpec => !!s && Array.isArray(s.metrics) && s.metrics.length > 0);
       return specs[0] ?? null;
     }
     return null;
-  }, [isReport, isDashboard, action.spec, action.widgets]);
+  }, [isReportKind, isDashboardKind, action.spec, action.widgets]);
 
   const approve = async () => {
     if (busy) return;
@@ -117,7 +138,7 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
       );
       setState("approved");
       const created = res?.created;
-      if (isStudio && created?.id) {
+      if (isLegacyStudio && created?.id) {
         const isDash = created.table === "dashboards";
         toast.success(isDash ? "Pano oluşturuldu." : "Rapor oluşturuldu.");
         navigate(isDash ? `/studio/dashboards/${created.id}` : `/studio/reports/${created.id}`);
@@ -133,13 +154,52 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
 
   // Düzenle — open the editor on the PROPOSED spec, UNSAVED. Nothing is created.
   const edit = () => {
-    if (isReport) {
+    if (isReportKind) {
       navigate("/studio/reports/new", { state: { draftSpec: action.spec, draftTitle: action.title } });
-    } else if (isDashboard) {
+    } else if (isDashboardKind) {
       navigate("/studio/dashboards/new", {
         state: { draftWidgets: action.widgets, draftTitle: action.title, draftDateRange: action.date_range },
       });
     }
+    onResolve?.(action);  // CR-039 — editing elsewhere ⇒ stop threading this draft
+  };
+
+  // CR-039 — OLUŞTUR: the user creates THEIR OWN report/pano via the existing
+  // create endpoint (as themselves — same authz as the manual editor). The agent
+  // wrote nothing; this explicit click is the only write. We stay in chat and show
+  // an "Aç" button rather than auto-navigating, so the user can keep iterating.
+  const create = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (isDraftReport) {
+        const r = await studio.createReport({
+          title: action.title ?? "Rapor", spec: action.spec, visibility: vis, labels: action.labels ?? null,
+        });
+        setCreatedTarget(`/studio/reports/${r.id}`);
+        toast.success("Rapor oluşturuldu.");
+      } else {
+        const r = await studio.createDashboard({
+          title: action.title ?? "Pano", widgets: action.widgets ?? [], date_range: action.date_range ?? null,
+          comparison: action.comparison ?? null, filters: action.filters ?? null, visibility: vis,
+          labels: action.labels ?? null,
+        });
+        setCreatedTarget(`/studio/dashboards/${r.id}`);
+        toast.success("Pano oluşturuldu.");
+      }
+      setState("approved");
+      onResolve?.(action);  // created ⇒ no longer the active refine draft
+    } catch (e: any) {
+      toast.error(e?.message ?? "Oluşturulamadı");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // İptal — dismiss the draft card (nothing was ever written).
+  const cancel = () => {
+    setState("rejected");
+    onResolve?.(action);
   };
 
   const reject = async () => {
@@ -207,19 +267,21 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold text-primary">
-            Yapı AI şunu öneriyor
+            {isDraft ? "Yapı AI bir taslak hazırladı" : "Yapı AI şunu öneriyor"}
             <span className="ml-1 font-normal text-text-secondary">· {action.kind_label}</span>
           </p>
-          <p className="mt-0.5 break-words text-[13px] text-text-primary">{action.description}</p>
+          {action.description && (
+            <p className="mt-0.5 break-words text-[13px] text-text-primary">{action.description}</p>
+          )}
 
-          {/* CR-035 — spec summary + live preview for the two authoring kinds. */}
-          {isStudio && (
+          {/* CR-035/CR-039 — spec summary + live preview for the authoring kinds. */}
+          {isAuthoring && (
             <>
               {action.title && <p className="mt-1 text-[13px] font-semibold text-text-primary">{action.title}</p>}
-              {isReport ? reportSummary() : dashboardSummary()}
+              {isReportKind ? reportSummary() : dashboardSummary()}
               {previewSpec ? (
                 <div className="mt-2">
-                  {isDashboard && (
+                  {isDashboardKind && (
                     <p className="mb-1 text-[11px] text-text-faint">İlk widget önizlemesi</p>
                   )}
                   <StudioRunPreview spec={previewSpec} metricById={metricById} />
@@ -231,14 +293,79 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
           )}
 
           {state === "approved" ? (
-            <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-success">
-              <Check className="h-3.5 w-3.5" />{" "}
-              {isStudio ? (isDashboard ? "Pano oluşturuldu." : "Rapor oluşturuldu.") : "Onaylandı ve uygulandı."}
-            </p>
+            isDraft ? (
+              // CR-039 — created: stay in chat, offer "Aç" (no auto-navigation).
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
+                  <Check className="h-3.5 w-3.5" /> {isDraftDashboard ? "Pano oluşturuldu." : "Rapor oluşturuldu."}
+                </span>
+                {createdTarget && (
+                  <button
+                    onClick={() => navigate(createdTarget)}
+                    className="focus-ring inline-flex items-center gap-1 rounded-control bg-brand px-3 py-1 text-xs font-medium text-white transition hover:bg-brand/90"
+                  >
+                    Aç <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-success">
+                <Check className="h-3.5 w-3.5" />{" "}
+                {isLegacyStudio ? (isDashboard ? "Pano oluşturuldu." : "Rapor oluşturuldu.") : "Onaylandı ve uygulandı."}
+              </p>
+            )
           ) : state === "rejected" ? (
             <p className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-danger">
-              <X className="h-3.5 w-3.5" /> Reddedildi.
+              <X className="h-3.5 w-3.5" /> {isDraft ? "İptal edildi." : "Reddedildi."}
             </p>
+          ) : isDraft ? (
+            // CR-039 — DRAFT actions: Oluştur / Düzenle / İptal. No director gate —
+            // any user creates THEIR OWN report/pano (same authz as the editor).
+            <div className="mt-2 space-y-2">
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-text-faint">Görünürlük:</span>
+                <div className="inline-flex overflow-hidden rounded-control border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setVis("private")}
+                    className={cn("px-2 py-0.5 transition-colors", vis === "private" ? "bg-brand text-white" : "bg-surface text-text-secondary hover:bg-surface-hover")}
+                  >
+                    Özel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVis("company")}
+                    className={cn("px-2 py-0.5 transition-colors", vis === "company" ? "bg-brand text-white" : "bg-surface text-text-secondary hover:bg-surface-hover")}
+                  >
+                    Herkes
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={create}
+                  disabled={busy}
+                  className="focus-ring rounded-control bg-brand px-3 py-1 text-xs font-medium text-white transition hover:bg-brand/90 disabled:opacity-50"
+                >
+                  Oluştur
+                </button>
+                <button
+                  onClick={edit}
+                  disabled={busy}
+                  className="focus-ring inline-flex items-center gap-1 rounded-control border border-border px-3 py-1 text-xs font-medium text-text-primary transition hover:border-brand hover:text-brand disabled:opacity-50"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Düzenle
+                </button>
+                <button
+                  onClick={cancel}
+                  disabled={busy}
+                  className="focus-ring rounded-control border border-border px-3 py-1 text-xs font-medium text-text-primary transition hover:border-danger hover:text-danger disabled:opacity-50"
+                >
+                  İptal
+                </button>
+              </div>
+              <p className="text-[11px] text-text-faint">Değiştirmek için yazmaya devam edin · oluşturunca sizin olur.</p>
+            </div>
           ) : isDirector ? (
             <>
               {!showReject ? (
@@ -250,7 +377,7 @@ export function ProposedActionCard({ action }: { action: ProposedAction }) {
                   >
                     Onayla
                   </button>
-                  {isStudio && (
+                  {isLegacyStudio && (
                     <button
                       onClick={edit}
                       disabled={busy}

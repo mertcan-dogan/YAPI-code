@@ -76,6 +76,31 @@ const ACTIVE_KEY = "yapi_ai_active";
 // A stable empty list so derived memos don't churn when there is no active chat.
 const EMPTY_MSGS: Msg[] = [];
 
+// CR-039 — the active authoring draft = the draft_* proposed-action on the most
+// recent AI message, unless the user already resolved it (created/edited/cancelled).
+// DERIVED, not stored (no second source of truth → no CR-038 render-loop risk).
+type ActiveDraft = { kind: string; title?: string; spec?: unknown; widgets?: unknown[] } | null;
+
+// Keyed by content so a resolved draft stops being threaded. Tradeoff: a later
+// BYTE-IDENTICAL re-proposal after İptal is also skipped for one turn (rare; the
+// card + Oluştur still work, only the refine-context optimization is missed).
+function draftKey(a: { kind: string; title?: string; spec?: unknown; widgets?: unknown[] }): string {
+  return `${a.kind}:${a.title ?? ""}:${JSON.stringify(a.spec ?? a.widgets ?? null)}`;
+}
+
+function deriveActiveDraft(messages: Msg[], dismissed: Set<string>): ActiveDraft {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== "ai") continue;
+    const da = (messages[i].proposed_actions ?? []).find(
+      (a) => a.kind === "draft_report" || a.kind === "draft_dashboard"
+    );
+    if (!da) return null; // the latest AI turn carried no draft → nothing active
+    if (dismissed.has(draftKey(da))) return null; // already created/edited/cancelled
+    return { kind: da.kind, title: da.title, spec: da.spec, widgets: da.widgets };
+  }
+  return null;
+}
+
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `c_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
@@ -134,6 +159,10 @@ export default function AIAssistantPage() {
   const [showAllPresets, setShowAllPresets] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
+  // CR-039 — keys of drafts the user has resolved (created/edited/cancelled), so
+  // deriveActiveDraft stops threading them. Read only inside ask() (an event
+  // handler), never in a render/effect → cannot loop.
+  const dismissedRef = useRef<Set<string>>(new Set());
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -234,11 +263,18 @@ export default function AIAssistantPage() {
     setStudioIntent(null);
   }, []);
 
+  // CR-039 — a draft was created/edited/cancelled in the card: mark it resolved so
+  // the next ask() no longer threads it as the active refine draft.
+  const handleDraftResolved = useCallback((action: ProposedAction) => {
+    dismissedRef.current.add(draftKey(action));
+  }, []);
+
   const startNewChat = useCallback(() => {
     setActiveId(null);
     setInput("");
     setActiveAgentId(DEFAULT_AGENT.id);
     clearHandoff();
+    dismissedRef.current = new Set(); // fresh session → forget resolved drafts
   }, [clearHandoff]);
 
   const pickAgent = useCallback(
@@ -247,6 +283,7 @@ export default function AIAssistantPage() {
       setActiveId(null);
       setInput("");
       clearHandoff();
+      dismissedRef.current = new Set();
     },
     [clearHandoff]
   );
@@ -295,6 +332,9 @@ export default function AIAssistantPage() {
     // first opened from a Studio hand-off (the handoff is cleared on session switch).
     const scope: AgentScope | null = existing ? existing.scope ?? null : activeAgent.scope ?? null;
     const reportId: string | null = existing ? existing.reportId ?? null : studioReportId || null;
+    // CR-039 — if the latest AI turn left an unresolved draft, thread it so the
+    // agent edits the REAL spec on this (refine) turn instead of rebuilding it.
+    const activeDraft = deriveActiveDraft(existing?.messages ?? EMPTY_MSGS, dismissedRef.current);
 
     if (existing) {
       setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: afterUser, updatedAt: now } : c)));
@@ -325,8 +365,10 @@ export default function AIAssistantPage() {
     };
 
     abortRef.current = streamAgent(
-      // CR-038: scope threaded additively. report_id + project_id stay on EVERY body.
-      { messages: toAgentMessages(afterUser), project_id: projectId || null, report_id: reportId, scope },
+      // CR-038/CR-039: scope + draft threaded additively. report_id + project_id
+      // stay on EVERY body. draft is the active refine context (null when none).
+      { messages: toAgentMessages(afterUser), project_id: projectId || null, report_id: reportId, scope,
+        draft: activeDraft },
       {
         onDelta: (text) => setLiveText((prev) => prev + text),
         onStep: (label, tool, detail) => {
@@ -572,6 +614,7 @@ export default function AIAssistantPage() {
                         onPin={m.at ? () => pinAnalysis(m, i) : undefined}
                         showDisclaimer
                         showGeneratedAtLine={!!m.at}
+                        onResolve={handleDraftResolved}
                       />
                     </div>
                   </div>

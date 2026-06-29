@@ -30,6 +30,8 @@ interface AgentMessageProps {
   onPin?: () => void;
   showDisclaimer?: boolean;
   showGeneratedAtLine?: boolean;
+  // CR-039 — relayed to draft cards so the page clears a resolved draft.
+  onResolve?: (action: import("@/types/agent").ProposedAction) => void;
 }
 
 export function AgentMessage({
@@ -49,6 +51,7 @@ export function AgentMessage({
   onPin,
   showDisclaimer = false,
   showGeneratedAtLine = false,
+  onResolve,
 }: AgentMessageProps) {
   return (
     <div>
@@ -71,6 +74,7 @@ export function AgentMessage({
         onPin={onPin}
         showDisclaimer={showDisclaimer}
         showGeneratedAtLine={showGeneratedAtLine}
+        onResolve={onResolve}
       />
     </div>
   );

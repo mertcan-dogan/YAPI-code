@@ -30,6 +30,8 @@ interface Props {
   onPin?: () => void; // shows a "Sabitle" (pin to Çalışma Alanım) action
   showDisclaimer?: boolean; // shows the standalone AIDisclaimer line
   showGeneratedAtLine?: boolean; // shows the "… itibarıyla hesaplanmıştır" line
+  // CR-039 — relayed to the draft card so the page can stop threading a resolved draft.
+  onResolve?: (action: import("@/types/agent").ProposedAction) => void;
   // CR-039 (reserved — declared, not rendered):
   attachments?: import("@/types/agent").AgentAttachment[];
   artifacts?: import("@/types/agent").AgentArtifact[];
@@ -46,6 +48,7 @@ export function AgentAnswerBody({
   onPin,
   showDisclaimer = false,
   showGeneratedAtLine = false,
+  onResolve,
 }: Props) {
   if (error) {
     return (
@@ -86,9 +89,10 @@ export function AgentAnswerBody({
           </div>
         )}
 
-        {/* CR-011-C — pending approval proposals as Onayla/Reddet cards. */}
-        {proposed.map((a) => (
-          <ProposedActionCard key={a.request_id} action={a} />
+        {/* CR-011-C approval cards + CR-039 authoring DRAFT cards (drafts have no
+            request_id, so key by index). */}
+        {proposed.map((a, i) => (
+          <ProposedActionCard key={a.request_id ?? `draft-${i}`} action={a} onResolve={onResolve} />
         ))}
 
         {/* CR-011-D — export this analysis (only meaningful with a real answer). */}

@@ -37,9 +37,13 @@ ACTION_KIND_LABELS = {
     "agent_reminder": "Hatırlatıcı (AI önerisi)",
     "agent_flag_invoice": "İnceleme İşareti (AI önerisi)",
     "agent_task": "Görev (AI önerisi)",
-    # CR-035 — agent-authored Report Studio report / dashboard proposals.
+    # CR-035 — agent-authored Report Studio report / dashboard proposals (DORMANT
+    # after CR-039: never produced anymore; kept for any in-flight pending rows).
     "agent_create_report": "Rapor (AI önerisi)",
     "agent_create_dashboard": "Pano (AI önerisi)",
+    # CR-039 — conversational authoring DRAFTS (no DB write; user creates via OLUŞTUR).
+    "draft_report": "Rapor Taslağı",
+    "draft_dashboard": "Pano Taslağı",
 }
 
 _PENDING_MESSAGE = (
@@ -93,6 +97,29 @@ def _create_and_commit(db: Session, **kw):
     req = approvals_service.create_request(db, proposed_by_agent=True, **kw)
     db.commit()
     return req
+
+
+def _draft(kind: str, title: str, fields: dict) -> dict:
+    """CR-039 — build a DRAFT proposed_action with NO DB write at all: no
+    ``ApprovalRequest``, no ``request_id``, no commit. The agent writes nothing;
+    the user creates their own report/pano by pressing OLUŞTUR, which calls the
+    existing ``POST /studio/reports|/studio/dashboards`` as themselves
+    (``CurrentUser``). This STRENGTHENS the CR-011 invariant — authoring no longer
+    writes even a pending proposal. The draft rides the existing
+    ``proposed_actions[]`` channel; the FE keys on ``kind`` (no ``request_id`` ⇒ a
+    draft card, not an approvals card)."""
+    return {
+        "ok": True,
+        "proposed": True,
+        "status": "draft",
+        "message": "Taslak hazır — sohbette düzenleyebilir veya Oluştur'a basabilirsiniz.",
+        "proposed_action": {
+            "kind": kind,
+            "kind_label": ACTION_KIND_LABELS.get(kind, kind),
+            "title": title,
+            **fields,
+        },
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -206,11 +233,13 @@ def propose_followup_task(db: Session, company_id, user_id, *, title: str,
 # --------------------------------------------------------------------------- #
 def propose_report(db: Session, company_id, user_id, *, title: str, spec,
                    visibility: str = "private", labels=None, project_id=None) -> dict:
-    """Propose creating a Report Studio report from an agent-built CR-032 spec.
-    Propose-only: validates the spec against the catalog (NO request is created on
-    an invalid spec — the model gets the error and corrects), then opens a pending
-    ``ApprovalRequest``. The Report row itself is created only in
-    ``approvals._apply_agent_create_report`` after a human approves (CR-011)."""
+    """CR-039 — DRAFT a Report Studio report from an agent-built CR-032 spec.
+    Validates the spec against the catalog (on an invalid spec it raises
+    ``ActionError`` and NO draft is returned — the model gets the error and
+    corrects), then returns a ``draft_report`` proposed-action carrying the spec.
+    It writes NOTHING (no ``ApprovalRequest``, no Report row). The Report is created
+    only by the user's explicit OLUŞTUR click (``POST /studio/reports`` as
+    themselves), which strengthens the CR-011 never-writes invariant."""
     title = (title or "").strip()
     if not title:
         raise ActionError("Rapor için bir başlık gerekli.")
@@ -224,18 +253,10 @@ def propose_report(db: Session, company_id, user_id, *, title: str, spec,
             "Yalnızca studio_catalog'daki metrik/boyut kimliklerini kullan."
         )
     vis = visibility if visibility in ("private", "company") else "private"
-    req = _create_and_commit(
-        db,
-        company_id=company_id,
-        project_id=_as_uuid(project_id),
-        kind="agent_create_report",
-        target_table="reports",
-        target_id=None,
-        payload={"title": title, "spec": spec, "visibility": vis, "labels": labels},
-        description=f"Rapor önerisi: {title}",
-        requested_by=user_id,
-    )
-    return _confirmation(req, extra={"title": title, "spec": spec})
+    # CR-039 — DRAFT: validation done above; write NOTHING. The user creates their
+    # own report via OLUŞTUR (POST /studio/reports as themselves).
+    return _draft("draft_report", title,
+                  {"spec": spec, "visibility": vis, "labels": labels})
 
 
 # --------------------------------------------------------------------------- #
@@ -244,11 +265,13 @@ def propose_report(db: Session, company_id, user_id, *, title: str, spec,
 def propose_dashboard(db: Session, company_id, user_id, *, title: str, widgets,
                       date_range=None, comparison=None, filters=None,
                       visibility: str = "private", labels=None, project_id=None) -> dict:
-    """Propose creating a Report Studio dashboard (pano) of widgets. Propose-only:
-    validates every widget (envelope + each data widget's inner spec against the
-    catalog + report-widget viewability + unique ids; NO request on an invalid
-    deck), then opens a pending ``ApprovalRequest``. The Dashboard row is created
-    only in ``approvals._apply_agent_create_dashboard`` after approval (CR-011)."""
+    """CR-039 — DRAFT a Report Studio dashboard (pano) of widgets. Validates every
+    widget (envelope + each data widget's inner spec against the catalog +
+    report-widget viewability + unique ids; on an invalid deck it raises
+    ``ActionError`` and NO draft is returned), then returns a ``draft_dashboard``
+    proposed-action carrying the validated widgets. It writes NOTHING. The Dashboard
+    is created only by the user's explicit OLUŞTUR click (``POST /studio/dashboards``
+    as themselves) — strengthening the CR-011 never-writes invariant."""
     title = (title or "").strip()
     if not title:
         raise ActionError("Pano için bir başlık gerekli.")
@@ -263,22 +286,12 @@ def propose_dashboard(db: Session, company_id, user_id, *, title: str, widgets,
         )
     widgets_json = [w.model_dump(mode="json") for w in normalised]
     vis = visibility if visibility in ("private", "company") else "private"
-    req = _create_and_commit(
-        db,
-        company_id=company_id,
-        project_id=_as_uuid(project_id),
-        kind="agent_create_dashboard",
-        target_table="dashboards",
-        target_id=None,
-        payload={"title": title, "widgets": widgets_json, "date_range": date_range,
-                 "comparison": comparison, "filters": filters,
-                 "visibility": vis, "labels": labels},
-        description=f"Pano önerisi: {title}",
-        requested_by=user_id,
-    )
-    return _confirmation(req, extra={"title": title, "widgets": widgets_json,
-                                     "date_range": date_range, "comparison": comparison,
-                                     "filters": filters})
+    # CR-039 — DRAFT: validation done above; write NOTHING. The user creates their
+    # own pano via OLUŞTUR (POST /studio/dashboards as themselves).
+    return _draft("draft_dashboard", title,
+                  {"widgets": widgets_json, "date_range": date_range,
+                   "comparison": comparison, "filters": filters,
+                   "visibility": vis, "labels": labels})
 
 
 def _as_uuid(value):

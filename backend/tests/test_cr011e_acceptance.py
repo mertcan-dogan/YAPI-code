@@ -175,15 +175,18 @@ def test_full_loop_all_action_tools_propose_zero_mutations(db, seed, monkeypatch
     _patch(monkeypatch, responder)
     out = agent_service.run_agent(db, cid, [{"role": "user", "content": "beş eylem"}], user_id=uid)
 
-    # Five proposals surfaced, five pending requests, all agent-proposed.
+    # Five proposals surfaced: 3 pending approvals + 2 drafts (report/dashboard).
     assert len(out["proposed_actions"]) == 5
+    # CR-039 — report/dashboard are DRAFTS (no request_id), the rest are approvals.
+    draft_kinds = {a["kind"] for a in out["proposed_actions"] if "request_id" not in a}
+    assert draft_kinds == {"draft_report", "draft_dashboard"}
     pend = db.execute(
         select(ApprovalRequest).where(ApprovalRequest.company_id == cid, ApprovalRequest.status == "pending")
     ).scalars().all()
-    assert len(pend) == 5 and all(p.proposed_by_agent for p in pend)
+    # CR-039 — only THREE pending requests now (authoring writes nothing at all).
+    assert len(pend) == 3 and all(p.proposed_by_agent for p in pend)
     assert {p.kind for p in pend} == {
         "agent_reminder", "agent_flag_invoice", "agent_task",
-        "agent_create_report", "agent_create_dashboard",
     }
     # The whole loop wrote ZERO business rows (the invariant, end-to-end §7).
     assert _business_counts(db) == before

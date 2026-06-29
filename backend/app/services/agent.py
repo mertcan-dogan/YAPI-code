@@ -187,9 +187,11 @@ ACTION_TOOL_REGISTRY = {
     "propose_flag_invoice": (actions.propose_flag_invoice,
                              {"target_kind", "target_id", "reason", "project_id"}),
     "propose_followup_task": (actions.propose_followup_task, {"title", "note", "project_id"}),
-    # CR-035 — author a Report Studio report / dashboard (propose-only). The Spec /
-    # widget payload is validated against the catalog before the pending request is
-    # opened; the row is created only on human approval (CR-011 invariant).
+    # CR-035/CR-039 — author a Report Studio report / dashboard. CR-039: these are
+    # DRAFT tools — the spec/widget payload is validated against the catalog, then a
+    # draft_* proposed-action is returned with NO ApprovalRequest and NO write. The
+    # row is created only by the user's explicit OLUŞTUR click (POST /studio/...),
+    # which strengthens the CR-011 never-writes invariant.
     "propose_report": (actions.propose_report,
                        {"title", "spec", "visibility", "labels", "project_id"}),
     "propose_dashboard": (actions.propose_dashboard,
@@ -443,12 +445,14 @@ def build_tool_schemas() -> list[dict]:
         {
             "name": "propose_report",
             "description": (
-                "ÖNERİ (doğrudan yazmaz): kullanıcının istediği bir Rapor Stüdyosu "
-                "raporu OLUŞTURMAYI önerir — onay bekleyen bir talep açar. Kullanıcı "
-                "bir rapor isterse ('… raporu yap/oluştur', 'şunu gösteren bir rapor') "
-                "MUTLAKA bunu çağır; serbest metinle geçme. ÖNCE studio_catalog ile "
-                "geçerli metrik/boyut kimliklerini al, spec'i o kimliklerle kur "
-                "(metrics ZORUNLU). Title açıklayıcı ve Türkçe olsun."
+                "ÖNERİ/TASLAK (hiçbir şey yazmaz): kullanıcının istediği bir Rapor "
+                "Stüdyosu raporu için bir TASLAK hazırlar — kayıt OLUŞTURMAZ. "
+                "Kullanıcı bir rapor isterse ('… raporu yap/oluştur', 'şunu gösteren "
+                "bir rapor') VEYA mevcut taslağı değiştirmek isterse MUTLAKA bunu "
+                "çağır; serbest metinle geçme. ÖNCE studio_catalog ile geçerli "
+                "metrik/boyut kimliklerini al, spec'i o kimliklerle kur (metrics "
+                "ZORUNLU). Title açıklayıcı ve Türkçe olsun. Oluşturma yalnızca "
+                "kullanıcı OLUŞTUR'a basınca olur; sen 'oluşturdum' deme."
             ),
             "input_schema": {"type": "object", "properties": {
                 "title": {"type": "string"},
@@ -460,12 +464,14 @@ def build_tool_schemas() -> list[dict]:
         {
             "name": "propose_dashboard",
             "description": (
-                "ÖNERİ (doğrudan yazmaz): birden çok widget içeren bir Rapor Stüdyosu "
-                "panosu OLUŞTURMAYI önerir — onay bekleyen bir talep açar. Kullanıcı "
-                "bir pano/gösterge paneli isterse ('… panosu yap', 'bir pano oluştur') "
-                "bunu çağır. ÖNCE studio_catalog ile kimlikleri al. Her veri widget'ı "
-                "(kpi/chart/table) bir spec içermeli; her widget benzersiz bir id ve "
-                "bir layout (x,y,w,h) almalı."
+                "ÖNERİ/TASLAK (hiçbir şey yazmaz): birden çok widget içeren bir Rapor "
+                "Stüdyosu panosu için bir TASLAK hazırlar — kayıt OLUŞTURMAZ. "
+                "Kullanıcı bir pano/gösterge paneli isterse ('… panosu yap', 'bir pano "
+                "oluştur') VEYA mevcut taslağı değiştirmek isterse bunu çağır. ÖNCE "
+                "studio_catalog ile kimlikleri al. Her veri widget'ı (kpi/chart/table) "
+                "bir spec içermeli; her widget benzersiz bir id ve bir layout "
+                "(x,y,w,h) almalı. Oluşturma yalnızca kullanıcı OLUŞTUR'a basınca "
+                "olur; sen 'oluşturdum' deme."
             ),
             "input_schema": {"type": "object", "properties": {
                 "title": {"type": "string"},
@@ -846,8 +852,11 @@ def _step_label(name: str) -> str:
 _ACTION_GUIDANCE = (
     "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, propose_followup_task, "
     "propose_report, propose_dashboard): "
-    "Bu araçlar HİÇBİR ŞEYİ DOĞRUDAN DEĞİŞTİRMEZ — yalnızca ONAY BEKLEYEN bir öneri "
-    "oluştururlar; değişiklik ancak kullanıcı /approvals sayfasından onaylarsa uygulanır.\n"
+    "Bu araçların HİÇBİRİ DOĞRUDAN bir şey YAZMAZ. propose_reminder / "
+    "propose_flag_invoice / propose_followup_task ONAY BEKLEYEN bir öneri oluşturur "
+    "(/approvals'tan onaylanınca uygulanır). propose_report / propose_dashboard ise "
+    "yalnızca bir TASLAK hazırlar (hiçbir şey yazmaz) — kullanıcı sohbette düzenler ve "
+    "OLUŞTUR'a basınca kendi raporunu/panosunu kendisi oluşturur.\n"
     "NE ZAMAN ÇAĞIRMALISIN (ZORUNLU): Kullanıcı somut bir EYLEM yapılmasını isterse, "
     "serbest metinle yanıt verip geçme — ilgili aracı MUTLAKA çağır:\n"
     "- 'hatırlatıcı öner/oluştur/ekle/kur', 'bana ... hatırlat', 'şunu hatırlat/unutturma' → "
@@ -858,27 +867,76 @@ _ACTION_GUIDANCE = (
     "propose_flag_invoice (target_kind + target_id + reason). target_id'yi query_* / "
     "get_assurance_findings sonuçlarından al.\n"
     "- 'takip görevi oluştur', 'görev/yapılacak ekle' → propose_followup_task (somut title).\n"
-    "- 'rapor yap/oluştur', 'şunu gösteren bir rapor', 'X'e göre Y raporu çıkar' → "
+    "- 'rapor yap/oluştur', 'şunu gösteren bir rapor', 'X'e göre Y raporu çıkar' VEYA "
+    "mevcut taslakta değişiklik ('aylık yap', 'şu metriği ekle', 'alacakları çıkar') → "
     "propose_report. ÖNCE studio_catalog'u çağırıp geçerli metrik/boyut kimliklerini "
     "al; spec'i SADECE o kimliklerle kur (metrics ZORUNLU; kırılım için dimensions; "
-    "uygun viz: line/area/bar/kpi/table).\n"
-    "- 'pano/gösterge paneli yap/oluştur', 'şunları tek ekranda gösteren bir pano' → "
-    "propose_dashboard. ÖNCE studio_catalog; her veri widget'ı (kpi/chart/table) bir "
-    "spec, benzersiz bir id ve bir layout (x,y,w,h) almalı.\n"
+    "uygun viz: line/area/bar/kpi/table). Önce kısaca ne hazırlayacağını söyle, sonra "
+    "aracı çağırıp TASLAĞI ekle; kullanıcıya sohbette düzenleyebileceğini veya "
+    "OLUŞTUR'a basabileceğini belirt.\n"
+    "- 'pano/gösterge paneli yap/oluştur', 'şunları tek ekranda gösteren bir pano' VEYA "
+    "mevcut pano taslağında değişiklik → propose_dashboard. ÖNCE studio_catalog; her "
+    "veri widget'ı (kpi/chart/table) bir spec, benzersiz bir id ve bir layout "
+    "(x,y,w,h) almalı. TASLAĞI ekle ve kullanıcıya düzenleyebileceğini veya OLUŞTUR'a "
+    "basabileceğini söyle.\n"
     "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
     "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
     "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "
     "serbest metinle yanıtla.\n"
-    "Sonucu bildirirken ASLA 'yaptım/oluşturdum/işaretledim' deme; 'öneri oluşturuldu, "
-    "onayınızı bekliyor' de ve onay için /approvals sayfasına yönlendir."
+    "Sonucu bildirirken ASLA 'yaptım/oluşturdum/işaretledim' deme. "
+    "Hatırlatıcı/işaret/görev için 'öneri oluşturuldu, onayınızı bekliyor' de ve "
+    "/approvals sayfasına yönlendir. Rapor/pano için 'taslağı hazırladım — sohbette "
+    "düzenleyebilir veya Oluştur'a basabilirsin' de; oluşturmayı kullanıcı yapar."
 )
 
 
+def _draft_context(draft) -> str:
+    """CR-039 — summarize the active authoring DRAFT the user is refining so the
+    model edits the REAL spec instead of rebuilding it from prose. Defensive:
+    returns "" for any malformed/absent draft (never raises). Request-only context,
+    mirrors how ``scope``/``report_id`` are injected — it adds context, not a write
+    path (the agent still writes nothing; creation is the user's OLUŞTUR click)."""
+    if not isinstance(draft, dict):
+        return ""
+    try:
+        kind = draft.get("kind")
+        title = (draft.get("title") or "").strip()
+        if kind == "draft_report":
+            spec = draft.get("spec")
+            if not isinstance(spec, dict):
+                return ""
+            return (
+                f"Kullanıcı şu RAPOR taslağını düzenliyor: «{title or 'Rapor'}». "
+                f"Mevcut spec — metrikler: {spec.get('metrics')}; "
+                f"boyutlar: {spec.get('dimensions') or '—'}; "
+                f"görsel: {spec.get('viz', 'table')}; "
+                f"tarih: {spec.get('date_range') or 'varsayılan'}. "
+                "Sıfırdan başlama — bu spec'i kullanıcının isteğine göre GÜNCELLE ve "
+                "propose_report ile yeni taslağı öner. Hiçbir şey oluşturma; "
+                "'oluşturdum' deme — oluşturma kullanıcının OLUŞTUR butonuyla olur."
+            )
+        if kind == "draft_dashboard":
+            widgets = draft.get("widgets")
+            n = len(widgets) if isinstance(widgets, list) else 0
+            return (
+                f"Kullanıcı şu PANO taslağını düzenliyor: «{title or 'Pano'}» "
+                f"({n} widget). Sıfırdan başlama — mevcut widget'ları kullanıcının "
+                "isteğine göre GÜNCELLE ve propose_dashboard ile yeni taslağı öner. "
+                "Hiçbir şey oluşturma; 'oluşturdum' deme — oluşturma kullanıcının "
+                "OLUŞTUR butonuyla olur."
+            )
+    except Exception:  # malformed draft must never break the turn
+        return ""
+    return ""
+
+
 def _build_system(today: date | None, project_id, scope: str | None = None,
-                  scope_context: str = "", extra_context: str = "") -> str:
+                  scope_context: str = "", extra_context: str = "",
+                  draft_context: str = "") -> str:
     """Assemble the system prompt: base + server-date rules + action guidance +
     optional domain `scope` preamble + cheap pre-loaded scope context + active
-    project (§2.1, §3.1) + optional CR-035 grounding (e.g. "Bu rapor hakkında sor")."""
+    project (§2.1, §3.1) + optional CR-035 grounding (e.g. "Bu rapor hakkında sor")
+    + optional CR-039 authoring-draft context (the spec the user is refining)."""
     system = SYSTEM_PROMPT + _date_guidance(today or date.today()) + _ACTION_GUIDANCE
     pre = _scope_preamble(scope)
     if pre:
@@ -889,6 +947,10 @@ def _build_system(today: date | None, project_id, scope: str | None = None,
         # CR-035 — grounded read-only Q&A over a specific saved report (spec + run
         # result). Read-only: it adds context, never a write path.
         system += "\n\nRAPOR BAĞLAMI (salt-okunur): " + extra_context
+    if draft_context:
+        # CR-039 — the authoring draft the user is editing (refine-by-chat). The
+        # model updates this spec and re-proposes a draft; it still writes nothing.
+        system += "\n\nTASLAK BAĞLAMI (düzenleme): " + draft_context
     if project_id is not None:
         system += (
             f"\n\nAKTİF PROJE BAĞLAMI: Kullanıcı şu an proje {project_id} bağlamında "
@@ -899,7 +961,7 @@ def _build_system(today: date | None, project_id, scope: str | None = None,
 
 def _agent_events(db: Session, company_id, messages: list[dict], project_id, user_id,
                   today: date, stream: bool, scope: str | None = None,
-                  extra_context: str = ""):
+                  extra_context: str = "", draft=None):
     """Shared tool-use loop, expressed as an event generator (CR-011-A §1.1).
 
     Yields ``{"type": "delta", "text": ...}`` for live answer tokens (streaming
@@ -915,7 +977,8 @@ def _agent_events(db: Session, company_id, messages: list[dict], project_id, use
     client = ai_service._client()  # raises AIUnavailable when no key/SDK
     tool_schemas = scoped_tool_schemas(scope)
     scope_ctx = _scope_context(db, company_id, scope, today)
-    system = _build_system(today, project_id, scope, scope_ctx, extra_context)
+    system = _build_system(today, project_id, scope, scope_ctx, extra_context,
+                           _draft_context(draft))
 
     convo: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     tools_used: list[str] = []
@@ -1166,7 +1229,7 @@ def _stream_call(client, call_kw):
 
 def run_agent(db: Session, company_id, messages: list[dict], project_id=None, user_id=None,
               today: date | None = None, scope: str | None = None,
-              extra_context: str = "") -> dict:
+              extra_context: str = "", draft=None) -> dict:
     """Execute the tool-use loop (non-stream) and return the structured response
     (§3.1) — the long-standing entry point, unchanged for callers/tests.
 
@@ -1185,7 +1248,7 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
     final = None
     for ev in _agent_events(db, company_id, messages, project_id, user_id,
                             today or date.today(), stream=False, scope=scope,
-                            extra_context=extra_context):
+                            extra_context=extra_context, draft=draft):
         if ev.get("type") == "final":
             final = ev["data"]
     return final if final is not None else degraded_response()
@@ -1193,7 +1256,7 @@ def run_agent(db: Session, company_id, messages: list[dict], project_id=None, us
 
 def run_agent_stream(db: Session, company_id, messages: list[dict], project_id=None,
                      user_id=None, today: date | None = None, scope: str | None = None,
-                     extra_context: str = ""):
+                     extra_context: str = "", draft=None):
     """Streaming variant of run_agent (CR-011-A §1.1): yields delta/step/final
     events for the SSE endpoint. The final event carries the identical structured
     payload as run_agent (charts/citations/log), finalized at stream end.
@@ -1201,7 +1264,7 @@ def run_agent_stream(db: Session, company_id, messages: list[dict], project_id=N
     ``extra_context`` (CR-035) grounds the answer in a specific saved report."""
     yield from _agent_events(db, company_id, messages, project_id, user_id,
                              today or date.today(), stream=True, scope=scope,
-                             extra_context=extra_context)
+                             extra_context=extra_context, draft=draft)
 
 
 def sse_event(ev: dict) -> str:
