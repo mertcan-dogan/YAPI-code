@@ -11,11 +11,16 @@ import { createElement } from "react";
 const h = vi.hoisted(() => ({
   user: { id: "me", role: "project_manager", full_name: "Ben" } as { id: string; role: string; full_name: string },
   skillsList: [
-    { id: "s1", name: "Aylık Gelir-Gider", format: "xlsx", visibility: "private", owner_id: "me", updated_at: "2026-06-20T10:00:00Z", labels: null, last_run_at: "2026-06-25T09:00:00Z" },
-    { id: "s2", name: "Çeyreklik PDF Raporu", format: "pdf", visibility: "company", owner_id: "other", updated_at: "2026-06-19T10:00:00Z", labels: null, last_run_at: null },
+    { id: "s1", name: "Aylık Gelir-Gider", format: "xlsx", visibility: "private", owner_id: "me", updated_at: "2026-06-20T10:00:00Z", labels: null, last_run_at: "2026-06-25T09:00:00Z", last_run: { run_id: "r1", run_at: "2026-06-25T09:00:00Z", file_name: "aylik.xlsx", status: "ok" } },
+    { id: "s2", name: "Çeyreklik PDF Raporu", format: "pdf", visibility: "company", owner_id: "other", updated_at: "2026-06-19T10:00:00Z", labels: null, last_run_at: null, last_run: null },
   ] as any[],
-  full: { id: "s1", name: "Aylık Gelir-Gider", instruction: "Her ay özet.", plan: { format: "xlsx", title: "Aylık", widgets: [] }, format: "xlsx", visibility: "private", labels: null, owner_id: "me", created_by: "me", created_at: "2026-06-20T10:00:00Z", updated_at: "2026-06-20T10:00:00Z", is_owner: true } as any,
+  full: { id: "s1", name: "Aylık Gelir-Gider", instruction: "Her ay özet.", plan: { format: "xlsx", title: "Aylık", widgets: [] }, format: "xlsx", visibility: "private", labels: null, owner_id: "me", created_by: "me", created_at: "2026-06-20T10:00:00Z", updated_at: "2026-06-20T10:00:00Z", is_owner: true, last_run: null } as any,
   runResult: { run_id: "r1", file_name: "aylik.xlsx", format: "xlsx", download_url: "https://signed/aylik.xlsx" } as any,
+  runs: [
+    { id: "r1", skill_id: "s1", status: "ok", file_name: "aylik.xlsx", format: "xlsx", run_at: "2026-06-25T09:00:00Z", error: null, run_by: "me" },
+    { id: "r0", skill_id: "s1", status: "error", file_name: null, format: "xlsx", run_at: "2026-06-24T09:00:00Z", error: "Veri yok", run_by: "me" },
+  ] as any[],
+  downloadResult: { download_url: "https://signed/redl.xlsx", file_name: "aylik.xlsx", format: "xlsx" } as any,
   listMode: "ok" as "ok" | "fail",
   downloaded: [] as { url: string; name?: string }[],
 }));
@@ -27,6 +32,8 @@ vi.mock("@/lib/api", () => ({
     getSkill: vi.fn(() => Promise.resolve(h.full)),
     updateSkill: vi.fn(() => Promise.resolve(h.full)),
     deleteSkill: vi.fn(() => Promise.resolve({ ok: true })),
+    listSkillRuns: vi.fn(() => Promise.resolve(h.runs)),
+    downloadSkillFile: vi.fn(() => Promise.resolve(h.downloadResult)),
   },
 }));
 vi.mock("@/lib/download", () => ({
@@ -50,8 +57,8 @@ beforeEach(() => {
   h.listMode = "ok";
   h.downloaded = [];
   h.skillsList = [
-    { id: "s1", name: "Aylık Gelir-Gider", format: "xlsx", visibility: "private", owner_id: "me", updated_at: "2026-06-20T10:00:00Z", labels: null, last_run_at: "2026-06-25T09:00:00Z" },
-    { id: "s2", name: "Çeyreklik PDF Raporu", format: "pdf", visibility: "company", owner_id: "other", updated_at: "2026-06-19T10:00:00Z", labels: null, last_run_at: null },
+    { id: "s1", name: "Aylık Gelir-Gider", format: "xlsx", visibility: "private", owner_id: "me", updated_at: "2026-06-20T10:00:00Z", labels: null, last_run_at: "2026-06-25T09:00:00Z", last_run: { run_id: "r1", run_at: "2026-06-25T09:00:00Z", file_name: "aylik.xlsx", status: "ok" } },
+    { id: "s2", name: "Çeyreklik PDF Raporu", format: "pdf", visibility: "company", owner_id: "other", updated_at: "2026-06-19T10:00:00Z", labels: null, last_run_at: null, last_run: null },
   ];
   navigate.mockClear();
   vi.clearAllMocks();
@@ -81,14 +88,57 @@ it("renders a format badge (Excel/PDF), a görünürlük chip, and son çalışt
   expect(within(row).getByText("Henüz çalıştırılmadı")).toBeInTheDocument();
 });
 
-it("Çalıştır runs the skill, downloads via the signed URL, and toasts", async () => {
+it("Çalıştır runs the skill, downloads via the signed URL, and toasts where the file went + an İndir action", async () => {
   render(<SkillsPage />);
   await screen.findByText("Aylık Gelir-Gider");
 
   fireEvent.click(screen.getByLabelText("Çalıştır: Aylık Gelir-Gider"));
   await waitFor(() => expect(skills.runSkill).toHaveBeenCalledWith("s1"));
   await waitFor(() => expect(downloadFromUrl).toHaveBeenCalledWith("https://signed/aylik.xlsx", "aylik.xlsx"));
-  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Dosya üretildi"));
+  // CR-044.1 — explicit "indirildi (İndirilenler klasörü)" + an İndir toast action.
+  await waitFor(() =>
+    expect(toast.success).toHaveBeenCalledWith(
+      "Excel üretildi ve indirildi — İndirilenler klasörü",
+      expect.objectContaining({ action: expect.objectContaining({ label: "İndir" }) })
+    )
+  );
+});
+
+it("shows a persistent per-row İndir that re-downloads the latest file via a fresh signed URL", async () => {
+  render(<SkillsPage />);
+  await screen.findByText("Aylık Gelir-Gider");
+
+  // s1 has a last_run → its row shows İndir.
+  fireEvent.click(screen.getByLabelText("İndir: Aylık Gelir-Gider"));
+  await waitFor(() => expect(skills.downloadSkillFile).toHaveBeenCalledWith("r1"));
+  await waitFor(() => expect(downloadFromUrl).toHaveBeenCalledWith("https://signed/redl.xlsx", "aylik.xlsx"));
+});
+
+it("a never-run skill shows no per-row İndir", async () => {
+  render(<SkillsPage />);
+  await screen.findByText("Aylık Gelir-Gider");
+  fireEvent.click(screen.getByText("Tüm beceriler"));
+  await screen.findByText("Çeyreklik PDF Raporu");
+  expect(screen.queryByLabelText("İndir: Çeyreklik PDF Raporu")).not.toBeInTheDocument();
+});
+
+it("Çalıştırma geçmişi lists runs with an İndir per successful run", async () => {
+  render(<SkillsPage />);
+  await screen.findByText("Aylık Gelir-Gider");
+
+  fireEvent.click(screen.getByLabelText("Beceri işlemleri: Aylık Gelir-Gider"));
+  fireEvent.click(screen.getByText("Çalıştırma geçmişi"));
+  await waitFor(() => expect(skills.listSkillRuns).toHaveBeenCalledWith("s1"));
+
+  // The ok run is downloadable; the error run shows its status + reason, no İndir.
+  expect(await screen.findByText("Başarılı")).toBeInTheDocument();
+  expect(screen.getByText("Hata")).toBeInTheDocument();
+  expect(screen.getByText("Veri yok")).toBeInTheDocument();
+
+  // The modal's İndir has the exact accessible name "İndir" (the per-row button uses
+  // an aria-label "İndir: …"), so this targets the modal's ok-run download.
+  fireEvent.click(screen.getByRole("button", { name: "İndir" }));
+  await waitFor(() => expect(skills.downloadSkillFile).toHaveBeenCalledWith("r1"));
 });
 
 it("surfaces a Türkçe error toast (not a silent failure) when a run fails", async () => {

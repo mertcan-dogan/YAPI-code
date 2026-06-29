@@ -148,12 +148,14 @@ describe("ProposedActionCard draft (CR-039)", () => {
 
 // CR-044 — the draft_skill authoring card: a plan summary (format + sections) + a
 // live preview of the plan's first widget + "Beceri olarak kaydet" (→ createSkill,
-// no director gate) / Düzenle / İptal + the refine hint.
+// no director gate) / İptal + the refine hint. CR-044.1 — NO Düzenle (a skill has
+// no editor page; it's refined by chatting).
 describe("ProposedActionCard draft_skill (CR-044)", () => {
-  it("shows 'Beceri olarak kaydet'/Düzenle/İptal for a NON-director (no approval gate) + a format chip", async () => {
+  it("shows 'Beceri olarak kaydet'/İptal (NO Düzenle) for a NON-director (no approval gate) + a format chip", async () => {
     wrap(<ProposedActionCard action={DRAFT_SKILL} />);
     expect(screen.getByText("Beceri olarak kaydet")).toBeInTheDocument();
-    expect(screen.getByText("Düzenle")).toBeInTheDocument();
+    // CR-044.1 — the dead Düzenle button is gone for skill drafts.
+    expect(screen.queryByText("Düzenle")).not.toBeInTheDocument();
     expect(screen.getByText("İptal")).toBeInTheDocument();
     // The output-format chip is shown (skill plan summary).
     expect(screen.getByText("Excel (.xlsx)")).toBeInTheDocument();

@@ -23,8 +23,19 @@ export function Toaster() {
           >
             <Icon className="h-4 w-4 shrink-0" />
             <span className="max-w-xs">{t.message}</span>
-            {t.kind === "error" && (
-              <button onClick={() => dismiss(t.id)} className="ml-2">
+            {t.action && (
+              <button
+                onClick={() => {
+                  t.action!.onClick();
+                  dismiss(t.id);
+                }}
+                className="ml-1 rounded bg-white/20 px-2 py-0.5 text-xs font-semibold underline-offset-2 hover:bg-white/30"
+              >
+                {t.action.label}
+              </button>
+            )}
+            {(t.kind === "error" || t.action) && (
+              <button onClick={() => dismiss(t.id)} aria-label="Kapat" className="ml-2">
                 <X className="h-4 w-4" />
               </button>
             )}
