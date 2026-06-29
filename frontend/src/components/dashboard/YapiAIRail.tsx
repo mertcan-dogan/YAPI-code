@@ -154,7 +154,7 @@ function RailContent({ onClose, hideHeader, onGoToTasks }: RailProps & { onClose
           onClick={() => navigate("/ai-assistant")}
           className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-2 text-xs font-medium text-brand transition-colors hover:border-brand hover:bg-navy-50"
         >
-          Daha detaylı ve kompleks görevler için Yapı Agent'a gidin →
+          Daha detaylı ve kompleks görevler için Yapı AI'ya gidin →
         </button>
       </div>
     </div>

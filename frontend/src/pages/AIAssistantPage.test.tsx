@@ -68,7 +68,9 @@ const FINAL: AgentResponse = {
 const wrap = () => render(createElement(MemoryRouter, null, createElement(AIAssistantPage)));
 
 const submit = (text: string) => {
-  fireEvent.change(screen.getByPlaceholderText("Sorunuzu yazın…"), { target: { value: text } });
+  // CR-038: the composer is an auto-grow textarea whose placeholder changes with
+  // the scene (opening hero vs active thread), so locate it by role.
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
   fireEvent.click(screen.getByLabelText("Gönder"));
 };
 
@@ -92,6 +94,9 @@ describe("AIAssistantPage live streaming (CR-011-D)", () => {
     const { body } = h.streamCalls[0];
     expect(body.messages).toEqual([{ role: "user", content: "Akçansa ne kadar?" }]);
     expect(body.project_id).toBeNull();
+    // CR-038: scope is additive and defaults to null (Genel Analist) — report_id
+    // (CR-035) and project_id stay on every body.
+    expect(body.scope).toBeNull();
     // The user's turn shows immediately (also echoed in the conversation title).
     expect(screen.getAllByText("Akçansa ne kadar?").length).toBeGreaterThan(0);
     // The non-stream endpoint is no longer used for answering.
@@ -347,5 +352,18 @@ describe("AIAssistantPage Rapor Stüdyosu hand-off (CR-035)", () => {
     wrap();
     submit("normal soru");
     expect(h.streamCalls[0].body.report_id).toBeNull();
+  });
+});
+
+// CR-038 — premade agents = the existing scopes, packaged. Picking one starts a
+// fresh session whose scope is threaded into the stream body (no backend change).
+describe("AIAssistantPage premade agents (CR-038)", () => {
+  it("starting from a premade agent threads its scope into the stream body", () => {
+    wrap();
+    // The opening-scene "Bir ajanla başla" row offers the scoped agents.
+    fireEvent.click(screen.getByText("Gider Analisti"));
+    submit("hangi tedarikçiye en çok ödedim?");
+    expect(h.streamCalls).toHaveLength(1);
+    expect(h.streamCalls[0].body.scope).toBe("gider");
   });
 });

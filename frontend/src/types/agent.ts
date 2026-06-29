@@ -50,6 +50,26 @@ export interface ProposedAction {
   filters?: any;
 }
 
+// CR-038 §G (reserved — declared, NOT built): the conversation/message model is
+// kept open so CR-039's attachments + agent-generated artifacts persist without a
+// breaking change. These types are intentionally unused by CR-038's rendering.
+export interface AgentAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  kind: "image" | "excel" | "pdf" | "other";
+  url?: string | null;
+}
+
+export interface AgentArtifact {
+  id: string;
+  kind: string; // "report" | "dashboard" | "file" | "image" | …
+  title: string;
+  payload?: unknown;
+  deep_link?: string | null;
+}
+
 export interface AgentResponse {
   answer_markdown: string;
   charts: AgentChartSpec[];
