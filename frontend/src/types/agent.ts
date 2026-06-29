@@ -30,24 +30,32 @@ export type AgentScope = "gider" | "gelir" | "finans" | "hakedis" | "belge";
 // CR-011-C — a write the agent PROPOSED (a pending approval request). The UI
 // shows it as an Onayla/Reddet card; nothing is ever written without approval.
 export interface ProposedAction {
-  request_id: string;
+  // CR-039: the FE discriminates on `kind`. Approval kinds (agent_reminder /
+  // agent_flag_invoice / agent_task, + the dormant agent_create_*) carry
+  // request_id/status/deep_link and route through /approvals. The authoring DRAFT
+  // kinds "draft_report" / "draft_dashboard" carry NONE of those — the card renders
+  // Oluştur/Düzenle/İptal and the user creates their own artifact (no approval).
+  request_id?: string;
   kind: string;
   kind_label: string;
-  description: string;
+  description?: string;
   amount_try?: string | null;
   project_id?: string | null;
-  status: string; // "pending"
-  deep_link: string; // "/approvals"
-  // CR-035 (additive): the two Rapor Stüdyosu authoring kinds carry the proposed
-  // artefact so the card can render a spec summary + a live preview before approval.
-  // kind "agent_create_report"    → title + spec (a CR-032 StudioSpec).
-  // kind "agent_create_dashboard" → title + widgets[] (+ date_range/comparison/filters).
+  status?: string; // "pending" for approval kinds; absent for drafts
+  deep_link?: string; // "/approvals" for approval kinds; absent for drafts
+  // CR-035/CR-039 (additive): the authoring kinds carry the proposed artifact so
+  // the card can render a spec summary + a live preview.
+  // report (draft_report / agent_create_report)    → title + spec (a CR-032 StudioSpec).
+  // dashboard (draft_dashboard / agent_create_dashboard) → title + widgets[] (+ date_range/comparison/filters).
   title?: string;
   spec?: any;
   widgets?: any[];
   date_range?: any;
   comparison?: any;
   filters?: any;
+  // CR-039 — the user-chosen create payload for a draft.
+  visibility?: string;
+  labels?: string[] | null;
 }
 
 // CR-038 §G (reserved — declared, NOT built): the conversation/message model is

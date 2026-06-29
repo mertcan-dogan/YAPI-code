@@ -85,22 +85,31 @@ def test_action_tools_create_only_pending_requests_zero_mutations(db, seed):
          "spec": {"metrics": ["cost_try"], "viz": "kpi"}},
     ])
 
-    # Every action returned a pending proposal (never "done").
-    for r in (r1, r2, r3, r4, r5):
+    # Reminder / flag / task are propose-only — a pending proposal (never "done").
+    for r in (r1, r2, r3):
         assert r["status"] == "pending"
         assert r["proposed_action"]["status"] == "pending"
         assert "onayınızı bekliyor" in r["message"]
 
+    # CR-039 — report / dashboard are now DRAFTS: validated, but NO ApprovalRequest
+    # and NO request_id. The agent writes literally nothing (invariant strengthened);
+    # the row is created only by the user's explicit OLUŞTUR click.
+    for r, kind in ((r4, "draft_report"), (r5, "draft_dashboard")):
+        assert r["status"] == "draft"
+        assert r["proposed_action"]["kind"] == kind
+        assert "request_id" not in r["proposed_action"]
+        assert "status" not in r["proposed_action"]
+        assert r["proposed_action"]["spec" if kind == "draft_report" else "widgets"]
+
     # ZERO direct mutations to any business table.
     assert _business_counts(db) == before
 
-    # Exactly five PENDING approval requests, all tagged proposed_by_agent.
+    # CR-039 — only THREE pending approval requests now (report/dashboard make none).
     pend = _pending_requests(db, cid)
-    assert len(pend) == 5
+    assert len(pend) == 3
     assert all(p.proposed_by_agent for p in pend)
     assert {p.kind for p in pend} == {
         "agent_reminder", "agent_flag_invoice", "agent_task",
-        "agent_create_report", "agent_create_dashboard",
     }
 
 

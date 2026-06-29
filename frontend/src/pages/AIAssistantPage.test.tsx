@@ -34,6 +34,14 @@ vi.mock("@/lib/api", () => ({
   apiPut: h.apiPut,
   apiDelete: h.apiDelete,
   baseURL: "",
+  // CR-039 — a rendered draft card pulls the catalog + runs a live preview; stub
+  // them so the page test doesn't hit the network when a draft proposed-action lands.
+  studio: {
+    catalog: () => Promise.resolve({ metrics: [], dimensions: [] }),
+    run: () => Promise.resolve({ meta: {}, totals: { metrics: {} }, columns: [], rows: [] }),
+    createReport: () => Promise.resolve({ id: "rep" }),
+    createDashboard: () => Promise.resolve({ id: "dash" }),
+  },
 }));
 vi.mock("@/hooks/useFetch", () => ({ useFetch: () => ({ data: [] }) }));
 // supabase.ts calls createClient at import time (needs env); stub it so the page's
@@ -352,6 +360,37 @@ describe("AIAssistantPage Rapor Stüdyosu hand-off (CR-035)", () => {
     wrap();
     submit("normal soru");
     expect(h.streamCalls[0].body.report_id).toBeNull();
+  });
+});
+
+// CR-039 — conversational authoring: once the agent attaches a draft, the next
+// (refine) turn threads that draft so the agent edits the real spec.
+describe("AIAssistantPage refine threading (CR-039)", () => {
+  const DRAFT_SPEC = { metrics: ["cost_try"], dimensions: ["project"], viz: "table" };
+
+  it("sends draft=null normally, then threads the active draft on the next turn", () => {
+    wrap();
+    submit("kârlılık raporu yap");
+    // No active draft on the first ask.
+    expect(h.streamCalls[0].body.draft).toBeNull();
+
+    // The agent attaches a draft_report proposed-action.
+    act(() =>
+      h.streamCalls[0].cb.onFinal({
+        ...FINAL,
+        answer_markdown: "Taslağı hazırladım — düzenleyebilir veya Oluştur'a basabilirsin.",
+        citations: [],
+        proposed_actions: [
+          { kind: "draft_report", kind_label: "Rapor Taslağı", title: "Kârlılık", spec: DRAFT_SPEC },
+        ],
+      })
+    );
+
+    // Refine: the active draft is threaded so the agent edits the real spec.
+    submit("aylık yap, alacakları çıkar");
+    expect(h.streamCalls).toHaveLength(2);
+    expect(h.streamCalls[1].body.draft).toMatchObject({ kind: "draft_report", title: "Kârlılık" });
+    expect(h.streamCalls[1].body.draft.spec.metrics).toEqual(["cost_try"]);
   });
 });
 

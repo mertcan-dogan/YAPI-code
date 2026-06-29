@@ -35,6 +35,10 @@ export interface StreamBody {
   // CR-035 (additive): when set, the backend grounds a READ-ONLY Q&A in this saved
   // report. Forwarded verbatim on both the SSE POST and the non-stream fallback.
   report_id?: string | null;
+  // CR-039 (additive): the active authoring draft the user is refining
+  // ({kind, spec|widgets, title}). Forwarded verbatim so the agent edits the real
+  // spec. Request-only; the agent still writes nothing.
+  draft?: Record<string, unknown> | null;
 }
 
 function parseFrame(frame: string): { event?: string; data?: string } {

@@ -1,11 +1,15 @@
-"""CR-035 — Report Studio AI authoring (propose → approve) + "Bu rapor hakkında sor".
+"""CR-035 + CR-039 — Report Studio AI authoring + "Bu rapor hakkında sor".
 
 THE invariant (CR-011, non-negotiable): the agent NEVER writes a report/dashboard
-directly. propose_report / propose_dashboard create a PENDING ApprovalRequest and
-ZERO reports/dashboards rows; the row is created ONLY in approvals.apply_request
-after a human approves. These tests assert that end-to-end, plus spec validity,
-company-scoping (company_id from the request row, never the payload), and that the
-"Bu rapor hakkında sor" grounding path is read-only.
+directly. CR-039 STRENGTHENS this — propose_report / propose_dashboard are now
+DRAFT tools: they validate the spec but write NOTHING (no ApprovalRequest, no
+report/dashboard row, no request_id) and return a draft_* proposed-action carrying
+the spec. The user creates their OWN report/pano via OLUŞTUR (POST /studio/...).
+The legacy agent_create_report/dashboard ApprovalRequest appliers stay DORMANT —
+still functional for any in-flight pending row, but never produced by the agent
+anymore. These tests assert the draft behavior, spec validity, that the dormant
+applier still applies an in-flight request correctly (company-scoped, owner from
+the request row), and that "Bu rapor hakkında sor" grounding is read-only.
 """
 import uuid
 from decimal import Decimal
@@ -67,17 +71,16 @@ def test_propose_report_zero_mutation(db, seed):
     before = _counts(db)
     r = actions.propose_report(db, cid, uid, title="Daire Tipi Kârlılık", spec=SPEC_TABLE)
 
-    assert r["status"] == "pending"
-    assert r["proposed_action"]["kind"] == "agent_create_report"
+    # CR-039 — a DRAFT: validated, but NO ApprovalRequest and NO request_id.
+    assert r["status"] == "draft"
+    assert r["proposed_action"]["kind"] == "draft_report"
     # FE live-preview enrichment: the spec rides along on the proposed_action.
     assert r["proposed_action"]["spec"] == SPEC_TABLE
     assert r["proposed_action"]["title"] == "Daire Tipi Kârlılık"
-    # No report/dashboard/business row written — only a pending request.
+    assert "request_id" not in r["proposed_action"]
+    # The agent wrote NOTHING — no report row AND no pending approval request.
     assert _counts(db) == before
-    pend = _pending(db, cid, "agent_create_report")
-    assert len(pend) == 1 and pend[0].proposed_by_agent
-    assert pend[0].payload["spec"] == SPEC_TABLE
-    assert pend[0].target_table == "reports"
+    assert _pending(db, cid, "agent_create_report") == []
 
 
 def test_propose_dashboard_zero_mutation(db, seed):
@@ -85,13 +88,12 @@ def test_propose_dashboard_zero_mutation(db, seed):
     before = _counts(db)
     r = actions.propose_dashboard(db, cid, uid, title="Özet Pano", widgets=WIDGETS)
 
-    assert r["status"] == "pending"
-    assert r["proposed_action"]["kind"] == "agent_create_dashboard"
+    assert r["status"] == "draft"
+    assert r["proposed_action"]["kind"] == "draft_dashboard"
     assert r["proposed_action"]["widgets"][0]["spec"] == SPEC_KPI
+    assert "request_id" not in r["proposed_action"]
     assert _counts(db) == before
-    pend = _pending(db, cid, "agent_create_dashboard")
-    assert len(pend) == 1 and pend[0].proposed_by_agent
-    assert pend[0].target_table == "dashboards"
+    assert _pending(db, cid, "agent_create_dashboard") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -164,14 +166,26 @@ def test_dashboard_widget_cap_rejected_no_request(db, seed):
 
 
 # --------------------------------------------------------------------------- #
-# 3. Approve creates the right row; reject creates none
+# 3. The DORMANT agent_create_* applier still applies an in-flight request.
+#    (CR-039: the agent no longer PRODUCES these requests, but the appliers are
+#    kept so any pending row from before CR-039 still resolves correctly.)
 # --------------------------------------------------------------------------- #
-def test_report_created_only_on_approval(db, seed):
+def _inflight_report_request(db, cid, uid):
+    req = approvals_service.create_request(
+        db, company_id=cid, project_id=None, kind="agent_create_report",
+        target_table="reports", target_id=None,
+        payload={"title": "Kârlılık", "spec": SPEC_TABLE, "visibility": "private", "labels": None},
+        description="Rapor önerisi: Kârlılık", requested_by=uid, proposed_by_agent=True,
+    )
+    db.commit()
+    return req
+
+
+def test_dormant_applier_creates_report_from_inflight_request(db, seed):
     cid, uid, _ = _ids(seed)
-    actions.propose_report(db, cid, uid, title="Kârlılık", spec=SPEC_TABLE)
+    req = _inflight_report_request(db, cid, uid)
     assert _counts(db)["reports"] == 0
 
-    req = _pending(db, cid, "agent_create_report")[0]
     created = approvals_service.apply_request(db, req)
     approvals_service.mark_decided(req, user_id=uid, status="approved")
     db.commit()
@@ -189,12 +203,20 @@ def test_report_created_only_on_approval(db, seed):
     assert "rows" in result and "totals" in result
 
 
-def test_dashboard_created_only_on_approval(db, seed):
+def test_dormant_applier_creates_dashboard_from_inflight_request(db, seed):
     cid, uid, _ = _ids(seed)
-    actions.propose_dashboard(db, cid, uid, title="Pano", widgets=WIDGETS)
+    normalised = creators.validate_widgets(db, cid, uid, WIDGETS)
+    widgets_json = [w.model_dump(mode="json") for w in normalised]
+    req = approvals_service.create_request(
+        db, company_id=cid, project_id=None, kind="agent_create_dashboard",
+        target_table="dashboards", target_id=None,
+        payload={"title": "Pano", "widgets": widgets_json, "date_range": None,
+                 "comparison": None, "filters": None, "visibility": "private", "labels": None},
+        description="Pano önerisi: Pano", requested_by=uid, proposed_by_agent=True,
+    )
+    db.commit()
     assert _counts(db)["dashboards"] == 0
 
-    req = _pending(db, cid, "agent_create_dashboard")[0]
     created = approvals_service.apply_request(db, req)
     approvals_service.mark_decided(req, user_id=uid, status="approved")
     db.commit()
@@ -206,10 +228,9 @@ def test_dashboard_created_only_on_approval(db, seed):
     assert dash.widgets[0]["spec"] == SPEC_KPI
 
 
-def test_report_rejected_creates_no_row(db, seed):
+def test_inflight_report_request_rejected_creates_no_row(db, seed):
     cid, uid, _ = _ids(seed)
-    actions.propose_report(db, cid, uid, title="Kârlılık", spec=SPEC_TABLE)
-    req = _pending(db, cid, "agent_create_report")[0]
+    req = _inflight_report_request(db, cid, uid)
     approvals_service.mark_decided(req, user_id=uid, status="rejected", reason="gerek yok")
     db.commit()
     assert _counts(db)["reports"] == 0
@@ -269,14 +290,19 @@ class _Client:
         self.messages = _Messages(responder)
 
 
-def test_endpoint_propose_then_approve_creates_and_returns_target(client, seed, monkeypatch):
+def test_endpoint_propose_returns_draft_no_request(client, seed, db, monkeypatch):
+    """CR-039 — through the agent endpoint, propose_report attaches a DRAFT (spec,
+    no request_id) and creates NO approval request. Creation is the user's separate
+    POST /studio/reports (the OLUŞTUR click), not an approve step."""
     director = seed["a"]["users"][ROLE_DIRECTOR]
+    cid, _, _ = _ids(seed)
 
     def responder(call, kw):
         if call == 0:
             return _Resp("tool_use", [_Block(type="tool_use", name="propose_report",
                          input={"title": "Daire Tipi Kârlılık", "spec": SPEC_TABLE}, id="t0")])
-        return _Resp("end_turn", [_Block(type="text", text="Rapor önerisi oluşturuldu.")])
+        return _Resp("end_turn", [_Block(type="text",
+                     text="Taslağı hazırladım — düzenleyebilir veya Oluştur'a basabilirsin.")])
 
     monkeypatch.setattr(ai_service, "_client", lambda: _Client(responder))
     client.login(director)
@@ -285,23 +311,12 @@ def test_endpoint_propose_then_approve_creates_and_returns_target(client, seed, 
                     json={"messages": [{"role": "user", "content": "daire tipine göre kârlılık raporu yap"}]})
     assert r.status_code == 200, r.text
     pa = r.json()["data"]["proposed_actions"][0]
-    assert pa["kind"] == "agent_create_report"
-    assert pa["spec"] == SPEC_TABLE          # the card can preview without a refetch
-    req_id = pa["request_id"]
-
-    # Approve → applier creates the report → response carries the navigation target.
-    ap = client.put(f"/api/v1/approvals/request/{req_id}/approve")
-    assert ap.status_code == 200, ap.text
-    created = ap.json()["data"]["created"]
-    assert created["table"] == "reports"
-
-    # The created report opens like any saved report (owned by the approver).
-    g = client.get(f"/api/v1/studio/reports/{created['id']}")
-    assert g.status_code == 200, g.text
-    body = g.json()["data"]
-    assert body["spec"] == SPEC_TABLE
-    assert body["is_owner"] is True
-    assert body["title"] == "Daire Tipi Kârlılık"
+    assert pa["kind"] == "draft_report"
+    assert pa["spec"] == SPEC_TABLE          # the card previews without a refetch
+    assert "request_id" not in pa
+    # The agent created NO approval request and NO report row — the user creates it.
+    assert _pending(db, cid, "agent_create_report") == []
+    assert _counts(db)["reports"] == 0
 
 
 # --------------------------------------------------------------------------- #
