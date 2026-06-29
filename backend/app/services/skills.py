@@ -52,13 +52,20 @@ def _plan_dashboard(plan: dict) -> Dashboard:
     the canonical dashboard batch-run path renders it unchanged. Not added to the
     session — purely a carrier of widgets + dashboard-global query context."""
     plan = plan or {}
-    return Dashboard(
+    deck = Dashboard(
         title=plan.get("title") or "Beceri",
         widgets=plan.get("widgets") or [],
         date_range=plan.get("date_range"),
         comparison=plan.get("comparison"),
         filters=plan.get("filters"),
     )
+    # CR-047 — carry the skill's project scope (an id in the plan JSONB, no migration)
+    # onto the transient deck. The batch-run path merges it into every data widget so
+    # a project-named skill is ACTUALLY scoped to that project, even if a widget spec
+    # forgot the filter. Set as a plain attribute (no such Dashboard column) — the
+    # deck is never persisted; manual dashboards (real rows) have no attr → no-op.
+    deck.project_scope = plan.get("project_scope")
+    return deck
 
 
 def run_skill(db: Session, user: User, skill: Skill, *, signed_ttl: int | None = None) -> dict:

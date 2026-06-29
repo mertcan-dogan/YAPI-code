@@ -30,7 +30,7 @@ from sqlalchemy import select
 
 from app.calculations.money import D, safe_div
 from app.calculations.project_financials import open_commitment, relief_by_commitment
-from app.constants import COST_CATEGORIES, UNIT_TYPES
+from app.constants import COST_CATEGORIES, SELL_SIDE_REVENUE_MODELS, UNIT_TYPES
 from app.models.cost_entry import CostEntry
 from app.models.project import Project
 from app.models.subcontractor import Subcontractor
@@ -485,7 +485,30 @@ def _project_dimvals(p, dims) -> dict:
     return out
 
 
-def _project_metric_value(mid, acc, basis, n, single_irr):
+# CR-047 — metrics that only make sense for one side of the revenue model. A
+# mis-compiled plan (or a hand-built report) must never show an inapplicable metric:
+# the engine returns ``None`` (rendered as "–"), independent of what the plan asks.
+#   * sell-side projects (kat_karşılığı/yap-sat/hasılat-paylaşımı): hakediş has no
+#     meaning → ``progress_billing`` / ``billing_vs_contract`` are null.
+#   * non-sell-side projects (hakediş/maliyet-kâr): unit-sale + per-m² + irr/roi
+#     metrics don't apply → null.
+_SELL_SIDE_ONLY_METRICS = frozenset({
+    "unit_sales_revenue", "cost_per_m2", "revenue_per_m2", "profit_per_m2", "irr", "roi",
+})
+_NON_SELL_SIDE_ONLY_METRICS = frozenset({"progress_billing", "billing_vs_contract"})
+
+
+def _project_metric_value(mid, acc, basis, n, single_irr, revenue_model=None):
+    # CR-047 — model-aware accuracy guarantee. Only applied when the group's
+    # revenue_model is unambiguous (a single model); a heterogeneous cross-model
+    # portfolio rollup (revenue_model None) keeps the existing behaviour.
+    if revenue_model is not None:
+        sell_side = revenue_model in SELL_SIDE_REVENUE_MODELS
+        if sell_side and mid in _NON_SELL_SIDE_ONLY_METRICS:
+            return None
+        if not sell_side and mid in _SELL_SIDE_ONLY_METRICS:
+            return None
+
     usd = basis["currency"] == "usd"
     rev = acc["revenue_usd"] if usd else acc["revenue_try"]
     cost = acc["pnl_cost_usd"] if usd else acc["pnl_cost_try"]
@@ -545,9 +568,14 @@ def _resolve_project_groups(ctx, dims, metric_ids, date_from, date_to) -> dict:
         key = tuple(dimvals[d][0] for d in dims)
         g = acc_groups.get(key)
         if g is None:
+            # CR-047 — track the group's revenue_model so model-inapplicable metrics
+            # can be nulled. First project sets it; a project of a different model in
+            # the same group collapses it to None (heterogeneous → don't null).
             g = {"dims": {d: dimvals[d][1] for d in dims}, "acc": {k: ZERO for k in _ACC_KEYS},
-                 "n": 0, "irr": None}
+                 "n": 0, "irr": None, "revenue_model": p.revenue_model}
             acc_groups[key] = g
+        elif g["revenue_model"] != p.revenue_model:
+            g["revenue_model"] = None
         for k in _ACC_KEYS:
             g["acc"][k] += b[k]
         g["n"] += 1
@@ -557,7 +585,7 @@ def _resolve_project_groups(ctx, dims, metric_ids, date_from, date_to) -> dict:
     out: dict = {}
     for key, g in acc_groups.items():
         metrics = {
-            mid: _project_metric_value(mid, g["acc"], ctx.basis, g["n"], g["irr"])
+            mid: _project_metric_value(mid, g["acc"], ctx.basis, g["n"], g["irr"], g["revenue_model"])
             for mid in metric_ids
         }
         out[key] = {"dims": g["dims"], "metrics": metrics}
@@ -637,9 +665,14 @@ def _resolve_unit_groups(ctx, dims, metric_ids, date_from, date_to) -> dict:
             key = tuple(dimvals[d][0] for d in dims)
             g = acc.get(key)
             if g is None:
+                # CR-047 — track the group's revenue_model so unit_sales_revenue can be
+                # nulled on a non-sell-side project, consistent with the project grain.
                 g = {"dims": {d: dimvals[d][1] for d in dims},
-                     "rev_try": ZERO, "rev_usd": ZERO, "pnl_try": ZERO, "pnl_usd": ZERO}
+                     "rev_try": ZERO, "rev_usd": ZERO, "pnl_try": ZERO, "pnl_usd": ZERO,
+                     "revenue_model": p.revenue_model}
                 acc[key] = g
+            elif g["revenue_model"] != p.revenue_model:
+                g["revenue_model"] = None
             g["rev_try"] += D(alloc.get("sale_price_try"))
             g["rev_usd"] += D(alloc.get("sale_price_usd"))
             g["pnl_try"] += D(alloc.get("pnl_try"))
@@ -650,7 +683,12 @@ def _resolve_unit_groups(ctx, dims, metric_ids, date_from, date_to) -> dict:
         rev = g["rev_usd"] if usd else g["rev_try"]
         pnl = g["pnl_usd"] if usd else g["pnl_try"]
         margin = safe_div(g["pnl_try"], g["rev_try"]) * HUNDRED if g["rev_try"] > ZERO else None
-        full = {"unit_sales_revenue": rev, "pnl": pnl, "gross_margin": pnl, "margin_pct_current": margin}
+        # CR-047 — unit_sales_revenue is meaningless for a non-sell-side project; null it
+        # (the model-aware accuracy guarantee also holds on the unit/dual grain). pnl /
+        # gross_margin / margin are model-agnostic and unchanged.
+        rm = g["revenue_model"]
+        unit_rev = None if (rm is not None and rm not in SELL_SIDE_REVENUE_MODELS) else rev
+        full = {"unit_sales_revenue": unit_rev, "pnl": pnl, "gross_margin": pnl, "margin_pct_current": margin}
         out[key] = {"dims": g["dims"], "metrics": {m: full.get(m) for m in metric_ids}}
     return out
 

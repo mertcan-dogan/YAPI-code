@@ -214,6 +214,10 @@ def list_projects(db: Session, company_id, status: str | None = None) -> dict:
             "project_code": p.project_code,
             "project_type": PROJECT_TYPES.get(p.project_type, p.project_type),
             "status": p.status,
+            # CR-047 — the revenue model drives which income metric is correct
+            # (sell-side → unit_sales_revenue/revenue; hakediş/maliyet-kâr → hakediş)
+            # and lets the agent scope a project-named report to the right project.
+            "revenue_model": p.revenue_model,
             "contract_value_try": _s(p.contract_value_try),
             "completion_pct": _s(p.completion_pct),
             "deep_link": _deep_link("project", p.id, p.id),

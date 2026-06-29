@@ -110,7 +110,7 @@ def _csv_cell(v) -> str:
 
 def _pdf_cell(v) -> str:
     if v is None:
-        return ""
+        return "–"  # CR-047 — a model-inapplicable / null metric reads as "–", not blank
     if isinstance(v, float):
         return str(int(v)) if v == int(v) else f"{v:.2f}"
     return str(v)
