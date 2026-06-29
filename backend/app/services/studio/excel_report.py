@@ -67,6 +67,9 @@ _grey_font = Font(name=_FONT, color=_argb(MUT))
 _FMT_TRY = '#,##0" ₺";[Red](#,##0)" ₺";"–"'
 _FMT_PCT = "0.0%"
 _FMT_NUM = '#,##0;[Red](#,##0);"–"'
+# CR-047 — a model-inapplicable metric is None; show the en-dash (a numeric format's
+# zero-section only fires for an actual 0, so a None/blank cell would otherwise be empty).
+_DASH = "–"
 
 _TR_MONTHS = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
               "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
@@ -183,11 +186,16 @@ def kpi_cards(ws, cards: list, start_row: int) -> int:
             lc = ws.cell(row=r, column=c0, value=_safe_cell(card["label"]))
             lc.font = _muted
             lc.alignment = Alignment(horizontal="left", indent=1)
-            # value
+            # value — a model-inapplicable metric is None → render the CR's "–", not blank.
             ws.merge_cells(f"{cl0}{r + 1}:{cl1}{r + 1}")
-            vc = ws.cell(row=r + 1, column=c0, value=card.get("value"))
+            vc = ws.cell(row=r + 1, column=c0)
+            val = card.get("value")
+            if val is None:
+                vc.value = _DASH
+            else:
+                vc.value = val
+                vc.number_format = _num_fmt(card.get("value_type") or "currency")
             vc.font = _value_font
-            vc.number_format = _num_fmt(card.get("value_type") or "currency")
             vc.alignment = Alignment(horizontal="left", indent=1)
             # delta — a styled string (arrow + %), RAG-coloured by favourable direction.
             ws.merge_cells(f"{cl0}{r + 2}:{cl1}{r + 2}")
@@ -284,8 +292,12 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
                 v = dims.get(c["id"])
                 cell = ws.cell(row=ri, column=col_idx, value=_safe_cell(v))
             elif role == "metric":
-                cell = ws.cell(row=ri, column=col_idx, value=metrics.get(c["id"]))
-                cell.number_format = _num_fmt(c["type"])
+                mv = metrics.get(c["id"])
+                if mv is None:  # CR-047 — model-inapplicable metric → "–", not blank
+                    cell = ws.cell(row=ri, column=col_idx, value=_DASH)
+                else:
+                    cell = ws.cell(row=ri, column=col_idx, value=mv)
+                    cell.number_format = _num_fmt(c["type"])
             else:  # delta (fraction for pct; absolute ₺/number for abs)
                 cell = ws.cell(row=ri, column=col_idx, value=deltas.get(c["id"]))
                 cell.number_format = _delta_fmt(c)
@@ -306,8 +318,12 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
             cell.value = _safe_cell("Toplam") if not label_placed else None
             label_placed = True
         elif role == "metric":
-            cell.value = totals.get(c["id"])
-            cell.number_format = _num_fmt(c["type"])
+            tv = totals.get(c["id"])
+            if tv is None:  # CR-047 — "–" for a model-inapplicable total
+                cell.value = _DASH
+            else:
+                cell.value = tv
+                cell.number_format = _num_fmt(c["type"])
         else:
             cell.value = (total_deltas or {}).get(c["id"]) if total_deltas else None
             cell.number_format = _delta_fmt(c)

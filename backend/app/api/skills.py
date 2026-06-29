@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from app.constants import ROLE_DIRECTOR
 from app.db import get_db
 from app.deps import CurrentUser
+from app.models.project import Project
 from app.models.skill import Skill, SkillRun
 from app.responses import APIError, success
 from app.schemas.skill import (
@@ -138,6 +139,26 @@ def _validate_plan(db: Session, user, plan) -> None:
         raise APIError(422, "VALIDATION_ERROR", "Beceri planı en az bir widget içermeli", field="plan")
     # Raises APIError(422) on a bad widget / out-of-catalog spec / dup id / cap.
     creators.validate_widgets(db, user.company_id, user.id, widgets)
+    # CR-047 — project_scope must be a real, viewable project in THIS company (same
+    # check as the agent draft path propose_skill). Never trust a hand-rolled POST/PUT:
+    # a foreign/garbage scope is rejected here, not silently stored to yield an empty
+    # report (the engine is company-scoped, so it's never a leak — but this keeps the
+    # write path consistent with the agent path and surfaces a clean 422).
+    scope = plan.get("project_scope")
+    if scope:
+        try:
+            scope_id = uuid.UUID(str(scope))
+        except (ValueError, TypeError):
+            raise APIError(422, "VALIDATION_ERROR", "Geçersiz proje kimliği", field="plan")
+        proj = db.execute(
+            select(Project).where(
+                Project.id == scope_id,
+                Project.company_id == user.company_id,
+                Project.is_deleted.is_(False),
+            )
+        ).scalar_one_or_none()
+        if proj is None:
+            raise APIError(422, "VALIDATION_ERROR", "Proje bulunamadı", field="plan")
 
 
 # --------------------------------------------------------------------------- #

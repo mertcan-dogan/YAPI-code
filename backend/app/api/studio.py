@@ -339,17 +339,39 @@ def _validate_widgets(db: Session, user, widgets) -> None:
     creators.validate_widgets(db, user.company_id, user.id, widgets)
 
 
-def _global_merge(spec: dict, dashboard: Dashboard) -> dict:
+def _global_merge(spec: dict, dashboard: Dashboard, project_scope=None) -> dict:
     """FOUNDER OVERRIDE of the spec — global vs widget merge. Inject the
     dashboard-level ``date_range``/``comparison``/``filters`` into a deepcopy of the
     target ``spec`` ONLY where that key is absent or None in the target; a key the
     target already supplies (present AND non-null) WINS (widget/own-spec overrides
-    global). Applies to BOTH data widgets and report widgets."""
+    global). Applies to BOTH data widgets and report widgets.
+
+    CR-047 — when ``project_scope`` (a project id) is given (the AI-authoring skill
+    scope), GUARANTEE the report stays within that project: append a
+    ``{"field":"project","op":"=","value":scope}`` filter unless the widget already
+    pins itself to a single project with its OWN ``project = …`` equality (a deliberate
+    override that WINS). A non-equality project filter (``!=`` / ``in`` / ``not_in``)
+    does NOT suppress the scope — the scope is still appended and the engine ANDs both
+    (``_load_projects``), so a stray/conflicting filter can only NARROW within the
+    scope, never widen the report to other projects under the scoped name."""
     merged = deepcopy(spec) if spec else {}
     for key in ("date_range", "comparison", "filters"):
-        global_val = getattr(dashboard, key)
+        global_val = getattr(dashboard, key, None)
         if global_val is not None and merged.get(key) is None:
             merged[key] = deepcopy(global_val)
+    if project_scope:
+        flist = merged.get("filters") or []
+        # Only an explicit ``project = X`` equality counts as the widget's own scope
+        # (the deliberate override). Any other project filter still gets the scope
+        # ANDed on, so it cannot escape the scoped project.
+        pins_single_project = any(
+            isinstance(f, dict) and f.get("field") == "project" and f.get("op") == "="
+            for f in flist
+        )
+        if not pins_single_project:
+            merged["filters"] = list(flist) + [
+                {"field": "project", "op": "=", "value": str(project_scope)}
+            ]
     return merged
 
 
@@ -358,20 +380,26 @@ def _run_dashboard_batch(db: Session, user, dashboard: Dashboard) -> dict:
     result-or-status}. Text widgets are omitted (the FE renders their content).
     Read-only and company-scoped (``company_id`` from auth). A report widget
     pointing at a report the caller can't view degrades to ``{"unavailable": True}``
-    — never raising, never 500, never leaking another tenant's data."""
+    — never raising, never 500, never leaking another tenant's data.
+
+    CR-047 — a skill deck may carry a ``project_scope`` (set on the transient deck by
+    ``skills._plan_dashboard``); it is merged into every data/report widget so the
+    whole report is scoped to that project. Manual dashboards have no such attribute
+    → ``project_scope`` is None → unchanged behaviour."""
     results: dict = {}
+    project_scope = getattr(dashboard, "project_scope", None)
     for w in dashboard.widgets or []:
         wtype = w.get("type")
         wid = w.get("id")
         if wtype in ("kpi", "chart", "table"):
-            merged = _global_merge(w.get("spec") or {}, dashboard)
+            merged = _global_merge(w.get("spec") or {}, dashboard, project_scope)
             results[wid] = run_spec(db, user.company_id, merged)
         elif wtype == "report":
             ref = _resolve_report_widget(db, user, w.get("report_id"))
             if ref is None:
                 results[wid] = {"unavailable": True}
             else:
-                merged = _global_merge(ref.spec or {}, dashboard)
+                merged = _global_merge(ref.spec or {}, dashboard, project_scope)
                 results[wid] = run_spec(db, user.company_id, merged)
         # text widgets carry no data → omitted from the batch result.
     return results

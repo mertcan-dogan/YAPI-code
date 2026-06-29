@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
+from app.models.project import Project
 from app.responses import APIError
 from app.services import approvals as approvals_service
 from app.services.studio import creators as studio_creators
@@ -301,7 +302,8 @@ def propose_dashboard(db: Session, company_id, user_id, *, title: str, widgets,
 # --------------------------------------------------------------------------- #
 def propose_skill(db: Session, company_id, user_id, *, name, widgets,
                   format: str = "xlsx", instruction: str = "", date_range=None,
-                  visibility: str = "private", labels=None, project_id=None) -> dict:
+                  visibility: str = "private", labels=None, project_scope=None,
+                  project_id=None) -> dict:
     """CR-044 — DRAFT a Skill (Beceri): a saved, reusable *deliverable recipe* that
     generates an Excel/PDF from LIVE data on demand. The agent decides STRUCTURE
     only — it composes a dashboard-shaped ``plan`` ({format, title, widgets[],
@@ -321,6 +323,26 @@ def propose_skill(db: Session, company_id, user_id, *, name, widgets,
     fmt = format if format in ("xlsx", "pdf") else "xlsx"
     if not isinstance(widgets, list) or not widgets:
         raise ActionError("Beceri için en az bir widget (bölüm) gerekli.")
+    # CR-047 — a project-scoped skill: the resolved project id (from list_projects).
+    # Validate it is a real, viewable project in THIS company (the agent resolves the
+    # name; this enforces it can never store a bad/cross-company scope). At run time
+    # the scope is merged into every widget's filters, so the whole report is about
+    # that project. If the agent couldn't resolve the name it must ASK, not pass junk.
+    scope = None
+    if project_scope:
+        scope_id = _as_uuid(project_scope)
+        if scope_id is None:
+            raise ActionError("Geçersiz proje kimliği.")
+        proj = db.execute(
+            select(Project).where(
+                Project.id == scope_id,
+                Project.company_id == company_id,
+                Project.is_deleted.is_(False),
+            )
+        ).scalar_one_or_none()
+        if proj is None:
+            raise ActionError("Proje bulunamadı — list_projects ile doğrula veya kullanıcıya sor.")
+        scope = str(scope_id)
     try:
         normalised = studio_creators.validate_widgets(db, company_id, user_id, widgets)
     except APIError as exc:
@@ -331,11 +353,13 @@ def propose_skill(db: Session, company_id, user_id, *, name, widgets,
     widgets_json = [w.model_dump(mode="json") for w in normalised]
     vis = visibility if visibility in ("private", "company") else "private"
     # The compiled, runnable plan — a dashboard-shaped spec saved + re-run each time.
+    # ``project_scope`` (CR-047) rides the JSONB (no migration); the run merges it.
     plan = {
         "format": fmt,
         "title": name,
         "widgets": widgets_json,
         "date_range": date_range,
+        "project_scope": scope,
     }
     # CR-044 — DRAFT: validation done above; write NOTHING. The user saves their own
     # Skill via OLUŞTUR (POST /skills as themselves). instruction falls back to the

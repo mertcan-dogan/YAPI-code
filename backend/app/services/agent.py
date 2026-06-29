@@ -202,7 +202,7 @@ ACTION_TOOL_REGISTRY = {
     # "Beceri olarak kaydet" click (POST /skills).
     "propose_skill": (actions.propose_skill,
                       {"name", "widgets", "format", "instruction", "date_range",
-                       "visibility", "labels", "project_id"}),
+                       "visibility", "labels", "project_scope", "project_id"}),
 }
 ACTION_TOOL_NAMES = set(ACTION_TOOL_REGISTRY)
 
@@ -278,7 +278,13 @@ def build_tool_schemas() -> list[dict]:
     return [
         {
             "name": "list_projects",
-            "description": "Şirketin tüm projelerinin portföy özetini döndürür (durum filtresi opsiyonel).",
+            "description": (
+                "Şirketin tüm projelerinin portföy özetini döndürür (durum filtresi "
+                "opsiyonel). Her kayıt: id, name, project_code, status ve revenue_model "
+                "(gelir modeli: hakedis | kat_karsiligi | yap_sat | hasilat_paylasimi | "
+                "maliyet_kar) içerir. Bir proje ADINI id'ye çözmek ve hangi gelir "
+                "metriğinin doğru olduğunu seçmek için bunu kullan."
+            ),
             "input_schema": {"type": "object", "properties": {
                 "status": {"type": "string", "enum": ["active", "completed", "suspended", "cancelled"]},
             }},
@@ -507,6 +513,11 @@ def build_tool_schemas() -> list[dict]:
                 "son_6_ay|son_12_ay|bu_yil|gecen_yil|bu_ceyrek|gecen_ceyrek}); tarihi MUTLAK "
                 "değere ÇEVİRME — böylece her çalıştırmada dönem kendiliğinden ilerler. "
                 "Hiçbir sayı ÜRETME: dosyadaki tüm rakamlar çalışma anında motordan gelir. "
+                "BIR PROJEYE ÖZELSE: önce list_projects ile projeyi bul, id'sini "
+                "project_scope'a koy (çalışma anında her widget o projeye kapsanır) ve "
+                "gelir modeline göre doğru metrikleri seç (sell-side → revenue/"
+                "unit_sales_revenue; hakediş/maliyet_kar → hakediş). Adı çözemezsen "
+                "OLUŞTURMA, SOR. "
                 "Kayıt yalnızca kullanıcı 'Beceri olarak kaydet'e basınca olur; "
                 "'oluşturdum' deme."
             ),
@@ -519,6 +530,11 @@ def build_tool_schemas() -> list[dict]:
                 "date_range": {"type": "object",
                                "description": "Beceri geneli tarih: {preset} (göreli) veya {from,to}."},
                 "visibility": {"type": "string", "enum": ["private", "company"]},
+                "project_scope": {"type": "string",
+                                  "description": (
+                                      "Beceri tek bir projeye özelse o projenin id'si "
+                                      "(list_projects'ten). Çalışma anında her widget bu "
+                                      "projeye kapsanır. Tüm şirket için boş bırak.")},
                 "project_id": pid,
             }, "required": ["name", "widgets", "format"]},
         },
@@ -966,6 +982,21 @@ _ACTION_GUIDANCE = (
     "- 'şu beceriyi/uygulamayı çalıştır/üret' (elinde skill_id varsa) → run_skill. Bu "
     "SALT-OKUNUR bir dosya üretimidir (onay gerekmez, işletme verisini değiştirmez); "
     "sonucu indirme kartı olarak göster ve 'dosya üretildi' de.\n"
+    "DOĞRU VERİ (rapor/pano/beceri yazarken ZORUNLU):\n"
+    "1) PROJE KAPSAMI: Kullanıcı bir proje ADI verdiyse ('DGN Martı için …') ÖNCE "
+    "list_projects ile o projeyi bul. Tam eşleşen TEK bir proje yoksa veya birden fazla "
+    "aday varsa (örn. iki '213 Ada 1 Parsel') OLUŞTURMA — kullanıcıya hangi projeyi "
+    "kastettiğini SOR. Çözülünce projenin id'sini propose_skill'de project_scope'a koy "
+    "VE her veri widget'ının spec.filters'ına {field:'project',op:'=',value:<id>} ekle. "
+    "Asla bir projenin adıyla TÜM ŞİRKETİ kapsayan bir rapor üretme.\n"
+    "2) GELİR MODELİ: list_projects'teki revenue_model'e bak. Sell-side ise "
+    "(kat_karsiligi/yap_sat/hasilat_paylasimi) gelir için revenue/unit_sales_revenue "
+    "kullan; progress_billing/billing_vs_contract (HAKEDİŞ) KULLANMA — hakediş bu "
+    "modelde anlamsızdır. hakedis/maliyet_kar ise hakediş metriklerini kullan; "
+    "unit_sales_revenue/*_per_m2/irr/roi KULLANMA. (Motor zaten uygunsuz metriği '–' "
+    "yapar; yine de doğru metriği seç.)\n"
+    "3) Snapshot (windowed=false) bir metriği (hakediş, forecast, *_per_m2, irr, roi, "
+    "budget, revenue) 'month'a göre kırılan bir TABLOYA koyma — onları KPI/tek değer yap.\n"
     "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
     "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
     "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "
