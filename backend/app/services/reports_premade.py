@@ -375,26 +375,13 @@ _QUARTERLY_THRESHOLD = 24  # months; longer spans aggregate to quarters
 
 
 def _cashflow_span(db, project: Project, today: date) -> tuple[str, str]:
-    """CR-048 — the DATA-RELATIVE full span: the union of the project window
-    (start..planned_end) AND the actual cashflow dates of every cost/invoice, so no
-    activity is dropped (incl. anything dated before start_date or after the planned
-    end). Falls back to the project window when there is no data."""
-    from app.services.financials import load_project_inputs
+    """CR-048 — the DATA-RELATIVE full span (start..planned_end ∪ every cost/invoice
+    cash date). Shared with the studio engine's all-time cash grain (CR-049) via
+    ``financials.cashflow_full_span`` so the premade and the AI-authored cashflow
+    cover the same months."""
+    from app.services.financials import cashflow_full_span
 
-    costs, invoices, _ = load_project_inputs(db, project)
-    dates: list = []
-    if project.start_date:
-        dates.append(project.start_date)
-    if project.planned_end_date:
-        dates.append(project.planned_end_date)
-    for c in costs:
-        dates += [c[k] for k in ("entry_date", "payment_due_date") if c.get(k)]
-    for i in invoices:
-        dates += [i[k] for k in ("due_date", "date_received") if i.get(k)]
-    if not dates:
-        dates = [today]
-    lo, hi = min(dates), max(dates)
-    return f"{lo.year:04d}-{lo.month:02d}", f"{hi.year:04d}-{hi.month:02d}"
+    return cashflow_full_span(db, project, today=today)
 
 
 def _cashflow_periods(db, project: Project, today: date) -> list:

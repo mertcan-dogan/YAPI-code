@@ -246,7 +246,9 @@ def build_tool_schemas() -> list[dict]:
                     "value": {},
                 }, "required": ["field", "op", "value"]}},
             "date_range": {"type": "object",
-                           "description": "{preset} (örn. bu_yil) veya {from,to} ISO tarih."},
+                           "description": ("{preset} (örn. bu_yil, son_3_ay, tum_zamanlar) "
+                                           "veya {from,to} ISO tarih. Proje ömrü/analizi için "
+                                           "varsayılan tum_zamanlar (all_time).")},
             "sort": {"type": "object", "description": "{by: metrik/boyut kimliği, dir: asc|desc}"},
             "limit": {"type": "integer"},
             "basis": {"type": "object",
@@ -512,6 +514,10 @@ def build_tool_schemas() -> list[dict]:
                 "date_range'de GÖRELİ ön ayar kullan ({preset: bu_ay|gecen_ay|son_3_ay|"
                 "son_6_ay|son_12_ay|bu_yil|gecen_yil|bu_ceyrek|gecen_ceyrek}); tarihi MUTLAK "
                 "değere ÇEVİRME — böylece her çalıştırmada dönem kendiliğinden ilerler. "
+                "Bir PROJE ömrü analizi/raporuysa (yakın dönem AÇIKÇA istenmediyse) "
+                "date_range'i VARSAYILAN olarak {preset: tum_zamanlar} (Tüm zamanlar) yap — "
+                "yoksa verisi geçmiş yıllarda olan bir projede aylık nakit/maliyet sıfır "
+                "çıkar; uzun aralıkta month yerine quarter/year grain seç. "
                 "Hiçbir sayı ÜRETME: dosyadaki tüm rakamlar çalışma anında motordan gelir. "
                 "BIR PROJEYE ÖZELSE: önce list_projects ile projeyi bul, id'sini "
                 "project_scope'a koy (çalışma anında her widget o projeye kapsanır) ve "
@@ -978,7 +984,10 @@ _ACTION_GUIDANCE = (
     "format ('xlsx'/'pdf') seç, instruction'a kullanıcının cümlesini koy. Talep bir DÖNEM "
     "ima ediyorsa ('her ay', 'son 3 ay', 'bu yıl') GÖRELİ ön ayar kullan "
     "({preset: bu_ay|son_3_ay|bu_yil…}); tarihi MUTLAK değere çevirme (her çalıştırmada "
-    "dönem ilerlesin). TASLAĞI ekle; kullanıcı 'Beceri olarak kaydet'e basınca kaydeder.\n"
+    "dönem ilerlesin). Bir PROJE ömrü analizi/raporu ise (yakın dönem AÇIKÇA istenmediyse) "
+    "date_range'i VARSAYILAN olarak `all_time` (tum_zamanlar) yap — yoksa veri geçmiş "
+    "yıllardaysa aylık nakit/maliyet SIFIR çıkar. TASLAĞI ekle; kullanıcı 'Beceri olarak "
+    "kaydet'e basınca kaydeder.\n"
     "- 'şu beceriyi/uygulamayı çalıştır/üret' (elinde skill_id varsa) → run_skill. Bu "
     "SALT-OKUNUR bir dosya üretimidir (onay gerekmez, işletme verisini değiştirmez); "
     "sonucu indirme kartı olarak göster ve 'dosya üretildi' de.\n"
@@ -997,6 +1006,16 @@ _ACTION_GUIDANCE = (
     "yapar; yine de doğru metriği seç.)\n"
     "3) Snapshot (windowed=false) bir metriği (hakediş, forecast, *_per_m2, irr, roi, "
     "budget, revenue) 'month'a göre kırılan bir TABLOYA koyma — onları KPI/tek değer yap.\n"
+    "4) ZAMAN PENCERESİ: Bir projenin ANALİZİ / ÖZETİ / RAPORU (proje ömrü görünümü) "
+    "için date_range'i VARSAYILAN olarak `all_time` (Tüm zamanlar) yap — `bu_yil` / "
+    "`son_3_ay` DEĞİL. Çoğu projenin verisi geçmiş yıllardadır; dar/yakın bir pencere "
+    "aylık nakit/maliyeti SIFIR gösterir (windowed metrikler boş kalır). Yakın pencereyi "
+    "(`bu_ay`/`son_3_ay`/`gecen_ay`…) YALNIZCA kullanıcı açıkça isterse kullan ('bu ay', "
+    "'son 3 ay', 'geçen ay'). list_projects'teki start_date/actual_end_date projenin "
+    "GERÇEK aralığını verir — pencereyi onu kapsayacak şekilde seç. UZUN aralıklar için "
+    "(birkaç yıl) aylık 30-40 satır yerine `quarter` veya `year` grain kullan; kısa "
+    "aralıklar için `month`. Dönemi gerçek aralıktan etiketle (motor meta.date_range'i "
+    "doğru döndürür) — asla sabit yakın bir aralık yazma.\n"
     "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
     "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
     "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "

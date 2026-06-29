@@ -120,7 +120,10 @@ def _period_label(result: dict) -> str:
     dr = ((result or {}).get("meta") or {}).get("date_range") or {}
     f, t = dr.get("from"), dr.get("to")
     if not f and not t:
-        return "Tüm dönem"
+        # CR-049 — an all-time window: label from the REAL span the result covers
+        # (its date-bucket rows), e.g. "2018 – 2020"; "Tüm zamanlar" when the report
+        # carries no time dimension. Never a hardcoded recent range.
+        return _all_time_label(result)
     try:
         fd = datetime.fromisoformat(f) if f else None
         td = datetime.fromisoformat(t) if t else None
@@ -131,6 +134,26 @@ def _period_label(result: dict) -> str:
     fs = f"{_TR_MONTHS[fd.month]} {fd.year}" if fd else "—"
     ts = f"{_TR_MONTHS[td.month]} {td.year}" if td else "—"
     return f"{fs} – {ts}"
+
+
+def _all_time_label(result: dict) -> str:
+    """CR-049 — derive the span an all-time result actually covers from any date-typed
+    dimension buckets in its rows (month '2018-01' / quarter '2018-Q1' / year '2018' —
+    the leading 4 digits are the year). Returns '2018 – 2020' (or a single '2018'), or
+    'Tüm zamanlar' when the report has no time dimension to read a span from."""
+    date_ids = [c.get("id") for c in (result.get("columns") or [])
+                if c.get("kind") == "dimension" and c.get("type") == "date"]
+    years: set[int] = set()
+    for row in (result.get("rows") or []) if date_ids else []:
+        dims = row.get("dims") or {}
+        for did in date_ids:
+            v = dims.get(did)
+            if isinstance(v, str) and len(v) >= 4 and v[:4].isdigit():
+                years.add(int(v[:4]))
+    if not years:
+        return "Tüm zamanlar"
+    lo, hi = min(years), max(years)
+    return str(lo) if lo == hi else f"{lo} – {hi}"
 
 
 # --------------------------------------------------------------------------- #
@@ -467,13 +490,22 @@ def build_workbook(widgets: list, results: dict, title: str, *,
     chart_specs: list = []  # (ref, kind, title)
     rendered = False
 
-    # Period from the first result with a window (no query).
+    # Period from the result windows (no query). CR-049 — prefer a CONCRETE span (a
+    # label carrying a year, e.g. "2018 – 2020" / "Ocak 2026 – …") over a bare "Tüm
+    # zamanlar", so a multi-widget all-time report whose first widget is a snapshot
+    # KPI still headlines the real span a later time-series widget covers.
     if period is None:
+        fallback = None
         for w in widgets:
             res = results.get(w.get("id"))
             if isinstance(res, dict) and res.get("meta"):
-                period = _period_label(res)
-                break
+                label = _period_label(res)
+                if fallback is None:
+                    fallback = label
+                if any(ch.isdigit() for ch in label):
+                    period = label
+                    break
+        period = period or fallback
 
     for w in widgets:
         wtype = w.get("type")
@@ -530,7 +562,7 @@ def build_workbook(widgets: list, results: dict, title: str, *,
     # Build the Özet sheet at the front, now that data sheets exist for chart refs.
     ozet = wb.create_sheet("Özet", 0)
     ozet.sheet_view.showGridLines = False
-    next_row = header_band(ozet, title, company, period or "Tüm dönem")
+    next_row = header_band(ozet, title, company, period or "Tüm zamanlar")
     next_row = kpi_cards(ozet, cards, next_row + 1)
     # Anchor charts below the KPIs, stacked.
     anchor_row = next_row + 1
