@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 
 # Representative scoped tables to exercise writes against; the fail-closed check
 # below sweeps the full set from the migration.
-SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts", "reports", "dashboards"]
+SCOPED_SAMPLE = ["projects", "cost_entries", "client_invoices", "users", "project_closeouts", "reports", "dashboards", "skills", "skill_runs"]
 
 
 def _set_guc(conn, company_id):
@@ -367,6 +367,96 @@ def test_dashboards_isolation(seeded, app_engine):
         admin = create_engine(ADMIN_URL, future=True)
         with admin.begin() as conn:
             conn.execute(text("DELETE FROM dashboards WHERE company_id IN (:a, :b)"),
+                         {"a": seeded["a"], "b": seeded["b"]})
+            conn.execute(text("DELETE FROM users WHERE id IN (:ua, :ub)"),
+                         {"ua": user_a, "ub": user_b})
+        admin.dispose()
+
+
+def test_skills_isolation(seeded, app_engine):
+    """0046 (CR-044): a company-A session cannot read or INSERT (WITH CHECK)
+    company-B skills / skill_runs rows. ``skills.owner_id`` is a NOT NULL FK to
+    users, so we seed one user per company via the owner connection first — exactly
+    like ``test_reports_isolation`` / ``test_dashboards_isolation``."""
+    import json
+
+    from sqlalchemy.exc import DBAPIError, ProgrammingError
+
+    user_a, user_b = uuid.uuid4(), uuid.uuid4()
+    skill_a, skill_b = uuid.uuid4(), uuid.uuid4()
+    run_a = uuid.uuid4()
+    plan = json.dumps({"format": "xlsx", "title": "t", "widgets": [
+        {"id": "w1", "type": "kpi", "title": "k", "layout": {"x": 0, "y": 0, "w": 3, "h": 2},
+         "spec": {"metrics": ["cost_try"], "viz": "kpi"}}]})
+
+    admin = create_engine(ADMIN_URL, future=True)
+    with admin.begin() as conn:
+        for uid, cid in ((user_a, seeded["a"]), (user_b, seeded["b"])):
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, company_id, full_name, email, role) "
+                    "VALUES (:id, :c, 'RLS User', :e, 'director')"
+                ),
+                {"id": uid, "c": cid, "e": f"rls-skill-{uid.hex[:8]}@example.com"},
+            )
+    admin.dispose()
+
+    try:
+        # Each company seeds its own skill on its own scoped session (each INSERT
+        # must satisfy WITH CHECK for its own company).
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            conn.execute(
+                text(
+                    "INSERT INTO skills (id, company_id, owner_id, name, instruction, plan, format, visibility) "
+                    "VALUES (:id, :c, :o, 'A', 'x', :p, 'xlsx', 'private')"
+                ),
+                {"id": skill_a, "c": seeded["a"], "o": user_a, "p": plan},
+            )
+            # plus a skill_run owned by A (WITH CHECK on skill_runs too).
+            conn.execute(
+                text(
+                    "INSERT INTO skill_runs (id, company_id, skill_id, status, format) "
+                    "VALUES (:id, :c, :s, 'ok', 'xlsx')"
+                ),
+                {"id": run_a, "c": seeded["a"], "s": skill_a},
+            )
+            conn.commit()
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["b"])
+            conn.execute(
+                text(
+                    "INSERT INTO skills (id, company_id, owner_id, name, instruction, plan, format, visibility) "
+                    "VALUES (:id, :c, :o, 'B', 'x', :p, 'xlsx', 'company')"
+                ),
+                {"id": skill_b, "c": seeded["b"], "o": user_b, "p": plan},
+            )
+            conn.commit()
+        with app_engine.connect() as conn:
+            _set_guc(conn, seeded["a"])
+            own = conn.execute(text("SELECT count(*) FROM skills")).scalar()
+            other = conn.execute(
+                text("SELECT count(*) FROM skills WHERE company_id = :b"), {"b": seeded["b"]}
+            ).scalar()
+            own_runs = conn.execute(text("SELECT count(*) FROM skill_runs")).scalar()
+            assert own >= 1 and other == 0
+            assert own_runs >= 1
+            # WITH CHECK: A cannot INSERT a skill into company B.
+            with pytest.raises((DBAPIError, ProgrammingError)):
+                conn.execute(
+                    text(
+                        "INSERT INTO skills (id, company_id, owner_id, name, instruction, plan, format, visibility) "
+                        "VALUES (:id, :c, :o, 'evil', 'x', :p, 'xlsx', 'private')"
+                    ),
+                    {"id": uuid.uuid4(), "c": seeded["b"], "o": user_a, "p": plan},
+                )
+                conn.commit()
+    finally:
+        admin = create_engine(ADMIN_URL, future=True)
+        with admin.begin() as conn:
+            conn.execute(text("DELETE FROM skill_runs WHERE company_id IN (:a, :b)"),
+                         {"a": seeded["a"], "b": seeded["b"]})
+            conn.execute(text("DELETE FROM skills WHERE company_id IN (:a, :b)"),
                          {"a": seeded["a"], "b": seeded["b"]})
             conn.execute(text("DELETE FROM users WHERE id IN (:ua, :ub)"),
                          {"ua": user_a, "ub": user_b})

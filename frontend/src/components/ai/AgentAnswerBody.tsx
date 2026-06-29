@@ -3,6 +3,7 @@ import { AiExplainPanel } from "@/components/ai/AiExplainPanel";
 import { AiFeedbackControl } from "@/components/ai/AiFeedbackControl";
 import { AnalysisExportButton } from "@/components/ai/AnalysisExportButton";
 import { ProposedActionCard } from "@/components/ai/ProposedActionCard";
+import { SkillRunCard } from "@/components/ai/SkillRunCard";
 import { MarkdownText } from "@/components/MarkdownText";
 import { AIDisclaimer } from "@/components/ui";
 import type { AgentResponse } from "@/types/agent";
@@ -90,10 +91,15 @@ export function AgentAnswerBody({
         )}
 
         {/* CR-011-C approval cards + CR-039 authoring DRAFT cards (drafts have no
-            request_id, so key by index). */}
-        {proposed.map((a, i) => (
-          <ProposedActionCard key={a.request_id ?? `draft-${i}`} action={a} onResolve={onResolve} />
-        ))}
+            request_id, so key by index). CR-044 — a `run_result` is NOT a proposal;
+            it renders as a compact inline download card instead. */}
+        {proposed.map((a, i) =>
+          a.kind === "run_result" ? (
+            <SkillRunCard key={a.run_id ?? `run-${i}`} action={a} />
+          ) : (
+            <ProposedActionCard key={a.request_id ?? `draft-${i}`} action={a} onResolve={onResolve} />
+          )
+        )}
 
         {/* CR-011-D — export this analysis (only meaningful with a real answer). */}
         {hasAnswer && <AnalysisExportButton res={res} question={question} />}

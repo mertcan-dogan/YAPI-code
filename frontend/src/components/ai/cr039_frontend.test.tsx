@@ -10,6 +10,7 @@ import { createElement } from "react";
 const h = vi.hoisted(() => ({
   createReport: vi.fn(() => Promise.resolve({ id: "rep-new" })),
   createDashboard: vi.fn(() => Promise.resolve({ id: "dash-new" })),
+  createSkill: vi.fn(() => Promise.resolve({ id: "skill-new" })),
   run: vi.fn(() => Promise.resolve({ meta: {}, totals: { metrics: {} }, columns: [], rows: [] })),
   catalog: vi.fn(() => Promise.resolve({ metrics: [], dimensions: [] })),
   toastSuccess: vi.fn(),
@@ -21,6 +22,7 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   apiPut: vi.fn(() => Promise.resolve({})),
   studio: { createReport: h.createReport, createDashboard: h.createDashboard, run: h.run, catalog: h.catalog },
+  skills: { createSkill: h.createSkill },
 }));
 vi.mock("@/store/toast", () => ({ toast: { success: h.toastSuccess, error: h.toastError, info: vi.fn(), warning: vi.fn() } }));
 vi.mock("@/store/auth", () => ({ useAuth: () => ({ user: { role: h.role.current } }) }));
@@ -45,6 +47,22 @@ const DRAFT_DASH: any = {
   widgets: [{ id: "w1", type: "kpi", title: "Maliyet", layout: { x: 0, y: 0, w: 3, h: 2 },
               spec: { metrics: ["cost_try"], viz: "kpi" } }],
   date_range: null, comparison: null, filters: null, visibility: "private", labels: null,
+};
+
+// CR-044 — a draft_skill carries the compiled dashboard-shaped plan + format +
+// instruction. Its preview/summary reuse the dashboard path (plan.widgets[0].spec).
+const SKILL_PLAN: any = {
+  format: "xlsx",
+  title: "Aylık Özet",
+  widgets: [
+    { id: "w1", type: "kpi", title: "Maliyet", layout: { x: 0, y: 0, w: 3, h: 2 }, spec: { metrics: ["cost_try"], viz: "kpi" } },
+  ],
+  date_range: null,
+};
+const DRAFT_SKILL: any = {
+  kind: "draft_skill", kind_label: "Beceri Taslağı", title: "Aylık DGN Martı Özeti",
+  instruction: "Her ay DGN Martı gelir-gider özeti; Excel.", plan: SKILL_PLAN, format: "xlsx",
+  visibility: "private", labels: null,
 };
 
 const wrap = (ui: React.ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>);
@@ -125,5 +143,67 @@ describe("ProposedActionCard draft (CR-039)", () => {
     );
     expect(screen.getByText("Onayla")).toBeInTheDocument();
     expect(screen.queryByText("Oluştur")).not.toBeInTheDocument();
+  });
+});
+
+// CR-044 — the draft_skill authoring card: a plan summary (format + sections) + a
+// live preview of the plan's first widget + "Beceri olarak kaydet" (→ createSkill,
+// no director gate) / Düzenle / İptal + the refine hint.
+describe("ProposedActionCard draft_skill (CR-044)", () => {
+  it("shows 'Beceri olarak kaydet'/Düzenle/İptal for a NON-director (no approval gate) + a format chip", async () => {
+    wrap(<ProposedActionCard action={DRAFT_SKILL} />);
+    expect(screen.getByText("Beceri olarak kaydet")).toBeInTheDocument();
+    expect(screen.getByText("Düzenle")).toBeInTheDocument();
+    expect(screen.getByText("İptal")).toBeInTheDocument();
+    // The output-format chip is shown (skill plan summary).
+    expect(screen.getByText("Excel (.xlsx)")).toBeInTheDocument();
+    // No director-gated approval path for authoring.
+    expect(screen.queryByText("Onayla")).not.toBeInTheDocument();
+    // The live preview of plan.widgets[0].spec is wired (POST /studio/run).
+    await waitFor(() => expect(h.run).toHaveBeenCalled());
+    // The refine hint is present.
+    expect(screen.getByText(/Değiştirmek için yazmaya devam edin/)).toBeInTheDocument();
+  });
+
+  it("'Beceri olarak kaydet' creates the skill AS THE USER and stays in chat with a link to Uygulamalar", async () => {
+    const onResolve = vi.fn();
+    wrap(<ProposedActionCard action={DRAFT_SKILL} onResolve={onResolve} />);
+    fireEvent.click(screen.getByText("Beceri olarak kaydet"));
+
+    await waitFor(() =>
+      expect(h.createSkill).toHaveBeenCalledWith({
+        name: "Aylık DGN Martı Özeti",
+        instruction: "Her ay DGN Martı gelir-gider özeti; Excel.",
+        plan: SKILL_PLAN,
+        format: "xlsx",
+        visibility: "private",
+        labels: null,
+      })
+    );
+    expect(h.toastSuccess).toHaveBeenCalledWith("Beceri kaydedildi.");
+    expect(onResolve).toHaveBeenCalled();
+    // Stays in chat: success + an "Uygulamalar" link, no auto-navigation.
+    expect(await screen.findByText("Uygulamalar")).toBeInTheDocument();
+    expect(h.navigate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Uygulamalar"));
+    expect(h.navigate).toHaveBeenCalledWith("/studio/skills");
+  });
+
+  it("the Herkes toggle sets visibility=company when saving the skill (Özel is the default)", async () => {
+    wrap(<ProposedActionCard action={DRAFT_SKILL} />);
+    fireEvent.click(screen.getByText("Herkes"));
+    fireEvent.click(screen.getByText("Beceri olarak kaydet"));
+    await waitFor(() =>
+      expect(h.createSkill).toHaveBeenCalledWith(expect.objectContaining({ visibility: "company" }))
+    );
+  });
+
+  it("İptal dismisses the skill draft (no write) and notifies the page", () => {
+    const onResolve = vi.fn();
+    wrap(<ProposedActionCard action={DRAFT_SKILL} onResolve={onResolve} />);
+    fireEvent.click(screen.getByText("İptal"));
+    expect(onResolve).toHaveBeenCalled();
+    expect(screen.getByText("İptal edildi.")).toBeInTheDocument();
+    expect(h.createSkill).not.toHaveBeenCalled();
   });
 });

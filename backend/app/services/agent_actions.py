@@ -44,6 +44,8 @@ ACTION_KIND_LABELS = {
     # CR-039 — conversational authoring DRAFTS (no DB write; user creates via OLUŞTUR).
     "draft_report": "Rapor Taslağı",
     "draft_dashboard": "Pano Taslağı",
+    # CR-044 — a Skill (Beceri) DRAFT: a saved file-recipe; user saves via OLUŞTUR.
+    "draft_skill": "Beceri Taslağı",
 }
 
 _PENDING_MESSAGE = (
@@ -292,6 +294,60 @@ def propose_dashboard(db: Session, company_id, user_id, *, title: str, widgets,
                   {"widgets": widgets_json, "date_range": date_range,
                    "comparison": comparison, "filters": filters,
                    "visibility": vis, "labels": labels})
+
+
+# --------------------------------------------------------------------------- #
+# CR-044 — Action tool: propose_skill (DRAFT a reusable file recipe / Beceri)
+# --------------------------------------------------------------------------- #
+def propose_skill(db: Session, company_id, user_id, *, name, widgets,
+                  format: str = "xlsx", instruction: str = "", date_range=None,
+                  visibility: str = "private", labels=None, project_id=None) -> dict:
+    """CR-044 — DRAFT a Skill (Beceri): a saved, reusable *deliverable recipe* that
+    generates an Excel/PDF from LIVE data on demand. The agent decides STRUCTURE
+    only — it composes a dashboard-shaped ``plan`` ({format, title, widgets[],
+    date_range?}) from validated CR-032 widget specs (exactly as it drafts a pano).
+    EVERY figure is produced by the trusted engine (``run_spec``) at RUN time, never
+    by the model — so this carries the agent's no-fabrication invariant.
+
+    Validates the widgets against the catalog (on an invalid plan it raises
+    ``ActionError`` and NO draft is returned), then returns a ``draft_skill``
+    proposed-action carrying the compiled plan. It writes NOTHING (no DB row). The
+    Skill is created only by the user's explicit OLUŞTUR / "Beceri olarak kaydet"
+    click (``POST /skills`` as themselves) — the CR-039/CR-011 never-writes invariant.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ActionError("Beceri için bir ad gerekli.")
+    fmt = format if format in ("xlsx", "pdf") else "xlsx"
+    if not isinstance(widgets, list) or not widgets:
+        raise ActionError("Beceri için en az bir widget (bölüm) gerekli.")
+    try:
+        normalised = studio_creators.validate_widgets(db, company_id, user_id, widgets)
+    except APIError as exc:
+        raise ActionError(
+            f"Beceri planı geçersiz: {exc.message} "
+            "Yalnızca studio_catalog'daki metrik/boyut kimliklerini kullan."
+        )
+    widgets_json = [w.model_dump(mode="json") for w in normalised]
+    vis = visibility if visibility in ("private", "company") else "private"
+    # The compiled, runnable plan — a dashboard-shaped spec saved + re-run each time.
+    plan = {
+        "format": fmt,
+        "title": name,
+        "widgets": widgets_json,
+        "date_range": date_range,
+    }
+    # CR-044 — DRAFT: validation done above; write NOTHING. The user saves their own
+    # Skill via OLUŞTUR (POST /skills as themselves). instruction falls back to the
+    # name when blank so the draft stays consistent with SkillCreate (min_length=1)
+    # and can always be saved.
+    return _draft("draft_skill", name, {
+        "plan": plan,
+        "format": fmt,
+        "instruction": (instruction or "").strip() or name,
+        "visibility": vis,
+        "labels": labels,
+    })
 
 
 def _as_uuid(value):

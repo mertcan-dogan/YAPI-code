@@ -1,5 +1,6 @@
 import * as React from "react";
-import { ChevronDown, ChevronRight, MoreHorizontal, Pencil, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, ChevronRight, MoreHorizontal, Pencil, Plus, Search, Sparkles, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { RowMenu, MenuItem } from "@/components/ui";
 import { formatDateTime, formatRelativeTime, recencyBucket } from "@/utils/format";
@@ -125,13 +126,16 @@ export function AgentConversationsRail({
         )}
       </div>
 
-      {/* Uygulamalar (slot for the future skills/apps view) */}
-      <div className="flex items-center justify-between rounded-control px-1 py-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-faint">Uygulamalar</span>
-        <span className="rounded-sm bg-surface-hover px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-text-faint">
-          Yakında
+      {/* CR-044 — Uygulamalar (Beceriler): now a real link to the skills view. */}
+      <Link
+        to="/studio/skills"
+        className="focus-ring group flex items-center justify-between rounded-control px-1 py-1 transition-colors hover:bg-surface-hover"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-text-faint group-hover:text-brand">
+          Uygulamalar
         </span>
-      </div>
+        <ArrowUpRight className="h-3.5 w-3.5 text-text-faint group-hover:text-brand" />
+      </Link>
 
       {/* Son sohbetler */}
       <div className="min-h-0 flex-1">
