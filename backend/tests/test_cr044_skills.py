@@ -233,9 +233,9 @@ def test_run_skill_file_figures_come_only_from_run_spec(client, db, seed, monkey
     from app.services.studio.export import studio_export_dashboard as real_export
     seen = {}
 
-    def spy_export(widgets, results, title, fmt):
+    def spy_export(widgets, results, title, fmt, **kw):
         seen["results"] = results
-        return real_export(widgets, results, title, fmt)
+        return real_export(widgets, results, title, fmt, **kw)
 
     monkeypatch.setattr(skills_service, "studio_export_dashboard", spy_export)
 

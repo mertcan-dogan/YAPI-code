@@ -103,19 +103,29 @@ def test_studio_bar_report_pdf_embeds_chart(db, seed):
 
 
 # --------------------------------------------------------------------------- #
-# 3) viz does NOT touch the xlsx / csv byte-paths (PDF-only feature)
+# 3) viz changes the xlsx (CR-046 native charts) but NOT the csv byte-path
 # --------------------------------------------------------------------------- #
-def test_viz_does_not_change_xlsx_csv_bytes(db, seed):
+def test_viz_changes_xlsx_not_csv_bytes(db, seed):
     p, cid = _seed_months(db, seed)
     result = run_spec(db, cid, LINE_SPEC)
 
-    for fmt in ("xlsx", "csv"):
-        none = studio_export(result, fmt, "Eşit", viz=None).body
-        line = studio_export(result, fmt, "Eşit", viz="line").body
-        assert none == line, f"{fmt} bytes changed with viz"
-    # And the magic bytes are still the expected containers.
-    assert studio_export(result, "xlsx", "Eşit", viz="line").body[:2] == b"PK"
-    assert studio_export(result, "csv", "Eşit", viz="line").body[:3] == b"\xef\xbb\xbf"
+    # CSV ignores viz → identical bytes; BOM container intact.
+    csv_none = studio_export(result, "csv", "Eşit", viz=None).body
+    csv_line = studio_export(result, "csv", "Eşit", viz="line").body
+    assert csv_none == csv_line, "csv bytes must not change with viz"
+    assert csv_line[:3] == b"\xef\xbb\xbf"
+
+    # CR-046: the xlsx now reflects viz — a line report gains a native chart on Özet,
+    # so its bytes differ from the table (viz=None) workbook. Both are valid PK files.
+    from openpyxl import load_workbook
+    import io
+
+    xlsx_table = studio_export(result, "xlsx", "Eşit", viz=None).body
+    xlsx_line = studio_export(result, "xlsx", "Eşit", viz="line").body
+    assert xlsx_table[:2] == b"PK" and xlsx_line[:2] == b"PK"
+    wb_line = load_workbook(io.BytesIO(xlsx_line))
+    assert "Özet" in wb_line.sheetnames
+    assert len(wb_line["Özet"]._charts) >= 1  # the line chart is on the Özet dashboard
 
 
 # --------------------------------------------------------------------------- #

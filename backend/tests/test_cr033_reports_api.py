@@ -288,8 +288,9 @@ def test_export_content_carries_the_data(client, seed, db):
     assert "120000" in csv_text       # the computed value reached the file
 
     xlsx = client.post(f"/api/v1/studio/reports/{rid}/export?format=xlsx")
-    ws = load_workbook(io.BytesIO(xlsx.content)).active
-    vals = [c for row in ws.iter_rows(values_only=True) for c in row]
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    assert "Özet" in wb.sheetnames  # CR-046 Özet-lite for a single report
+    vals = [c for s in wb.worksheets for row in s.iter_rows(values_only=True) for c in row]
     assert "Toplam" in vals
     assert 120000 in vals or 120000.0 in vals
 
@@ -322,12 +323,12 @@ def test_export_neutralizes_formula_injection(client, seed, db):
     assert "'=WEBSERVICE" in csv_text
     assert csv_text.count("=WEBSERVICE") == csv_text.count("'=WEBSERVICE")
 
-    # XLSX: the cell is literal text, never a formula.
-    ws = load_workbook(io.BytesIO(
-        client.post(f"/api/v1/studio/reports/{rid}/export?format=xlsx").content)).active
-    cells = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    # XLSX: the cell is literal text, never a formula (across EVERY sheet — Özet + data).
+    wb = load_workbook(io.BytesIO(
+        client.post(f"/api/v1/studio/reports/{rid}/export?format=xlsx").content))
+    cells = [c.value for s in wb.worksheets for row in s.iter_rows() for c in row if isinstance(c.value, str)]
     assert any(v.startswith("'=WEBSERVICE") for v in cells)
-    assert all(c.data_type != "f" for row in ws.iter_rows() for c in row)
+    assert all(c.data_type != "f" for s in wb.worksheets for row in s.iter_rows() for c in row)
     assert not any(v[:1] in ("=", "+", "-", "@") for v in cells)
 
 
