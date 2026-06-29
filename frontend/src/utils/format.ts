@@ -83,6 +83,41 @@ export function formatDateTime(value: string | Date | null | undefined): string 
   });
 }
 
+// CR-038 §4 — tr-TR relative time for the session list ("az önce", "2 saat önce",
+// "dün", "3 gün önce"). The absolute formatDateTime stays available for tooltips.
+export function formatRelativeTime(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "";
+  const sec = Math.round((Date.now() - d.getTime()) / 1000);
+  if (sec < 45) return "az önce";
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${Math.max(1, min)} dk önce`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} saat önce`;
+  const day = Math.round(hr / 24);
+  if (day === 1) return "dün";
+  if (day < 7) return `${day} gün önce`;
+  const wk = Math.round(day / 7);
+  if (day < 30) return `${wk} hafta önce`;
+  const mo = Math.round(day / 30);
+  if (mo < 12) return `${mo} ay önce`;
+  return `${Math.round(day / 365)} yıl önce`;
+}
+
+// CR-038 §B3 — recency bucket for grouping the session list (Bugün / Son 7 gün /
+// Daha eski).
+export function recencyBucket(value: string | Date | null | undefined): "today" | "week" | "older" {
+  if (!value) return "older";
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "older";
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (d.getTime() >= startToday) return "today";
+  if (d.getTime() >= startToday - 6 * 86_400_000) return "week";
+  return "older";
+}
+
 export function daysUntil(value: string | Date | null | undefined): number {
   if (!value) return 0;
   const d = typeof value === "string" ? new Date(value) : value;
