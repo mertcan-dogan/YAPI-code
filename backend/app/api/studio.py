@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.constants import ROLE_DIRECTOR
 from app.db import get_db
 from app.deps import CurrentUser
+from app.models.company import Company
 from app.models.dashboard import Dashboard
 from app.models.report import Report
 from app.responses import APIError, success
@@ -40,6 +41,12 @@ from app.services.studio.export import studio_export, studio_export_dashboard
 router = APIRouter(tags=["studio"])
 
 EXPORT_FORMATS = ("pdf", "xlsx", "csv")
+
+
+def _company_name(db: Session, user) -> str | None:
+    """CR-046 — the caller's company name for the Excel header band (read-only)."""
+    co = db.get(Company, user.company_id)
+    return co.name if co else None
 
 
 # --------------------------------------------------------------------------- #
@@ -238,7 +245,8 @@ def export_report(
     if format not in EXPORT_FORMATS:
         raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf, xlsx veya csv)")
     result = run_spec(db, user.company_id, report.spec)
-    return studio_export(result, format, report.title, viz=(report.spec or {}).get("viz"))
+    return studio_export(result, format, report.title, viz=(report.spec or {}).get("viz"),
+                         company=_company_name(db, user))
 
 
 # --------------------------------------------------------------------------- #
@@ -504,4 +512,5 @@ def export_dashboard(
     if format not in DASHBOARD_EXPORT_FORMATS:
         raise APIError(422, "INVALID_FORMAT", "Pano için geçersiz dışa aktarma biçimi (pdf veya xlsx)")
     results = _run_dashboard_batch(db, user, dashboard)
-    return studio_export_dashboard(dashboard.widgets or [], results, dashboard.title, format)
+    return studio_export_dashboard(dashboard.widgets or [], results, dashboard.title, format,
+                                   company=_company_name(db, user))

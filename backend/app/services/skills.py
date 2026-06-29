@@ -23,6 +23,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.company import Company
 from app.models.dashboard import Dashboard
 from app.models.skill import Skill, SkillRun
 from app.models.user import User
@@ -80,7 +81,11 @@ def run_skill(db: Session, user: User, skill: Skill, *, signed_ttl: int | None =
     try:
         deck = _plan_dashboard(plan)
         results = _run_dashboard_batch(db, user, deck)  # SOLE figure source
-        resp = studio_export_dashboard(deck.widgets or [], results, deck.title, fmt)
+        company = db.get(Company, user.company_id)
+        resp = studio_export_dashboard(
+            deck.widgets or [], results, deck.title, fmt,
+            company=company.name if company else None,
+        )
         data = bytes(resp.body)  # studio_export_dashboard returns a Response
         if not data:
             raise APIError(422, "NO_DATA", "Dışa aktarılacak veri yok")

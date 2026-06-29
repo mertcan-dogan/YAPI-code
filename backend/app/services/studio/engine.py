@@ -873,6 +873,9 @@ def run_spec(db, company_id, spec: dict, today: date | None = None) -> dict:
             "basis": basis,
             "date_range": _window_meta(date_from, date_to),
             "comparison": _window_meta(cmp_from, cmp_to) if cmp_from is not None else None,
+            # CR-046 — so renderers know whether deltas are fractions (pct) or absolute
+            # amounts (abs); only meaningful when a comparison is present.
+            "comparison_unit": comparison_unit if cmp_from is not None else None,
             "currency": basis["currency"],
             "truncated": truncated,
             "unavailable": unavailable,

@@ -562,9 +562,11 @@ def test_export_pdf_and_xlsx_and_csv_rejected(client, seed, db):
     assert "spreadsheetml" in xlsx.headers["content-type"]
     assert xlsx.content[:2] == b"PK"  # zip container
 
-    # One sheet per DATA widget (kpi + table = 2); the text widget gets none.
+    # CR-046: an "Özet" dashboard sheet + ONE consolidated data sheet (the table);
+    # the kpi widget becomes a card on Özet (NOT its own sheet), the text widget none.
     from openpyxl import load_workbook
     wb = load_workbook(io.BytesIO(xlsx.content))
+    assert "Özet" in wb.sheetnames
     assert len(wb.sheetnames) == 2
 
     csv_r = client.post(f"{BASE}/{did}/export?format=csv")
@@ -586,8 +588,10 @@ def test_export_xlsx_carries_the_data(client, seed, db):
     }).json()["data"]["id"]
 
     xlsx = client.post(f"{BASE}/{did}/export?format=xlsx")
-    ws = load_workbook(io.BytesIO(xlsx.content)).active
-    vals = [c for row in ws.iter_rows(values_only=True) for c in row]
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    assert "Özet" in wb.sheetnames  # CR-046 decision dashboard
+    # The computed value + Toplam row reach the file (now on the consolidated data sheet).
+    vals = [c for s in wb.worksheets for row in s.iter_rows(values_only=True) for c in row]
     assert "Toplam" in vals
     assert 120000 in vals or 120000.0 in vals
 
@@ -646,14 +650,14 @@ def test_export_xlsx_neutralizes_formula_injection(client, seed, db):
 
     xlsx = client.post(f"{BASE}/{did}/export?format=xlsx")
     assert xlsx.status_code == 200
-    ws = load_workbook(io.BytesIO(xlsx.content)).active
-    cells = [c.value for row in ws.iter_rows() for c in row if isinstance(c.value, str)]
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    cells = [c.value for s in wb.worksheets for row in s.iter_rows() for c in row if isinstance(c.value, str)]
 
     # The planted value reached the sheet (so the guard had something to neutralize)…
     assert any("WEBSERVICE" in v for v in cells)
-    # …but it is neutralized: no live formula cell, nothing begins with a trigger, and
-    # the payload survives only in apostrophe-prefixed literal-text form.
-    assert all(c.data_type != "f" for row in ws.iter_rows() for c in row)
+    # …but it is neutralized across EVERY sheet (Özet + data): no live formula cell,
+    # nothing begins with a trigger, and the payload survives only as literal text.
+    assert all(c.data_type != "f" for s in wb.worksheets for row in s.iter_rows() for c in row)
     assert not any(v[:1] in ("=", "+", "-", "@") for v in cells)
     assert any(v.startswith("'=WEBSERVICE") for v in cells)
 

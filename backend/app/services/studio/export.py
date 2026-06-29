@@ -117,23 +117,10 @@ def _pdf_cell(v) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# xlsx
+# xlsx — CR-046: the single-report xlsx now routes through the decision-grade
+# engine (``excel_report.build_single_report``) from the ``studio_export`` xlsx
+# branch; the old flat-dump ``_xlsx`` helper was removed.
 # --------------------------------------------------------------------------- #
-def _xlsx(header, data_rows, totals_row) -> bytes:
-    from openpyxl import Workbook
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Rapor"
-    # None/int/float render natively; text cells are formula-guarded.
-    ws.append([_safe_cell(c) for c in header])
-    for r in data_rows:
-        ws.append([_safe_cell(c) for c in r])
-    if totals_row:
-        ws.append([_safe_cell(c) for c in totals_row])
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
 
 
 # --------------------------------------------------------------------------- #
@@ -362,11 +349,16 @@ def _pdf(header, data_rows, totals_row, title: str, result: dict, viz: str | Non
 # --------------------------------------------------------------------------- #
 # Public entrypoint
 # --------------------------------------------------------------------------- #
-def studio_export(result: dict, fmt: str, title: str, viz: str | None = None) -> Response:
+def studio_export(result: dict, fmt: str, title: str, viz: str | None = None,
+                  company: str | None = None) -> Response:
     """Build a downloadable file (pdf/xlsx/csv) from a run_spec result. Read-only.
 
-    ``viz`` (the report spec's visualization) drives the PDF chart (CR-037); it is
-    ignored by the xlsx/csv paths, which stay byte-for-byte as before.
+    ``viz`` (the report spec's visualization) drives the PDF chart (CR-037) and the
+    CR-046 single-report xlsx lead element; it is ignored by the csv path.
+
+    CR-046: the xlsx path is now the decision-grade engine (``excel_report``) — an
+    Özet-lite (title band + headline KPIs + the report's chart) + a styled data sheet,
+    not the old flat dump. pdf/csv are unchanged.
 
     Raises ``APIError(422, INVALID_FORMAT)`` for an unknown format (the router also
     guards, so this is defense-in-depth)."""
@@ -374,7 +366,9 @@ def studio_export(result: dict, fmt: str, title: str, viz: str | None = None) ->
     slug = _slug(title)
 
     if fmt == "xlsx":
-        content = _xlsx(header, data_rows, totals_row)
+        from app.services.studio.excel_report import build_single_report
+
+        content = build_single_report(result, title, viz, company=company)
         media, ext = _XLSX_MEDIA, "xlsx"
     elif fmt == "csv":
         content = _csv(header, data_rows, totals_row)
@@ -524,41 +518,17 @@ def _dashboard_pdf(ordered: list, results: dict, title: str) -> bytes:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _dashboard_xlsx(ordered: list, results: dict) -> bytes:
-    from openpyxl import Workbook
+def _dashboard_xlsx(ordered: list, results: dict, title: str, company: str | None = None) -> bytes:
+    """CR-046 — the decision-grade Excel engine: an Özet dashboard (KPI cards + native
+    charts) + consolidated styled data sheets, NOT one-sheet-per-widget. Raises
+    ``APIError(422, NO_DATA)`` when nothing is renderable (no empty workbook)."""
+    from app.services.studio.excel_report import build_workbook
 
-    wb = Workbook()
-    default_ws = wb.active
-    used_names: set = set()
-    sheet_count = 0
-    for w in ordered:
-        if w.get("type") == "text":
-            continue
-        res = results.get(w.get("id"))
-        if not _is_renderable(res):
-            continue
-        header, data_rows, totals_row = _flat_table(res)
-        name = _sheet_name(w.get("title"), used_names)
-        used_names.add(name)
-        ws = default_ws if sheet_count == 0 else wb.create_sheet(title=name)
-        if sheet_count == 0:
-            ws.title = name
-        ws.append([_safe_cell(c) for c in header])
-        for r in data_rows:
-            ws.append([_safe_cell(c) for c in r])
-        if totals_row:
-            ws.append([_safe_cell(c) for c in totals_row])
-        sheet_count += 1
-
-    if sheet_count == 0:
-        raise APIError(422, "NO_DATA", "Dışa aktarılacak veri yok")
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    return build_workbook(ordered, results, title, company=company)
 
 
-def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str) -> Response:
+def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str,
+                            company: str | None = None) -> Response:
     """Build a dashboard deck file (pdf/xlsx) from already-computed batch results.
 
     READ-ONLY: consumes ``results`` ({widget_id: run_spec-result-or-status}) and the
@@ -569,8 +539,9 @@ def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str) 
     * ``pdf`` — title + each renderable widget (text → paragraph; unavailable →
       a note; data/report → title + flattened table). No renderable widget ⇒ still a
       title-only PDF (never an error).
-    * ``xlsx`` — one sheet per data/report widget that has a result; zero data
-      sheets ⇒ ``APIError(422)`` (no empty workbook).
+    * ``xlsx`` — CR-046 decision-grade workbook: an "Özet" dashboard (KPI cards +
+      native charts) + consolidated styled data sheets; zero renderable widgets ⇒
+      ``APIError(422)`` (no empty workbook).
     * ``csv`` — not offered for a multi-widget pano ⇒ ``APIError(422)``.
     """
     ordered = _ordered_widgets(widgets)
@@ -580,7 +551,7 @@ def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str) 
         content = _dashboard_pdf(ordered, results, title)
         media, ext = _PDF_MEDIA, "pdf"
     elif fmt == "xlsx":
-        content = _dashboard_xlsx(ordered, results)
+        content = _dashboard_xlsx(ordered, results, title, company=company)
         media, ext = _XLSX_MEDIA, "xlsx"
     elif fmt == "csv":
         raise APIError(422, "INVALID_FORMAT", "Pano CSV olarak dışa aktarılamaz (pdf veya xlsx)")
