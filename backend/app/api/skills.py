@@ -17,7 +17,7 @@ needs NO approval — it generates a file from live data via the trusted engine 
 import uuid
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.constants import ROLE_DIRECTOR
@@ -30,6 +30,7 @@ from app.schemas.skill import (
     SkillListItem,
     SkillOut,
     SkillRunOut,
+    SkillRunSummary,
     SkillUpdate,
 )
 from app.services import skills as skills_service
@@ -43,7 +44,32 @@ _VALID_FORMATS = ("xlsx", "pdf")
 # --------------------------------------------------------------------------- #
 # Serialization + access helpers (mirror api/studio.py)
 # --------------------------------------------------------------------------- #
-def _skill_out(skill: Skill, user) -> dict:
+def _run_summary(run: SkillRun | None) -> SkillRunSummary | None:
+    """CR-044.1 — the embeddable latest-run summary (or None)."""
+    if run is None:
+        return None
+    return SkillRunSummary(
+        run_id=run.id, run_at=run.run_at, file_name=run.file_name, status=run.status
+    )
+
+
+def _latest_ok_run(db: Session, company_id, skill_id) -> SkillRun | None:
+    """The most recent SUCCESSFUL (downloadable) run of a skill, company-scoped."""
+    return db.execute(
+        select(SkillRun)
+        .where(
+            SkillRun.company_id == company_id,
+            SkillRun.skill_id == skill_id,
+            SkillRun.is_deleted.is_(False),
+            SkillRun.status == "ok",
+        )
+        .order_by(SkillRun.run_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def _skill_out(skill: Skill, user, db: Session) -> dict:
+    last_run = _latest_ok_run(db, user.company_id, skill.id)
     return SkillOut(
         id=skill.id,
         name=skill.name,
@@ -57,6 +83,7 @@ def _skill_out(skill: Skill, user) -> dict:
         created_at=skill.created_at,
         updated_at=skill.updated_at,
         is_owner=(skill.owner_id == user.id),
+        last_run=_run_summary(last_run),
     ).model_dump(mode="json")
 
 
@@ -119,20 +146,22 @@ def _validate_plan(db: Session, user, plan) -> None:
 @router.get("/skills")
 def list_skills(user: CurrentUser, q: str | None = None, db: Session = Depends(get_db)):
     """Saved skills the user may view, newest-edited first. Optional ``q`` does a
-    case-insensitive name contains-match. Each row carries ``last_run_at`` (the most
-    recent successful run) for the Uygulamalar list."""
-    # last successful run per skill (company-scoped) → {skill_id: max(run_at)}
-    last_runs = dict(
-        db.execute(
-            select(SkillRun.skill_id, func.max(SkillRun.run_at))
-            .where(
-                SkillRun.company_id == user.company_id,
-                SkillRun.is_deleted.is_(False),
-                SkillRun.status == "ok",
-            )
-            .group_by(SkillRun.skill_id)
-        ).all()
-    )
+    case-insensitive name contains-match. Each row carries ``last_run`` (the most
+    recent SUCCESSFUL run — for "Son çalıştırma" + an immediate re-download İndir)
+    and ``last_run_at`` (kept for back-compat + sort)."""
+    # Latest SUCCESSFUL run per skill (company-scoped). Fetched newest-first and
+    # de-duped in Python (portable: SQLite + Postgres) → {skill_id: SkillRun}.
+    latest_run: dict = {}
+    for run in db.execute(
+        select(SkillRun)
+        .where(
+            SkillRun.company_id == user.company_id,
+            SkillRun.is_deleted.is_(False),
+            SkillRun.status == "ok",
+        )
+        .order_by(SkillRun.run_at.desc())
+    ).scalars():
+        latest_run.setdefault(run.skill_id, run)
     stmt = _viewable_q(user)
     if q:
         stmt = stmt.where(Skill.name.ilike(f"%{q}%"))
@@ -146,7 +175,8 @@ def list_skills(user: CurrentUser, q: str | None = None, db: Session = Depends(g
             owner_id=s.owner_id,
             updated_at=s.updated_at,
             labels=s.labels,
-            last_run_at=last_runs.get(s.id),
+            last_run_at=(latest_run[s.id].run_at if s.id in latest_run else None),
+            last_run=_run_summary(latest_run.get(s.id)),
         ).model_dump(mode="json")
         for s in rows
     ]
@@ -174,13 +204,13 @@ def create_skill(body: SkillCreate, user: CurrentUser, db: Session = Depends(get
     db.add(skill)
     db.commit()
     db.refresh(skill)
-    return success(_skill_out(skill, user))
+    return success(_skill_out(skill, user, db))
 
 
 @router.get("/skills/{skill_id}")
 def get_skill(skill_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     skill = _get_viewable(db, user, skill_id)
-    return success(_skill_out(skill, user))
+    return success(_skill_out(skill, user, db))
 
 
 @router.put("/skills/{skill_id}")
@@ -199,7 +229,7 @@ def update_skill(
             setattr(skill, field, data[field])
     db.commit()
     db.refresh(skill)
-    return success(_skill_out(skill, user))
+    return success(_skill_out(skill, user, db))
 
 
 @router.delete("/skills/{skill_id}")

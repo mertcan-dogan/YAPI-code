@@ -18,6 +18,18 @@ from pydantic import BaseModel, Field
 from app.schemas.common import ORMModel
 
 
+class SkillRunSummary(BaseModel):
+    """CR-044.1 — the latest run of a skill, embedded on Skill responses so the
+    Uygulamalar list/detail can show "Son çalıştırma" + a re-download İndir without
+    a second request. ``run_id`` is the SkillRun id (re-sign via
+    ``POST /skills/runs/{run_id}/download``)."""
+
+    run_id: uuid.UUID
+    run_at: datetime
+    file_name: str | None = None
+    status: str
+
+
 class SkillCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     instruction: str = Field(min_length=1)
@@ -49,11 +61,13 @@ class SkillOut(ORMModel):
     created_at: datetime
     updated_at: datetime
     is_owner: bool
+    # CR-044.1 — the latest successful run (or null), for re-download from detail.
+    last_run: SkillRunSummary | None = None
 
 
 class SkillListItem(BaseModel):
     """Lightweight row for the Uygulamalar list — no full plan, just the picker
-    preview + the last-run timestamp."""
+    preview + the last-run summary (for "Son çalıştırma" + re-download)."""
 
     id: uuid.UUID
     name: str
@@ -63,6 +77,9 @@ class SkillListItem(BaseModel):
     updated_at: datetime
     labels: list[str] | None = None
     last_run_at: datetime | None = None
+    # CR-044.1 — the latest successful run (or null), so a list row offers İndir
+    # immediately on load. ``last_run_at`` is kept for back-compat + sort.
+    last_run: SkillRunSummary | None = None
 
 
 class SkillRunOut(ORMModel):

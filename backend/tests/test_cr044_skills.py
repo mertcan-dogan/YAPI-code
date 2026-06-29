@@ -354,6 +354,39 @@ def test_private_skill_not_visible_to_company_stranger(client, db, seed):
 
 
 # --------------------------------------------------------------------------- #
+# 4b. CR-044.1 — last_run on SkillOut / SkillListItem (findability after reload)
+# --------------------------------------------------------------------------- #
+def test_skill_last_run_null_then_reflects_latest_run(client, db, seed, monkeypatch):
+    cid, uid, project = _ids(seed)
+    _cost(db, project, 15_000, uid)
+    _mock_storage(monkeypatch)
+    director = seed["a"]["users"][ROLE_DIRECTOR]
+    client.login(director)
+
+    sid = client.post(BASE, json={
+        "name": "Beceri", "instruction": "x", "plan": _plan(), "format": "xlsx",
+    }).json()["data"]["id"]
+
+    # Fresh skill → last_run is null on both detail and list.
+    assert client.get(f"{BASE}/{sid}").json()["data"]["last_run"] is None
+    listed = next(r for r in client.get(BASE).json()["data"] if r["id"] == sid)
+    assert listed["last_run"] is None and listed["last_run_at"] is None
+
+    # Run it → last_run reflects the latest ok run (run_id + file_name + status).
+    run = client.post(f"{BASE}/{sid}/run").json()["data"]
+    detail = client.get(f"{BASE}/{sid}").json()["data"]
+    assert detail["last_run"] is not None
+    assert detail["last_run"]["run_id"] == run["run_id"]
+    assert detail["last_run"]["status"] == "ok"
+    assert detail["last_run"]["file_name"] == run["file_name"]
+
+    # The list row carries the same last_run for an immediate re-download on load.
+    listed2 = next(r for r in client.get(BASE).json()["data"] if r["id"] == sid)
+    assert listed2["last_run"]["run_id"] == run["run_id"]
+    assert listed2["last_run_at"] is not None
+
+
+# --------------------------------------------------------------------------- #
 # 5. signed-URL helper — scope check (shared infra for CR-045 + future exports)
 # --------------------------------------------------------------------------- #
 def test_signed_url_refuses_foreign_path(monkeypatch):

@@ -10,6 +10,16 @@ import type { Visibility, Widget } from "./studio";
 export type SkillFormat = "xlsx" | "pdf";
 export type SkillRunStatus = "ok" | "error";
 
+// CR-044.1 — the latest successful run embedded on Skill responses (for "Son
+// çalıştırma" + an immediate re-download İndir). run_id re-signs via
+// POST /skills/runs/{run_id}/download.
+export interface SkillRunSummary {
+  run_id: string;
+  run_at: string;
+  file_name: string | null;
+  status: SkillRunStatus;
+}
+
 // The compiled, runnable plan = a dashboard-shaped spec (a set of CR-032 widget
 // specs + the output format). The agent builds it exactly as it drafts a pano.
 export interface SkillPlan {
@@ -29,6 +39,7 @@ export interface SkillListItem {
   updated_at: string;
   labels: string[] | null;
   last_run_at: string | null; // null until the skill has been run at least once
+  last_run: SkillRunSummary | null; // CR-044.1 — latest ok run (for İndir on load)
 }
 
 // GET /skills/{id} → full skill.
@@ -45,6 +56,7 @@ export interface SkillOut {
   created_at: string;
   updated_at: string;
   is_owner: boolean;
+  last_run: SkillRunSummary | null; // CR-044.1
 }
 
 // POST /skills body (the user's save action — owner = CurrentUser).

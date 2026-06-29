@@ -1,7 +1,6 @@
 import { AgentChart } from "@/components/charts/AgentChart";
 import { AiExplainPanel } from "@/components/ai/AiExplainPanel";
 import { AiFeedbackControl } from "@/components/ai/AiFeedbackControl";
-import { AnalysisExportButton } from "@/components/ai/AnalysisExportButton";
 import { ProposedActionCard } from "@/components/ai/ProposedActionCard";
 import { SkillRunCard } from "@/components/ai/SkillRunCard";
 import { MarkdownText } from "@/components/MarkdownText";
@@ -13,7 +12,8 @@ import { FileText, Loader2, Pin } from "lucide-react";
 // CR-011-D §4.1 — the shared agent-answer renderer used by the ask drawer and the
 // rail. Streams live tokens with a real-time step indicator, then renders the
 // final answer: markdown + chart(s) + citation chips + proposed-action cards +
-// export + the CR-024 "AI nasıl çalıştı?" panel + feedback.
+// the CR-024 "AI nasıl çalıştı?" panel + feedback. (CR-044.1 removed the chat
+// analysis-transcript "Dışa aktar" — Skills now produce the real deliverables.)
 //
 // CR-038 §7-A — also the renderer for the full Yapı AI page. The page-only extras
 // (`onPin`, `showDisclaimer`, `showGeneratedAtLine`) are OPTIONAL and default-off
@@ -63,7 +63,6 @@ export function AgentAnswerBody({
   if (res) {
     const citations = res.citations ?? [];
     const proposed = res.proposed_actions ?? [];
-    const hasAnswer = !!(res.answer_markdown || "").trim();
     return (
       <div className="mt-3">
         <div className="text-sm leading-relaxed text-text-primary">
@@ -100,9 +99,6 @@ export function AgentAnswerBody({
             <ProposedActionCard key={a.request_id ?? `draft-${i}`} action={a} onResolve={onResolve} />
           )
         )}
-
-        {/* CR-011-D — export this analysis (only meaningful with a real answer). */}
-        {hasAnswer && <AnalysisExportButton res={res} question={question} />}
 
         {res.generated_at && (
           <AiExplainPanel

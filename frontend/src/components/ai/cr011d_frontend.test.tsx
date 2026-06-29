@@ -58,7 +58,7 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("AskAgentDrawer streaming (CR-011-D)", () => {
-  it("streams live tokens, then renders the final answer + citation + export", () => {
+  it("streams live tokens, then renders the final answer + citation", () => {
     wrap(<AskAgentDrawer question="Akçansa ne kadar?" onClose={() => {}} />);
 
     // The stream was started with the question.
@@ -75,11 +75,10 @@ describe("AskAgentDrawer streaming (CR-011-D)", () => {
     act(() => cb.onStep("Tedarikçi harcamaları inceleniyor…", "get_vendor_spend"));
     expect(screen.getByText("Tedarikçi harcamaları inceleniyor…")).toBeInTheDocument();
 
-    // Final payload renders the answer, citation chip and export control.
+    // Final payload renders the answer, citation chip and the "how it worked" panel.
     act(() => cb.onFinal(FINAL));
     expect(screen.getByText(/Akçansa ile toplam/)).toBeInTheDocument();
     expect(screen.getByText("Akçansa — 4.000 ₺")).toBeInTheDocument();
-    expect(screen.getByText("Dışa aktar")).toBeInTheDocument();
     expect(screen.getByText("AI nasıl çalıştı?")).toBeInTheDocument();
   });
 

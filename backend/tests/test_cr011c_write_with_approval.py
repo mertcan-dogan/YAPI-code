@@ -355,20 +355,6 @@ def test_export_excel_renders(db, seed):
     assert any(name not in ("Analiz", "Kaynaklar", "Bilgi") for name in wb.sheetnames)
 
 
-def test_export_endpoint_pdf_and_excel(client, seed):
-    client.login(seed["a"]["users"][ROLE_DIRECTOR])
-    r = client.post("/api/v1/ai/agent/export?fmt=pdf", json=_ANALYSIS)
-    assert r.status_code == 200, r.text
-    assert r.headers["content-type"] == "application/pdf"
-    assert r.content[:4] == b"%PDF"
-
-    r2 = client.post("/api/v1/ai/agent/export?fmt=excel", json=_ANALYSIS)
-    assert r2.status_code == 200, r2.text
-    assert "spreadsheetml" in r2.headers["content-type"]
-
-
-def test_export_endpoint_requires_answer(client, seed):
-    client.login(seed["a"]["users"][ROLE_DIRECTOR])
-    r = client.post("/api/v1/ai/agent/export?fmt=pdf",
-                    json={"answer_markdown": "   ", "charts": [], "citations": []})
-    assert r.status_code == 422
+# CR-044.1 — the POST /ai/agent/export endpoint was retired (chat transcript export
+# removed). The render helpers stay, covered by the two unit tests above; the
+# endpoint round-trip + validation tests were removed with the endpoint.

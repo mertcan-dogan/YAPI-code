@@ -12,11 +12,13 @@ import { skills } from "@/lib/api";
 import { downloadFromUrl } from "@/lib/download";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
-import type { SkillFormat, SkillListItem, SkillOut } from "@/types/skill";
+import type { SkillFormat, SkillListItem, SkillOut, SkillRunOut } from "@/types/skill";
 import { formatRelativeTime } from "@/utils/format";
 import {
+  Download,
   FileSpreadsheet,
   FileText,
+  History,
   Loader2,
   Lock,
   MoreHorizontal,
@@ -73,6 +75,19 @@ export default function SkillsPage() {
   const [runningId, setRunningId] = useState<string | null>(null);
   // The skill being edited in the metadata modal (null = closed).
   const [editing, setEditing] = useState<SkillOut | null>(null);
+  // CR-044.1 — the skill whose run history modal is open (null = closed).
+  const [historyOf, setHistoryOf] = useState<SkillListItem | null>(null);
+
+  // CR-044.1 — re-download a past run's file: re-sign a short-lived URL (signed URLs
+  // expire) via POST /skills/runs/{run_id}/download, then trigger the browser save.
+  const reDownload = useCallback(async (runId: string, fileName: string | null) => {
+    try {
+      const res = await skills.downloadSkillFile(runId);
+      downloadFromUrl(res.download_url, res.file_name ?? fileName ?? "beceri");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Dosya indirilemedi");
+    }
+  }, []);
 
   // Debounce the search box → the server-side ?q= filter.
   useEffect(() => {
@@ -113,10 +128,24 @@ export default function SkillsPage() {
     try {
       const res = await skills.runSkill(row.id);
       downloadFromUrl(res.download_url, res.file_name);
-      toast.success("Dosya üretildi");
-      // Reflect the fresh run on the list (son çalıştırma) without a full refetch.
+      const word = row.format === "pdf" ? "PDF" : "Excel";
+      const nowIso = new Date().toISOString();
+      // CR-044.1 — explicit "it downloaded, and where" + an İndir to re-open it.
+      toast.success(`${word} üretildi ve indirildi — İndirilenler klasörü`, {
+        action: { label: "İndir", onClick: () => reDownload(res.run_id, res.file_name) },
+      });
+      // Reflect the fresh run on the row (son çalıştırma + the per-row İndir) without
+      // a full refetch — so the file stays findable immediately, before any reload.
       setItems((prev) =>
-        prev.map((s) => (s.id === row.id ? { ...s, last_run_at: new Date().toISOString() } : s))
+        prev.map((s) =>
+          s.id === row.id
+            ? {
+                ...s,
+                last_run_at: nowIso,
+                last_run: { run_id: res.run_id, run_at: nowIso, file_name: res.file_name, status: "ok" },
+              }
+            : s
+        )
       );
     } catch (e: any) {
       toast.error(e?.message ?? "Beceri çalıştırılamadı");
@@ -208,6 +237,18 @@ export default function SkillsPage() {
               {isRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               {isRunning ? "Çalışıyor…" : "Çalıştır"}
             </button>
+            {/* CR-044.1 — re-download the latest produced file (re-signs a fresh URL).
+                Shown once the skill has at least one successful run. */}
+            {row.last_run && (
+              <button
+                type="button"
+                onClick={() => reDownload(row.last_run!.run_id, row.last_run!.file_name)}
+                aria-label={`İndir: ${row.name}`}
+                className="focus-ring inline-flex items-center gap-1 rounded-control border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-primary transition hover:border-brand hover:text-brand"
+              >
+                <Download className="h-3.5 w-3.5" /> İndir
+              </button>
+            )}
             <RowMenu
               align="right"
               triggerLabel={`Beceri işlemleri: ${row.name}`}
@@ -215,6 +256,17 @@ export default function SkillsPage() {
             >
               {(close) => (
                 <>
+                  {/* CR-044.1 — run history (everyone who can view): every produced
+                      file is findable here, not just the latest. */}
+                  <MenuItem
+                    icon={History}
+                    onClick={() => {
+                      close();
+                      setHistoryOf(row);
+                    }}
+                  >
+                    Çalıştırma geçmişi
+                  </MenuItem>
                   {canEdit(row) && (
                     <MenuItem
                       icon={Pencil}
@@ -314,7 +366,89 @@ export default function SkillsPage() {
           }}
         />
       )}
+
+      {historyOf && (
+        <RunHistoryModal
+          skill={historyOf}
+          onClose={() => setHistoryOf(null)}
+          onDownload={reDownload}
+        />
+      )}
     </div>
+  );
+}
+
+// CR-044.1 — Çalıştırma geçmişi: every produced file is findable here (not just the
+// latest). Lists each run (run_at · status) with an İndir for successful runs, via
+// the existing GET /skills/{id}/runs + POST /skills/runs/{run_id}/download.
+function RunHistoryModal({
+  skill,
+  onClose,
+  onDownload,
+}: {
+  skill: SkillListItem;
+  onClose: () => void;
+  onDownload: (runId: string, fileName: string | null) => void;
+}) {
+  const [runs, setRuns] = useState<SkillRunOut[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    skills
+      .listSkillRuns(skill.id)
+      .then((data) => alive && setRuns(data ?? []))
+      .catch((e) => alive && setError(e?.message ?? "Geçmiş yüklenemedi."));
+    return () => {
+      alive = false;
+    };
+  }, [skill.id]);
+
+  return (
+    <Modal open onClose={onClose} title={`Çalıştırma geçmişi · ${skill.name}`} size="md">
+      <div className="max-h-[60vh] overflow-y-auto">
+        {error ? (
+          <p className="py-6 text-center text-sm text-danger">{error}</p>
+        ) : runs === null ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-text-secondary">
+            <Loader2 className="h-4 w-4 animate-spin text-brand" /> Yükleniyor…
+          </div>
+        ) : runs.length === 0 ? (
+          <p className="py-8 text-center text-sm text-text-secondary">Bu beceri henüz çalıştırılmadı.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {runs.map((run) => (
+              <li key={run.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {run.status === "ok" ? (
+                      <Badge variant="success">Başarılı</Badge>
+                    ) : (
+                      <Badge variant="danger">Hata</Badge>
+                    )}
+                    <span className="truncate text-[13px] text-text-primary">
+                      {formatRelativeTime(run.run_at)}
+                    </span>
+                  </div>
+                  {run.status === "error" && run.error && (
+                    <p className="mt-0.5 truncate text-[11px] text-text-muted">{run.error}</p>
+                  )}
+                </div>
+                {run.status === "ok" && (
+                  <button
+                    type="button"
+                    onClick={() => onDownload(run.id, run.file_name)}
+                    className="focus-ring inline-flex shrink-0 items-center gap-1 rounded-control border border-border bg-surface px-2.5 py-1 text-xs font-medium text-text-primary transition hover:border-brand hover:text-brand"
+                  >
+                    <Download className="h-3.5 w-3.5" /> İndir
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Modal>
   );
 }
 

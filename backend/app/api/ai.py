@@ -230,58 +230,10 @@ def agent(
     return success(result)
 
 
-class AgentAnalysisExport(BaseModel):
-    """CR-011-C §3.2 — a finished agent analysis to render to PDF/Excel. The
-    payload is exactly what the agent already returned to the UI (no re-run)."""
-    answer_markdown: str
-    charts: list[dict] = []
-    citations: list[dict] = []
-    title: str | None = None
-    question: str | None = None
-
-
-@router.post("/agent/export")
-def agent_export(
-    payload: AgentAnalysisExport,
-    user: CurrentUser,
-    db: Session = Depends(get_db),
-    fmt: str = Query("pdf", pattern="^(pdf|excel)$"),
-):
-    """CR-011-C §3.2: render an agent analysis (answer text + chart(s) +
-    citations) to a downloadable PDF or Excel, reusing services/reports.py.
-    Company-scoped (the header uses the caller's company)."""
-    from fastapi.responses import Response
-
-    from app.models.company import Company
-    from app.services import reports
-
-    if not (payload.answer_markdown or "").strip():
-        raise APIError(422, "VALIDATION_ERROR", "Analiz metni gerekli", field="answer_markdown")
-
-    company = db.get(Company, user.company_id)
-    analysis = {
-        "title": payload.title or "Yapı AI Analizi",
-        "question": payload.question,
-        "answer_markdown": payload.answer_markdown,
-        "charts": payload.charts,
-        "citations": payload.citations,
-    }
-    try:
-        if fmt == "excel":
-            data = reports.render_agent_analysis_excel(company, analysis)
-            return Response(
-                content=data,
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": 'attachment; filename="yapi-ai-analiz.xlsx"'},
-            )
-        data = reports.render_agent_analysis_pdf(company, analysis)
-        return Response(
-            content=data,
-            media_type="application/pdf",
-            headers={"Content-Disposition": 'attachment; filename="yapi-ai-analiz.pdf"'},
-        )
-    except Exception as exc:  # render failure -> Turkish error, never a 500 stack
-        raise APIError(500, "REPORT_ERROR", f"Analiz dışa aktarılamadı: {exc}")
+# CR-044.1 — the chat analysis-transcript export (POST /agent/export +
+# AgentAnalysisExport) was retired: it was confusing and now redundant (Skills
+# produce the real deliverables). The render helpers in services/reports.py
+# (render_agent_analysis_pdf/excel) are kept (still unit-tested) for possible reuse.
 
 
 class AgentFeedbackIn(BaseModel):

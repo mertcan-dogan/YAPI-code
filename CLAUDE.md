@@ -9,7 +9,7 @@ Construction-finance SaaS for Turkish contractors. UI language **Turkish (tr-TR)
   - `app/services/` — business logic / the real work (financials, approvals, automations, fx, vendor_backfill, assurance, …). 27 files.
   - `app/calculations/` — **pure financial math** (money, project_financials, equipment, subcontractor). HIGH blast-radius — change only with the guard tests green.
   - `app/models/` — SQLAlchemy tables (30). `app/schemas/` — Pydantic request/response (15). `app/middleware/`, `app/utils/`.
-  - `migrations/versions/` — Alembic DB migrations. **Current head: `0045_dashboards`. Next id: 0046.**
+  - `migrations/versions/` — Alembic DB migrations. **Current head: `0046_skills`. Next id: 0047.**
   - `tests/` — pytest, 114 files.
 - **`frontend/`** — React 18 + Vite + TypeScript + Tailwind + Zustand + Recharts + React Hook Form/Zod.
   - `src/pages/` — one per route (30). `src/components/` — ui/charts/layout (71). `src/lib/` — API client + `requestCache`. `src/store/`, `src/utils/`, `src/hooks/`.

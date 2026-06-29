@@ -406,13 +406,19 @@ export function ProposedActionCard({
                 >
                   {isDraftSkill ? "Beceri olarak kaydet" : "Oluştur"}
                 </button>
-                <button
-                  onClick={edit}
-                  disabled={busy}
-                  className="focus-ring inline-flex items-center gap-1 rounded-control border border-border px-3 py-1 text-xs font-medium text-text-primary transition hover:border-brand hover:text-brand disabled:opacity-50"
-                >
-                  <Pencil className="h-3.5 w-3.5" /> Düzenle
-                </button>
+                {/* CR-044.1 — a skill has no editor page (it's a free-form instruction
+                    + compiled plan), so Düzenle would silently dismiss the draft.
+                    Hide it for draft_skill; report/pano drafts keep it (they have an
+                    editor). Skill drafts refine by chatting (the hint below). */}
+                {!isDraftSkill && (
+                  <button
+                    onClick={edit}
+                    disabled={busy}
+                    className="focus-ring inline-flex items-center gap-1 rounded-control border border-border px-3 py-1 text-xs font-medium text-text-primary transition hover:border-brand hover:text-brand disabled:opacity-50"
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> Düzenle
+                  </button>
+                )}
                 <button
                   onClick={cancel}
                   disabled={busy}
