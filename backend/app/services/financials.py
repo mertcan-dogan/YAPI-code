@@ -201,6 +201,34 @@ def project_cashflow_window(
     return {"rows": rows, "opening_balance_try": opening}
 
 
+def cashflow_full_span(db: Session, project: Project, today: date | None = None) -> tuple[str, str]:
+    """CR-049 — the DATA-RELATIVE full month span ``(from_month, to_month)`` as
+    ``YYYY-MM``: the union of the project window (start..planned_end) AND the actual
+    cash dates of every cost/invoice, so no activity is dropped (incl. anything dated
+    before start_date or after the planned end). Falls back to the project window,
+    then to ``today``, when there is no data.
+
+    Both the studio engine's all-time cash grain and the CR-048 premade Nakit Akış
+    use this so each spans the REAL project life — never the fixed rolling
+    ``project_cashflow`` window anchored to today (which silently empties a project
+    whose data predates today, e.g. 2018–2020 data viewed in 2026)."""
+    today = today or date.today()
+    costs, invoices, _ = load_project_inputs(db, project)
+    dates: list[date] = []
+    if project.start_date:
+        dates.append(project.start_date)
+    if project.planned_end_date:
+        dates.append(project.planned_end_date)
+    for c in costs:
+        dates += [c[k] for k in ("entry_date", "payment_due_date") if c.get(k)]
+    for i in invoices:
+        dates += [i[k] for k in ("due_date", "date_received") if i.get(k)]
+    if not dates:
+        dates = [today]
+    lo, hi = min(dates), max(dates)
+    return f"{lo.year:04d}-{lo.month:02d}", f"{hi.year:04d}-{hi.month:02d}"
+
+
 # --------------------------------------------------------------------------- #
 # CR-014-C — USD aggregates (point-in-time snapshot sums)
 # --------------------------------------------------------------------------- #

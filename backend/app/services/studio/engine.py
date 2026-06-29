@@ -72,6 +72,13 @@ _PRESET_ALIASES = {
     "last_quarter": "gecen_ceyrek", "previous_quarter": "gecen_ceyrek",
 }
 _PREVIOUS_PERIOD = "previous_period"
+# CR-049 — an explicit "all-time / proje ömrü" choice. Resolves to (None, None) =
+# no date filter = all data (cost-line uses every row; the cash grain spans the FULL
+# data-relative project life — see ``_Ctx.cashflow_rows``). Both the English alias
+# and the Turkish name are accepted, mirroring ``_PRESET_ALIASES``. This makes
+# "all data" an explicit, selectable choice for the agent + the manual date picker
+# (the widest rolling preset, ``son_12_ay``, can't reach a project dated years back).
+_ALL_TIME_PRESETS = frozenset({"all_time", "tum_zamanlar"})
 
 
 def _turkish_preset(name: str) -> str | None:
@@ -85,17 +92,21 @@ def _turkish_preset(name: str) -> str | None:
 
 
 def is_known_preset(name) -> bool:
-    """True for any preset the engine can resolve (English alias, Turkish, or the
-    in-engine ``previous_period``). Used by ``catalog.validate_spec``."""
-    return name == _PREVIOUS_PERIOD or _turkish_preset(str(name)) is not None
+    """True for any preset the engine can resolve (English alias, Turkish, the
+    in-engine ``previous_period``, or CR-049 ``all_time``/``tum_zamanlar``). Used by
+    ``catalog.validate_spec``."""
+    s = str(name)
+    return s in _ALL_TIME_PRESETS or s == _PREVIOUS_PERIOD or _turkish_preset(s) is not None
 
 
 def _resolve_window(window, today: date) -> tuple[date | None, date | None]:
-    """Resolve a date_range spec to literal (from, to). Missing → (None, None) =
-    all-time (no date filter)."""
+    """Resolve a date_range spec to literal (from, to). Missing or ``all_time`` →
+    (None, None) = all-time (no date filter)."""
     if not window:
         return None, None
     if "preset" in window:
+        if window["preset"] in _ALL_TIME_PRESETS:  # CR-049 — explicit "all data"
+            return None, None
         from app.services.agent import resolve_window as agent_resolve
 
         tr = _turkish_preset(window["preset"])
@@ -273,13 +284,24 @@ class _Ctx:
     def cashflow_rows(self, project, from_month, to_month) -> list[dict]:
         key = (project.id, from_month, to_month)
         if key not in self._cash_cache:
-            if from_month and to_month:
-                res = fin_service.project_cashflow_window(
-                    self.db, project, from_month=from_month, to_month=to_month, today=self.today
-                )
-                self._cash_cache[key] = res["rows"]
-            else:
-                self._cash_cache[key] = fin_service.project_cashflow(self.db, project, today=self.today)
+            # CR-049 — an all-time window (no from/to) must span the project's REAL
+            # life, not the fixed rolling 18-month ``project_cashflow`` anchored to
+            # today (which empties a project whose data predates today — the DGN
+            # Martı bug: 2018–2020 data viewed in 2026 → all-zero monthly cash).
+            # Derive the data-relative full span and window to it (shared with the
+            # CR-048 premade Nakit Akış so both cover the same months). Backfill ONLY
+            # the missing side so a one-sided literal window (e.g. {from} with no {to})
+            # still honours the bound the user gave — matching the cost-line grain,
+            # which applies each bound independently.
+            f_m, t_m = from_month, to_month
+            if not f_m or not t_m:
+                span_lo, span_hi = fin_service.cashflow_full_span(self.db, project, today=self.today)
+                f_m = f_m or span_lo
+                t_m = t_m or span_hi
+            res = fin_service.project_cashflow_window(
+                self.db, project, from_month=f_m, to_month=t_m, today=self.today
+            )
+            self._cash_cache[key] = res["rows"]
         return self._cash_cache[key]
 
     @property

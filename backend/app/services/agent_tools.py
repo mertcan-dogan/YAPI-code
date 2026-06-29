@@ -77,6 +77,10 @@ def studio_catalog(db: Session, company_id) -> dict:
     return {
         "dimensions": _trim(cat.get("dimensions", [])),
         "metrics": _trim(cat.get("metrics", []), extra=("windowed",)),
+        # CR-049 — selectable date presets (id/label) incl. `all_time` (proje ömrü).
+        # For a project analizi/özeti default to `all_time`; recent presets only on
+        # an explicit "bu ay / son 3 ay" request (see the authoring guidance).
+        "date_presets": cat.get("date_presets", []),
         "viz": ["line", "area", "bar", "kpi", "table"],
     }
 
@@ -218,6 +222,11 @@ def list_projects(db: Session, company_id, status: str | None = None) -> dict:
             # (sell-side → unit_sales_revenue/revenue; hakediş/maliyet-kâr → hakediş)
             # and lets the agent scope a project-named report to the right project.
             "revenue_model": p.revenue_model,
+            # CR-049 — the project's real timeframe, so the agent windows a report to
+            # cover the actual data (default `all_time` for a lifetime view) and
+            # labels the period from the true span, not a hardcoded recent range.
+            "start_date": p.start_date.isoformat() if p.start_date else None,
+            "actual_end_date": p.actual_end_date.isoformat() if p.actual_end_date else None,
             "contract_value_try": _s(p.contract_value_try),
             "completion_pct": _s(p.completion_pct),
             "deep_link": _deep_link("project", p.id, p.id),

@@ -8,7 +8,7 @@ import { toast } from "@/store/toast";
 import type { ProposedAction } from "@/types/agent";
 import type { CatalogDimension, CatalogMetric, RunResult, RunRow, StudioSpec } from "@/types/studio";
 import { ArrowRight, Check, FileSpreadsheet, FileText, Pencil, Sparkles, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 // CR-011-D §4.1 — proposed-action confirm UI. When the agent proposes a write it
@@ -122,19 +122,25 @@ export function ProposedActionCard({
 
   const labelOf = (id: string) => metricById.get(id)?.label ?? dimById.get(id)?.label ?? id;
 
-  // The spec we live-preview: the report's own spec, or a dashboard's (or skill
-  // plan's) first data widget. A skill's plan is dashboard-shaped, so its preview
-  // runs the plan's first widget spec — exactly like draft_dashboard.
-  const previewSpec: StudioSpec | null = useMemo(() => {
-    if (isReportKind) return (action.spec as StudioSpec) ?? null;
-    const widgetList = isDraftSkill ? skillWidgets : isDashboardKind ? action.widgets ?? [] : [];
-    if (widgetList.length > 0) {
-      const specs = widgetList
-        .map((w: any) => w?.spec as StudioSpec | undefined)
-        .filter((s): s is StudioSpec => !!s && Array.isArray(s.metrics) && s.metrics.length > 0);
-      return specs[0] ?? null;
+  // CR-049 — the data widgets to live-preview as a scrollable mini-report. A report
+  // is its single spec; a dashboard/skill is EACH data widget (kpi/chart/table) with
+  // a non-empty spec, in plan order. text/empty widgets are dropped. (Was: only the
+  // first widget — the draft card now shows the whole report, scrollable + capped.)
+  const previewWidgets = useMemo<{ key: string; title: string | null; spec: StudioSpec }[]>(() => {
+    const valid = (s: any): StudioSpec | null =>
+      s && Array.isArray(s.metrics) && s.metrics.length > 0 ? (s as StudioSpec) : null;
+    if (isReportKind) {
+      const s = valid(action.spec);
+      return s ? [{ key: "report", title: null, spec: s }] : [];
     }
-    return null;
+    const widgetList = isDraftSkill ? skillWidgets : isDashboardKind ? action.widgets ?? [] : [];
+    const out: { key: string; title: string | null; spec: StudioSpec }[] = [];
+    (widgetList as any[]).forEach((w, i) => {
+      const s = valid(w?.spec);
+      // `idx-${i}` fallback can't collide with an explicit widget id (e.g. "w3").
+      if (s) out.push({ key: w?.id != null ? String(w.id) : `idx-${i}`, title: w?.title ?? null, spec: s });
+    });
+    return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReportKind, isDashboardKind, isDraftSkill, action.spec, action.widgets, action.plan]);
 
@@ -335,13 +341,12 @@ export function ProposedActionCard({
             <>
               {action.title && <p className="mt-1 text-[13px] font-semibold text-text-primary">{action.title}</p>}
               {isReportKind ? reportSummary() : isDraftSkill ? skillSummary() : dashboardSummary()}
-              {previewSpec ? (
-                <div className="mt-2">
-                  {(isDashboardKind || isDraftSkill) && (
-                    <p className="mb-1 text-[11px] text-text-faint">İlk bölüm önizlemesi</p>
-                  )}
-                  <StudioRunPreview spec={previewSpec} metricById={metricById} />
-                </div>
+              {previewWidgets.length > 0 ? (
+                <MiniReportPreview
+                  widgets={previewWidgets}
+                  metricById={metricById}
+                  showTitles={isDashboardKind || isDraftSkill}
+                />
               ) : (
                 <p className="mt-2 text-[11px] text-text-faint">Önizlenecek veri yok.</p>
               )}
@@ -499,6 +504,91 @@ export function ProposedActionCard({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
+// CR-049 — scrollable multi-widget mini-report preview. Renders the plan's data
+// widgets stacked in a scrollable container (each reusing StudioRunPreview), capped
+// at the first PREVIEW_CAP with a "Tam önizleme" expand revealing the rest. The cap
+// bounds how many /studio/run calls a draft card fires; a per-widget title labels
+// each section for dashboards/skills (a single report needs none).
+// --------------------------------------------------------------------------- #
+const PREVIEW_CAP = 6;
+
+// Defer mounting a child (and thus the /studio/run it fires) until its row scrolls
+// into view, so a long mini-report doesn't fire every preview's request at once.
+// When IntersectionObserver is unavailable (jsdom/tests, very old browsers) we mount
+// immediately — correctness over the optimization. A rootMargin pre-loads the row
+// just below the fold for a seamless scroll.
+function LazyMount({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [show, setShow] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (show || typeof IntersectionObserver === "undefined") return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setShow(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "120px" }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [show]);
+  return (
+    <div ref={ref}>
+      {show ? (
+        children
+      ) : (
+        <div className="rounded-control border border-border bg-surface px-3 py-4 text-center text-[11px] text-text-muted">
+          Önizleme hazırlanıyor…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniReportPreview({
+  widgets,
+  metricById,
+  showTitles,
+}: {
+  widgets: { key: string; title: string | null; spec: StudioSpec }[];
+  metricById: Map<string, CatalogMetric>;
+  showTitles: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hidden = Math.max(0, widgets.length - PREVIEW_CAP);
+  const visible = expanded ? widgets : widgets.slice(0, PREVIEW_CAP);
+  return (
+    <div className="mt-2">
+      <div className="max-h-[26rem] space-y-3 overflow-y-auto rounded-control border border-border bg-surface/40 p-2">
+        {visible.map((w) => (
+          <div key={w.key}>
+            {showTitles && w.title && (
+              <p className="mb-1 text-[11px] font-medium text-text-secondary">{w.title}</p>
+            )}
+            <LazyMount>
+              <StudioRunPreview spec={w.spec} metricById={metricById} />
+            </LazyMount>
+          </div>
+        ))}
+      </div>
+      {hidden > 0 && !expanded && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="focus-ring mt-1.5 text-[11px] font-medium text-brand hover:underline"
+        >
+          Tam önizleme · +{hidden} widget daha
+        </button>
+      )}
     </div>
   );
 }

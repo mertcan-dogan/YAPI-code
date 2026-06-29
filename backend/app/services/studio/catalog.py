@@ -56,6 +56,25 @@ FILTER_OPS = {"=", "!=", "in", "not_in"}
 VIZ_KINDS = {"line", "area", "bar", "kpi", "table"}
 HARD_ROW_LIMIT = 1000
 
+# CR-049 — selectable date presets surfaced to the agent (the ``studio_catalog``
+# tool) and any catalog consumer; the manual Studio date picker carries the same
+# set. ``id`` values are the English aliases ``date_range``/``comparison`` accept
+# (``engine._PRESET_ALIASES`` + ``_ALL_TIME_PRESETS``). ``all_time`` resolves to the
+# project's full span (engine), so a project whose data predates the widest rolling
+# window (``last_12_months``) is still covered — default this for a lifetime view.
+DATE_PRESETS = [
+    {"id": "all_time", "label": "Tüm zamanlar (proje başından bugüne)"},
+    {"id": "this_month", "label": "Bu ay"},
+    {"id": "last_month", "label": "Geçen ay"},
+    {"id": "last_3_months", "label": "Son 3 ay"},
+    {"id": "last_6_months", "label": "Son 6 ay"},
+    {"id": "last_12_months", "label": "Son 12 ay"},
+    {"id": "ytd", "label": "Bu yıl"},
+    {"id": "last_year", "label": "Geçen yıl"},
+    {"id": "this_quarter", "label": "Bu çeyrek"},
+    {"id": "last_quarter", "label": "Geçen çeyrek"},
+]
+
 
 # --------------------------------------------------------------------------- #
 # §3.1 — Dimensions (ordered; v1 build set per §3.3)
@@ -284,11 +303,15 @@ def get_catalog_public() -> dict:
     cost-line/cash metrics, which honor the spec's date_range; False for project/
     unit metrics, which are whole-project snapshots and ignore the window — the UI
     tags those "tüm proje, bugüne kadar". Derived from grain, not the raw mapping.
+
+    CR-049 — also returns ``date_presets`` (id/label) so the agent + the manual date
+    picker can choose a window, including ``all_time`` (the project's full span).
     """
     metrics = _public(METRICS)
     for row, entry in zip(metrics, METRICS.values()):
         row["windowed"] = entry["grain"] in (GRAIN_COST_LINE, GRAIN_CASH)
-    return {"dimensions": _public(DIMENSIONS), "metrics": metrics}
+    return {"dimensions": _public(DIMENSIONS), "metrics": metrics,
+            "date_presets": [dict(p) for p in DATE_PRESETS]}
 
 
 # --------------------------------------------------------------------------- #
