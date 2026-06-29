@@ -808,10 +808,25 @@ def _build_rows(primary, dims, metric_ids, compare, comparison_unit) -> list[dic
 def _sort_rows(rows, sort, dims, metric_ids):
     if not rows:
         return rows
-    by = sort["by"] if sort else (metric_ids[0] if metric_ids else None)
-    if by is None:
-        return rows
-    descending = (sort.get("dir", "desc") if sort else "desc") == "desc"
+    if sort:
+        by, descending = sort["by"], sort.get("dir", "desc") == "desc"
+    else:
+        # CR-050 — with no explicit sort, default a TIME-SERIES to chronological:
+        # the first date-typed dimension (month/quarter/year/week), ascending. The
+        # "2018-01"…"2020-12" / "2018-Q1"… / "2018" / "2018-W01" string keys sort
+        # lexically == chronologically, so the keyfn below already orders them. This
+        # makes monthly/quarterly rows — and the Excel/Studio line & bar charts that
+        # reference those data ranges — read left→right in time instead of in group/
+        # hash order (the DGN cumulative-cash zig-zag). With no date dim, keep the
+        # top-N default (first metric, descending) so category/vendor ranking tables
+        # stay ranked. An explicit ``sort`` always wins (handled above).
+        date_dim = next((d for d in dims if DIMENSIONS[d]["type"] == "date"), None)
+        if date_dim is not None:
+            by, descending = date_dim, False
+        elif metric_ids:
+            by, descending = metric_ids[0], True
+        else:
+            return rows
     is_metric = by in metric_ids
 
     def keyfn(r):
