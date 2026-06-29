@@ -1,13 +1,13 @@
 import { DataTable, type Column } from "@/components/DataTable";
 import { KPICard } from "@/components/KPICard";
 import { StudioChart, formatMetricValue } from "@/components/StudioChart";
-import { apiPut, studio } from "@/lib/api";
+import { apiPut, skills, studio } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { ProposedAction } from "@/types/agent";
 import type { CatalogDimension, CatalogMetric, RunResult, RunRow, StudioSpec } from "@/types/studio";
-import { ArrowRight, Check, Pencil, Sparkles, X } from "lucide-react";
+import { ArrowRight, Check, FileSpreadsheet, FileText, Pencil, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -86,11 +86,17 @@ export function ProposedActionCard({
   const isDashboard = action.kind === "agent_create_dashboard";
   const isDraftReport = action.kind === "draft_report";
   const isDraftDashboard = action.kind === "draft_dashboard";
-  const isDraft = isDraftReport || isDraftDashboard;
+  // CR-044 — "draft_skill": a reusable file recipe (dashboard-shaped plan + format).
+  const isDraftSkill = action.kind === "draft_skill";
+  const isDraft = isDraftReport || isDraftDashboard || isDraftSkill;
   const isLegacyStudio = isReport || isDashboard;
   const isReportKind = isReport || isDraftReport;
   const isDashboardKind = isDashboard || isDraftDashboard;
-  const isAuthoring = isReportKind || isDashboardKind;
+  // A skill's plan is dashboard-shaped (widgets[]) — its preview/summary reuse the
+  // dashboard path, keyed off plan.widgets instead of the top-level widgets[].
+  const isAuthoring = isReportKind || isDashboardKind || isDraftSkill;
+  // The skill plan's widgets (the figures come from the engine at run time).
+  const skillWidgets: any[] = isDraftSkill ? action.plan?.widgets ?? [] : [];
 
   // Catalog (cached) — used ONLY for the studio kinds to label dimension/metric
   // ids. Falls back to raw ids if it can't load (ids are acceptable per CR-035).
@@ -116,17 +122,21 @@ export function ProposedActionCard({
 
   const labelOf = (id: string) => metricById.get(id)?.label ?? dimById.get(id)?.label ?? id;
 
-  // The spec we live-preview: the report's own spec, or a dashboard's first data widget.
+  // The spec we live-preview: the report's own spec, or a dashboard's (or skill
+  // plan's) first data widget. A skill's plan is dashboard-shaped, so its preview
+  // runs the plan's first widget spec — exactly like draft_dashboard.
   const previewSpec: StudioSpec | null = useMemo(() => {
     if (isReportKind) return (action.spec as StudioSpec) ?? null;
-    if (isDashboardKind) {
-      const specs = (action.widgets ?? [])
+    const widgetList = isDraftSkill ? skillWidgets : isDashboardKind ? action.widgets ?? [] : [];
+    if (widgetList.length > 0) {
+      const specs = widgetList
         .map((w: any) => w?.spec as StudioSpec | undefined)
         .filter((s): s is StudioSpec => !!s && Array.isArray(s.metrics) && s.metrics.length > 0);
       return specs[0] ?? null;
     }
     return null;
-  }, [isReportKind, isDashboardKind, action.spec, action.widgets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReportKind, isDashboardKind, isDraftSkill, action.spec, action.widgets, action.plan]);
 
   const approve = async () => {
     if (busy) return;
@@ -153,6 +163,8 @@ export function ProposedActionCard({
   };
 
   // Düzenle — open the editor on the PROPOSED spec, UNSAVED. Nothing is created.
+  // A skill has no unsaved-plan editor route — its plan is refined by chat (the
+  // hint), so Düzenle there only dismisses the card; the user keeps typing.
   const edit = () => {
     if (isReportKind) {
       navigate("/studio/reports/new", { state: { draftSpec: action.spec, draftTitle: action.title } });
@@ -178,6 +190,21 @@ export function ProposedActionCard({
         });
         setCreatedTarget(`/studio/reports/${r.id}`);
         toast.success("Rapor oluşturuldu.");
+      } else if (isDraftSkill) {
+        // CR-044 — the user's save action: create THEIR OWN skill (owner = caller,
+        // no director gate). The agent wrote nothing; this explicit click is the
+        // only write. We stay in chat and offer an "Aç" link to Uygulamalar.
+        const r = await skills.createSkill({
+          name: action.title ?? "Beceri",
+          instruction: action.instruction ?? "",
+          plan: action.plan as any,
+          format: action.format ?? "xlsx",
+          visibility: vis,
+          labels: action.labels ?? null,
+        });
+        setCreatedTarget(`/studio/skills`);
+        void r;
+        toast.success("Beceri kaydedildi.");
       } else {
         const r = await studio.createDashboard({
           title: action.title ?? "Pano", widgets: action.widgets ?? [], date_range: action.date_range ?? null,
@@ -259,6 +286,35 @@ export function ProposedActionCard({
     );
   };
 
+  // CR-044 — a skill's plan summary: an output-format chip + the widget count +
+  // each widget's title/type as a chip (no figures — those come from the engine).
+  const skillSummary = () => {
+    const fmt = action.format ?? action.plan?.format ?? "xlsx";
+    const fmtLabel = fmt === "pdf" ? "PDF" : "Excel (.xlsx)";
+    const dr = dateRangeLabel(action.plan?.date_range);
+    return (
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <span className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-secondary">
+          {fmt === "pdf" ? (
+            <FileText className="h-3 w-3 text-danger" />
+          ) : (
+            <FileSpreadsheet className="h-3 w-3 text-success" />
+          )}
+          {fmtLabel}
+        </span>
+        <Chip label="Bölüm" value={`${skillWidgets.length} adet`} />
+        {dr && <Chip label="Tarih" value={dr} />}
+        {skillWidgets.map((w: any, i: number) => (
+          <Chip
+            key={w.id ?? i}
+            label={w.title || "Bölüm"}
+            value={VIZ_LABELS[w?.spec?.viz] ?? w?.type ?? "—"}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="mt-3 rounded-control border border-brand/40 bg-navy-50/60 p-3">
       <div className="flex items-start gap-2">
@@ -274,15 +330,15 @@ export function ProposedActionCard({
             <p className="mt-0.5 break-words text-[13px] text-text-primary">{action.description}</p>
           )}
 
-          {/* CR-035/CR-039 — spec summary + live preview for the authoring kinds. */}
+          {/* CR-035/CR-039/CR-044 — spec summary + live preview for the authoring kinds. */}
           {isAuthoring && (
             <>
               {action.title && <p className="mt-1 text-[13px] font-semibold text-text-primary">{action.title}</p>}
-              {isReportKind ? reportSummary() : dashboardSummary()}
+              {isReportKind ? reportSummary() : isDraftSkill ? skillSummary() : dashboardSummary()}
               {previewSpec ? (
                 <div className="mt-2">
-                  {isDashboardKind && (
-                    <p className="mb-1 text-[11px] text-text-faint">İlk widget önizlemesi</p>
+                  {(isDashboardKind || isDraftSkill) && (
+                    <p className="mb-1 text-[11px] text-text-faint">İlk bölüm önizlemesi</p>
                   )}
                   <StudioRunPreview spec={previewSpec} metricById={metricById} />
                 </div>
@@ -294,17 +350,18 @@ export function ProposedActionCard({
 
           {state === "approved" ? (
             isDraft ? (
-              // CR-039 — created: stay in chat, offer "Aç" (no auto-navigation).
+              // CR-039/CR-044 — created: stay in chat, offer "Aç" (no auto-navigation).
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-                  <Check className="h-3.5 w-3.5" /> {isDraftDashboard ? "Pano oluşturuldu." : "Rapor oluşturuldu."}
+                  <Check className="h-3.5 w-3.5" />{" "}
+                  {isDraftSkill ? "Beceri kaydedildi." : isDraftDashboard ? "Pano oluşturuldu." : "Rapor oluşturuldu."}
                 </span>
                 {createdTarget && (
                   <button
                     onClick={() => navigate(createdTarget)}
                     className="focus-ring inline-flex items-center gap-1 rounded-control bg-brand px-3 py-1 text-xs font-medium text-white transition hover:bg-brand/90"
                   >
-                    Aç <ArrowRight className="h-3.5 w-3.5" />
+                    {isDraftSkill ? "Uygulamalar" : "Aç"} <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
@@ -347,7 +404,7 @@ export function ProposedActionCard({
                   disabled={busy}
                   className="focus-ring rounded-control bg-brand px-3 py-1 text-xs font-medium text-white transition hover:bg-brand/90 disabled:opacity-50"
                 >
-                  Oluştur
+                  {isDraftSkill ? "Beceri olarak kaydet" : "Oluştur"}
                 </button>
                 <button
                   onClick={edit}

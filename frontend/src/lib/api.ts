@@ -15,6 +15,15 @@ import type {
   StudioCatalog,
   StudioSpec,
 } from "@/types/studio";
+import type {
+  SkillCreateBody,
+  SkillDownloadResult,
+  SkillListItem,
+  SkillOut,
+  SkillPatchBody,
+  SkillRunOut,
+  SkillRunResult,
+} from "@/types/skill";
 
 export const baseURL = (import.meta.env.VITE_API_URL as string) || "https://yapi-code-production.up.railway.app/api/v1";
 
@@ -181,4 +190,45 @@ export const studio = {
   runDashboard: (id: string) => apiPost<DashboardRunResult>(`/studio/dashboards/${id}/run`),
   exportDashboardBlob: (id: string, format: "pdf" | "xlsx") =>
     apiPostBlob(`/studio/dashboards/${id}/export`, undefined, { format }),
+};
+
+// CR-044 — Beceriler (Skills). Same caching discipline as studio reports/dashboards:
+// the list is cached via requestCache and every mutation drops the cache so the
+// Uygulamalar list re-fetches on next mount. Running a skill also drops the cache —
+// it is read-only over business data but it advances the skill's last_run_at, which
+// the list surfaces, so the cached list would otherwise show a stale value.
+const SKILLS_PREFIX = "/skills";
+const dropSkillsCache = () => invalidate((url) => url.startsWith(SKILLS_PREFIX));
+
+export const skills = {
+  listSkills: (q?: string) =>
+    cachedGet<SkillListItem[]>("/skills", q ? { q } : undefined).then((r) => r.data),
+  getSkill: (id: string) => apiGet<SkillOut>(`/skills/${id}`).then((r) => r.data),
+  createSkill: async (body: SkillCreateBody) => {
+    const r = await apiPost<SkillOut>("/skills", body);
+    dropSkillsCache();
+    return r;
+  },
+  updateSkill: async (id: string, body: SkillPatchBody) => {
+    const r = await apiPut<SkillOut>(`/skills/${id}`, body);
+    dropSkillsCache();
+    return r;
+  },
+  deleteSkill: async (id: string) => {
+    const r = await apiDelete<{ ok: boolean }>(`/skills/${id}`);
+    dropSkillsCache();
+    return r;
+  },
+  // Run the skill: the engine batch-runs the plan's specs, builds the file, stores
+  // it in the private bucket, and returns a short-lived signed download_url. Drops
+  // the list cache so the row's last_run_at refreshes on next mount.
+  runSkill: async (id: string) => {
+    const r = await apiPost<SkillRunResult>(`/skills/${id}/run`);
+    dropSkillsCache();
+    return r;
+  },
+  listSkillRuns: (id: string) => apiGet<SkillRunOut[]>(`/skills/${id}/runs`).then((r) => r.data),
+  // Re-sign a past run's file for re-download (company-scoped).
+  downloadSkillFile: (runId: string) =>
+    apiPost<SkillDownloadResult>(`/skills/runs/${runId}/download`),
 };

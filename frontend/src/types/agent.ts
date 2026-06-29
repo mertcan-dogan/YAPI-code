@@ -56,6 +56,21 @@ export interface ProposedAction {
   // CR-039 — the user-chosen create payload for a draft.
   visibility?: string;
   labels?: string[] | null;
+  // CR-044 (additive) — "draft_skill": a reusable file-recipe the agent compiled.
+  // It carries the free-form `instruction`, the dashboard-shaped `plan` (the engine
+  // runs this — the LLM never writes figures), and the output `format`. Title is the
+  // skill name (reuses `title` above). The user saves it via "Beceri olarak kaydet".
+  instruction?: string;
+  plan?: import("./skill").SkillPlan;
+  format?: import("./skill").SkillFormat;
+  // CR-044 (additive) — "run_result": NOT a proposal, a download card. Emitted when
+  // a skill runs (in chat or from Uygulamalar). Carries the signed `download_url` to
+  // the generated private file + the run/skill identity for the outputs panel.
+  run_id?: string;
+  file_name?: string;
+  download_url?: string;
+  skill_id?: string;
+  skill_name?: string;
 }
 
 // CR-038 §G (reserved — declared, NOT built): the conversation/message model is

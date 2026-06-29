@@ -121,6 +121,10 @@ def test_registries_are_disjoint_actions_not_in_readonly():
         "propose_reminder", "propose_flag_invoice", "propose_followup_task",
         # CR-035 — Report Studio AI authoring.
         "propose_report", "propose_dashboard",
+        # CR-044 — Skills (Beceriler): propose_skill is also a DRAFT tool (writes
+        # nothing). run_skill is read-only file generation and is NOT a propose tool,
+        # so it stays out of this set (special-cased like create_chart).
+        "propose_skill",
     }
 
 

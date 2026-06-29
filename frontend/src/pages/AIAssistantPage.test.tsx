@@ -392,6 +392,31 @@ describe("AIAssistantPage refine threading (CR-039)", () => {
     expect(h.streamCalls[1].body.draft).toMatchObject({ kind: "draft_report", title: "Kârlılık" });
     expect(h.streamCalls[1].body.draft.spec.metrics).toEqual(["cost_try"]);
   });
+
+  // CR-044 — a draft_skill is threaded the same way: its compiled plan + format +
+  // instruction ride the next (refine) turn so the agent edits the real plan.
+  it("threads an active draft_skill (plan + format) into the next refine turn", () => {
+    const SKILL_PLAN = { format: "xlsx", title: "Aylık Özet", widgets: [{ id: "w1", type: "kpi", title: "Maliyet", spec: { metrics: ["cost_try"], viz: "kpi" } }], date_range: null };
+    wrap();
+    submit("aylık DGN Martı özetini Excel olarak çıkaran bir beceri yap");
+    expect(h.streamCalls[0].body.draft).toBeNull();
+
+    act(() =>
+      h.streamCalls[0].cb.onFinal({
+        ...FINAL,
+        answer_markdown: "Beceriyi hazırladım — kaydedebilir veya değiştirebilirsin.",
+        citations: [],
+        proposed_actions: [
+          { kind: "draft_skill", kind_label: "Beceri Taslağı", title: "Aylık DGN Martı Özeti", instruction: "Her ay özet; Excel.", plan: SKILL_PLAN, format: "xlsx" },
+        ],
+      })
+    );
+
+    submit("tedarikçi kırılımı da ekle");
+    expect(h.streamCalls).toHaveLength(2);
+    expect(h.streamCalls[1].body.draft).toMatchObject({ kind: "draft_skill", title: "Aylık DGN Martı Özeti", format: "xlsx" });
+    expect(h.streamCalls[1].body.draft.plan.widgets[0].spec.metrics).toEqual(["cost_try"]);
+  });
 });
 
 // CR-038 — premade agents = the existing scopes, packaged. Picking one starts a

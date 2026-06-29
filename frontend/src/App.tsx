@@ -26,6 +26,7 @@ import RemindersPage from "./pages/RemindersPage";
 import ReportsPage from "./pages/ReportsPage";
 import SalesPnlPage from "./pages/SalesPnlPage";
 import SettingsPage from "./pages/SettingsPage";
+import SkillsPage from "./pages/SkillsPage";
 import StudioDashboardCanvasPage from "./pages/StudioDashboardCanvasPage";
 import StudioDashboardsPage from "./pages/StudioDashboardsPage";
 import StudioReportEditorPage from "./pages/StudioReportEditorPage";
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="/studio/dashboards" element={<StudioDashboardsPage />} />
           <Route path="/studio/dashboards/new" element={<StudioDashboardCanvasPage />} />
           <Route path="/studio/dashboards/:id" element={<StudioDashboardCanvasPage />} />
+          <Route path="/studio/skills" element={<SkillsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/ai-assistant" element={<AIAssistantPage />} />
           <Route path="/ai-principles" element={<AiPrinciplesPage />} />

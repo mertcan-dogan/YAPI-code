@@ -2,7 +2,7 @@ import { AiTrustBadge } from "@/components/ai/AiTrustBadge";
 import { AgentSteps, type AgentStep } from "@/components/ai/AgentSteps";
 import { AgentMessage } from "@/components/ai/AgentMessage";
 import { AgentConversationsRail } from "@/components/ai/AgentConversationsRail";
-import { SessionOutputsPanel } from "@/components/ai/SessionOutputsPanel";
+import { SessionOutputsPanel, type SkillRunOutput } from "@/components/ai/SessionOutputsPanel";
 import { AGENT_PRESETS, DEFAULT_AGENT, agentById, agentByScope, type AgentPreset } from "@/components/ai/agentPresets";
 import { MarkdownText } from "@/components/MarkdownText";
 import { useLeftRail, useRightPanel } from "@/components/layout/ShellSlots";
@@ -79,24 +79,45 @@ const EMPTY_MSGS: Msg[] = [];
 // CR-039 — the active authoring draft = the draft_* proposed-action on the most
 // recent AI message, unless the user already resolved it (created/edited/cancelled).
 // DERIVED, not stored (no second source of truth → no CR-038 render-loop risk).
-type ActiveDraft = { kind: string; title?: string; spec?: unknown; widgets?: unknown[] } | null;
+// CR-044 — also threads draft_skill so refining a skill edits the real plan.
+type ActiveDraft = {
+  kind: string;
+  title?: string;
+  spec?: unknown;
+  widgets?: unknown[];
+  // CR-044 — a skill draft carries its compiled plan + format + instruction so the
+  // agent refines the REAL plan instead of recompiling from scratch.
+  plan?: unknown;
+  format?: string;
+  instruction?: string;
+} | null;
 
 // Keyed by content so a resolved draft stops being threaded. Tradeoff: a later
 // BYTE-IDENTICAL re-proposal after İptal is also skipped for one turn (rare; the
 // card + Oluştur still work, only the refine-context optimization is missed).
-function draftKey(a: { kind: string; title?: string; spec?: unknown; widgets?: unknown[] }): string {
-  return `${a.kind}:${a.title ?? ""}:${JSON.stringify(a.spec ?? a.widgets ?? null)}`;
+// CR-044 — a skill keys on its plan (+ format) since it has no top-level spec/widgets.
+function draftKey(a: { kind: string; title?: string; spec?: unknown; widgets?: unknown[]; plan?: unknown; format?: string }): string {
+  const shape = a.spec ?? a.widgets ?? a.plan ?? null;
+  return `${a.kind}:${a.title ?? ""}:${a.format ?? ""}:${JSON.stringify(shape)}`;
 }
+
+const DRAFT_KINDS = new Set(["draft_report", "draft_dashboard", "draft_skill"]);
 
 function deriveActiveDraft(messages: Msg[], dismissed: Set<string>): ActiveDraft {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role !== "ai") continue;
-    const da = (messages[i].proposed_actions ?? []).find(
-      (a) => a.kind === "draft_report" || a.kind === "draft_dashboard"
-    );
+    const da = (messages[i].proposed_actions ?? []).find((a) => DRAFT_KINDS.has(a.kind));
     if (!da) return null; // the latest AI turn carried no draft → nothing active
     if (dismissed.has(draftKey(da))) return null; // already created/edited/cancelled
-    return { kind: da.kind, title: da.title, spec: da.spec, widgets: da.widgets };
+    return {
+      kind: da.kind,
+      title: da.title,
+      spec: da.spec,
+      widgets: da.widgets,
+      plan: da.plan,
+      format: da.format,
+      instruction: da.instruction,
+    };
   }
   return null;
 }
@@ -188,6 +209,28 @@ export default function AIAssistantPage() {
     return null;
   }, [messages]);
   const latestChart = latestChartInfo?.spec ?? null;
+
+  // CR-044 — this session's generated files: every `run_result` proposed-action
+  // across the conversation, newest first. Session-scoped (the durable record is
+  // the backend skill_runs table); drives the SessionOutputsPanel "Üretilen
+  // dosyalar" list + de-duped by run_id.
+  const skillRuns = useMemo<SkillRunOutput[]>(() => {
+    const out: SkillRunOutput[] = [];
+    const seen = new Set<string>();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      for (const a of messages[i].proposed_actions ?? []) {
+        if (a.kind !== "run_result" || !a.run_id || seen.has(a.run_id)) continue;
+        seen.add(a.run_id);
+        out.push({
+          run_id: a.run_id,
+          file_name: a.file_name ?? "rapor",
+          format: (a.format as "xlsx" | "pdf") ?? "xlsx",
+          download_url: a.download_url ?? "",
+        });
+      }
+    }
+    return out;
+  }, [messages]);
 
   const [pinnedKeys, setPinnedKeys] = useState<Set<string>>(new Set());
 
@@ -481,9 +524,10 @@ export default function AIAssistantPage() {
         projectId={projectId}
         onProjectChange={setProjectId}
         projects={projectList}
+        skillRuns={skillRuns}
       />
     ),
-    [latestChart, pinChart, goWorkspace, projectId, projectList]
+    [latestChart, pinChart, goWorkspace, projectId, projectList, skillRuns]
   );
   useRightPanel(rightPanelNode);
 

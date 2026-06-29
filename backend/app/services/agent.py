@@ -197,6 +197,12 @@ ACTION_TOOL_REGISTRY = {
     "propose_dashboard": (actions.propose_dashboard,
                           {"title", "widgets", "date_range", "comparison", "filters",
                            "visibility", "labels", "project_id"}),
+    # CR-044 — DRAFT a Skill (Beceri): same draft-only contract (validate the plan,
+    # return a draft_skill, write NOTHING). The Skill is saved by the user's own
+    # "Beceri olarak kaydet" click (POST /skills).
+    "propose_skill": (actions.propose_skill,
+                      {"name", "widgets", "format", "instruction", "date_range",
+                       "visibility", "labels", "project_id"}),
 }
 ACTION_TOOL_NAMES = set(ACTION_TOOL_REGISTRY)
 
@@ -483,6 +489,55 @@ def build_tool_schemas() -> list[dict]:
             }, "required": ["title", "widgets"]},
         },
         {
+            "name": "propose_skill",
+            "description": (
+                "ÖNERİ/TASLAK (hiçbir şey yazmaz): kullanıcının TEKRAR EDEN bir "
+                "teslimatını (örn. 'her ay … Excel raporu') bir BECERİ (Uygulama) "
+                "taslağına dönüştürür — kayıt OLUŞTURMAZ. Beceri = kaydedilen, yeniden "
+                "çalıştırılabilir bir dosya tarifidir; çalıştırıldığında CANLI veriden "
+                "gerçek bir Excel/PDF üretir. Kullanıcı 'bir beceri/uygulama yap', "
+                "'her ay … çıkaran bir şey kur', 'şunu otomatikleştir' derse VEYA mevcut "
+                "bir beceri taslağını değiştirmek isterse bunu çağır. ÖNCE studio_catalog "
+                "ile geçerli metrik/boyut kimliklerini al; widgets'ı SADECE o kimliklerle "
+                "kur (her veri widget'ı bir spec, benzersiz id ve layout (x,y,w,h) almalı; "
+                "rapor stüdyosu panosuyla AYNI yapı). format 'xlsx' veya 'pdf'. instruction "
+                "alanına kullanıcının kendi cümlesini (serbest metin) koy. Talep bir DÖNEM "
+                "ima ediyorsa ('her ay', 'son 3 ay', 'bu yıl') widget spec'lerinde VEYA "
+                "date_range'de GÖRELİ ön ayar kullan ({preset: bu_ay|gecen_ay|son_3_ay|"
+                "son_6_ay|son_12_ay|bu_yil|gecen_yil|bu_ceyrek|gecen_ceyrek}); tarihi MUTLAK "
+                "değere ÇEVİRME — böylece her çalıştırmada dönem kendiliğinden ilerler. "
+                "Hiçbir sayı ÜRETME: dosyadaki tüm rakamlar çalışma anında motordan gelir. "
+                "Kayıt yalnızca kullanıcı 'Beceri olarak kaydet'e basınca olur; "
+                "'oluşturdum' deme."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "name": {"type": "string", "description": "Becerinin kısa Türkçe adı"},
+                "widgets": {"type": "array", "items": widget_obj},
+                "format": {"type": "string", "enum": ["xlsx", "pdf"]},
+                "instruction": {"type": "string",
+                                "description": "Kullanıcının serbest metin talebi (saklanır)"},
+                "date_range": {"type": "object",
+                               "description": "Beceri geneli tarih: {preset} (göreli) veya {from,to}."},
+                "visibility": {"type": "string", "enum": ["private", "company"]},
+                "project_id": pid,
+            }, "required": ["name", "widgets", "format"]},
+        },
+        {
+            "name": "run_skill",
+            "description": (
+                "Kayıtlı bir BECERİYİ (Uygulama) ÇALIŞTIRIR. SALT-OKUNUR ve onay "
+                "GEREKTİRMEZ: işletme verisini DEĞİŞTİRMEZ, yalnızca becerinin planını "
+                "canlı veriyle çalıştırıp gerçek bir dosya (Excel/PDF) üretir ve bir "
+                "indirme bağlantısı döndürür. Kullanıcı 'şu beceriyi çalıştır', '… "
+                "uygulamasını çalıştır/üret' derse ve elinde becerinin kimliği (skill_id) "
+                "varsa bunu çağır. Dosyadaki tüm rakamlar motordan gelir — sen sayı üretme. "
+                "Sonucu indirme kartı olarak göster; 'dosya üretildi' de."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "skill_id": {"type": "string", "description": "Çalıştırılacak becerinin UUID'si"},
+            }, "required": ["skill_id"]},
+        },
+        {
             "name": "create_chart",
             "description": (
                 "Az önce hesapladığın herhangi bir zaman serisini (aylık kırılım) veya "
@@ -516,7 +571,8 @@ def build_tool_schemas() -> list[dict]:
 # --------------------------------------------------------------------------- #
 # CR-035: studio_catalog is always available so the agent can author a report/pano
 # from any scope (the propose_* action tools are already always-on via ACTION_TOOL_NAMES).
-ALWAYS_SCOPED_TOOLS = {"create_chart", "list_projects", "studio_catalog"}
+# CR-044: run_skill (read-only file generation) is likewise always available.
+ALWAYS_SCOPED_TOOLS = {"create_chart", "list_projects", "studio_catalog", "run_skill"}
 
 SCOPES: dict[str, dict] = {
     "gider": {
@@ -745,6 +801,23 @@ def execute_tool(db: Session, company_id, name: str, tool_input: dict,
         charts.append(spec)
         return {"ok": True, "chart": spec}
 
+    # CR-044 — run_skill: READ-ONLY file generation (NOT a propose tool, NOT a direct
+    # business mutation). Runs a saved skill's plan through the trusted engine and
+    # returns a download card. Requires a session (user_id). Like create_chart it is
+    # special-cased here and kept OUT of both registries (the read-only TOOL_REGISTRY
+    # guarantee and the ACTION_TOOL_NAMES exact set both stay intact).
+    if name == "run_skill":
+        if user_id is None:
+            return {"error": "Bu eylem için oturum bağlamı gerekli."}
+        from app.services import skills as skills_service
+        result = skills_service.run_skill_tool(
+            db, company_id, user_id, (tool_input or {}).get("skill_id")
+        )
+        pa = result.get("proposed_action") if isinstance(result, dict) else None
+        if pa is not None and proposed_actions is not None:
+            proposed_actions.append(pa)
+        return result
+
     # CR-011-C — propose-only action tools (never a direct mutation).
     action = ACTION_TOOL_REGISTRY.get(name)
     if action is not None:
@@ -840,6 +913,9 @@ _STEP_LABELS = {
     "studio_catalog": "Stüdyo kataloğu inceleniyor…",
     "propose_report": "Rapor önerisi hazırlanıyor…",
     "propose_dashboard": "Pano önerisi hazırlanıyor…",
+    # CR-044 — Skills (Beceriler).
+    "propose_skill": "Beceri taslağı hazırlanıyor…",
+    "run_skill": "Beceri çalıştırılıyor…",
 }
 
 
@@ -851,7 +927,7 @@ def _step_label(name: str) -> str:
 # tools in every scope). Reinforces the §0.2.1 invariant in the model's own words.
 _ACTION_GUIDANCE = (
     "\n\nEYLEM ARAÇLARI (propose_reminder, propose_flag_invoice, propose_followup_task, "
-    "propose_report, propose_dashboard): "
+    "propose_report, propose_dashboard, propose_skill, run_skill): "
     "Bu araçların HİÇBİRİ DOĞRUDAN bir şey YAZMAZ. propose_reminder / "
     "propose_flag_invoice / propose_followup_task ONAY BEKLEYEN bir öneri oluşturur "
     "(/approvals'tan onaylanınca uygulanır). propose_report / propose_dashboard ise "
@@ -879,6 +955,17 @@ _ACTION_GUIDANCE = (
     "veri widget'ı (kpi/chart/table) bir spec, benzersiz bir id ve bir layout "
     "(x,y,w,h) almalı. TASLAĞI ekle ve kullanıcıya düzenleyebileceğini veya OLUŞTUR'a "
     "basabileceğini söyle.\n"
+    "- 'bir beceri/uygulama yap', 'her ay … (Excel/PDF) çıkaran bir şey kur', 'şu raporu "
+    "otomatikleştir/kaydet' VEYA mevcut bir beceri taslağında değişiklik → propose_skill. "
+    "Beceri = kaydedilen, yeniden çalıştırılabilir bir DOSYA tarifi; çalıştırılınca canlı "
+    "veriden gerçek Excel/PDF üretir. ÖNCE studio_catalog; widgets'ı panodaki gibi kur, "
+    "format ('xlsx'/'pdf') seç, instruction'a kullanıcının cümlesini koy. Talep bir DÖNEM "
+    "ima ediyorsa ('her ay', 'son 3 ay', 'bu yıl') GÖRELİ ön ayar kullan "
+    "({preset: bu_ay|son_3_ay|bu_yil…}); tarihi MUTLAK değere çevirme (her çalıştırmada "
+    "dönem ilerlesin). TASLAĞI ekle; kullanıcı 'Beceri olarak kaydet'e basınca kaydeder.\n"
+    "- 'şu beceriyi/uygulamayı çalıştır/üret' (elinde skill_id varsa) → run_skill. Bu "
+    "SALT-OKUNUR bir dosya üretimidir (onay gerekmez, işletme verisini değiştirmez); "
+    "sonucu indirme kartı olarak göster ve 'dosya üretildi' de.\n"
     "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
     "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
     "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "
@@ -924,6 +1011,20 @@ def _draft_context(draft) -> str:
                 "isteğine göre GÜNCELLE ve propose_dashboard ile yeni taslağı öner. "
                 "Hiçbir şey oluşturma; 'oluşturdum' deme — oluşturma kullanıcının "
                 "OLUŞTUR butonuyla olur."
+            )
+        if kind == "draft_skill":
+            plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {}
+            widgets = plan.get("widgets")
+            n = len(widgets) if isinstance(widgets, list) else 0
+            fmt = draft.get("format") or plan.get("format") or "xlsx"
+            return (
+                f"Kullanıcı şu BECERİ taslağını düzenliyor: «{title or 'Beceri'}» "
+                f"({n} bölüm, biçim: {fmt}). Sıfırdan başlama — mevcut planı (widgets + "
+                "date_range) kullanıcının isteğine göre GÜNCELLE ve propose_skill ile yeni "
+                "taslağı öner; biçim/dönem değişikliklerini de uygula. Dönem ima edilirse "
+                "GÖRELİ ön ayar kullan (tarihi mutlak değere çevirme). Hiçbir şey "
+                "oluşturma/çalıştırma; 'oluşturdum' deme — kaydetme kullanıcının 'Beceri "
+                "olarak kaydet' butonuyla olur."
             )
     except Exception:  # malformed draft must never break the turn
         return ""

@@ -31,6 +31,7 @@ from app.models.invite import Invite
 from app.models.closeout import ProjectCloseout
 from app.models.report import Report
 from app.models.dashboard import Dashboard
+from app.models.skill import Skill, SkillRun
 
 __all__ = [
     "Base",
@@ -67,4 +68,6 @@ __all__ = [
     "ProjectCloseout",
     "Report",
     "Dashboard",
+    "Skill",
+    "SkillRun",
 ]
