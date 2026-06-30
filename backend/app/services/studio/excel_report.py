@@ -22,8 +22,11 @@ import io
 from datetime import datetime, timezone
 
 from openpyxl import Workbook
-from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+from openpyxl.chart import AreaChart, BarChart, LineChart, PieChart, Reference
 from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.series import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.drawing.line import LineProperties
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -389,31 +392,128 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
 # --------------------------------------------------------------------------- #
 # Native charts referencing the data-sheet ranges
 # --------------------------------------------------------------------------- #
-def _style_chart(chart, title: str):
-    chart.title = _safe_cell(title or "Grafik")
-    chart.height = 8
-    chart.width = 16
+# CR-046 Heneka categorical palette (mirrors report_charts._PALETTE / _DONUT_PALETTE)
+# — series/slices cycle through these so native charts match the PDF deck.
+_SERIES_COLORS = [NAVY, PETROL, GOLD, GREEN, "#A9B2AC"]
+_AXIS_FMT = '#,##0" ₺"'   # ₺ value-axis ticks (CR-052 §3)
+_CAT_CAP = 12             # cap a ranking/composition chart's categories for readability
+
+
+def _color6(hex_str: str) -> str:
+    """'#183047' / '183047' → '183047' (openpyxl solidFill wants 6-hex, no alpha)."""
+    return hex_str.lstrip("#").upper()
+
+
+def _apply_series_colors(chart, *, line: bool) -> None:
+    """Recolour every data series with the Heneka palette. Defensive: a styling
+    failure must NEVER break the workbook (the file-opens-clean invariant)."""
     try:
-        chart.legend.position = "b"
-    except AttributeError:
+        for i, s in enumerate(chart.series):
+            color = _color6(_SERIES_COLORS[i % len(_SERIES_COLORS)])
+            if line:
+                gp = GraphicalProperties()
+                gp.line = LineProperties(solidFill=color, w=28575)  # ~2.25pt
+                s.graphicalProperties = gp
+            else:
+                s.graphicalProperties = GraphicalProperties(solidFill=color)
+    except Exception:
         pass
 
 
-def _chart_kind(columns: list, viz: str | None) -> str:
-    """Pick the native chart type. Category breakdown (no date dim, 1 metric) → pie;
-    single-metric time series → line; otherwise clustered bar."""
+def _apply_pie_colors(chart, n_points: int) -> None:
+    """Colour each pie slice from the Heneka palette (per-point, not per-series)."""
+    try:
+        if not chart.series:
+            return
+        ser = chart.series[0]
+        for i in range(max(0, n_points)):
+            color = _color6(_SERIES_COLORS[i % len(_SERIES_COLORS)])
+            # openpyxl's DataPoint constructor takes ``spPr`` (graphicalProperties is a
+            # read-only alias); passing graphicalProperties= raises TypeError → no colors.
+            ser.data_points.append(
+                DataPoint(idx=i, spPr=GraphicalProperties(solidFill=color)))
+    except Exception:
+        pass
+
+
+def _style_chart(chart, title: str, *, legend: bool = True):
+    chart.title = _safe_cell(title or "Grafik")
+    chart.height = 8
+    chart.width = 16
+    if legend:
+        try:
+            chart.legend.position = "b"
+        except AttributeError:
+            pass
+    else:
+        chart.legend = None  # a single-series chart needs no legend
+
+
+def _filter_key(spec: dict) -> tuple:
+    """A stable, hashable key for a widget's filters, so the chart de-dup treats two
+    widgets with the same metric+dim but DIFFERENT filters as distinct (not twins)."""
+    out = []
+    for f in (spec or {}).get("filters") or []:
+        if isinstance(f, dict):
+            out.append((str(f.get("field")), str(f.get("op")), str(f.get("value"))))
+    return tuple(sorted(out))
+
+
+def pick_chart(columns: list, rows: list, viz: str | None) -> str | None:
+    """CR-052 — pick the chart that the data SHAPE earns, or ``None`` (a chart that
+    merely restates the table beside it is clutter). Returns one of
+    ``line|area|bar|clustered_bar|pie|None``:
+
+      * **date dim** + 1 metric → ``line`` (``area`` when explicitly cumulative),
+        + ≥2 metrics → ``clustered_bar`` (e.g. gelir vs gider);
+      * **one category dim** + 1 metric, >3 rows → ``bar`` (horizontal ranking),
+        ≤6 rows of a summable ₺ metric → ``pie`` (part-to-whole composition),
+        + ≥2 metrics → ``clustered_bar`` (bütçe/gerçekleşen/taahhüt side-by-side);
+      * **snapshot / single value / ≤3 rows / lookup / 0 or >1 dims** → ``None``.
+
+    An explicit ``viz`` is honoured (``area``/``bar`` on a time series) but the shape
+    overrides it to ``None`` when no chart helps, and upgrades a generic ``bar`` to
+    ``clustered_bar``/``pie`` when the shape fits. ``columns`` are the RENDERED columns
+    (snapshot metrics already dropped by ``data_sheet``)."""
     dim_cols = [c for c in columns if c.get("kind") == "dimension"]
     metric_cols = [c for c in columns if c.get("kind") == "metric"]
-    has_date = any(c.get("type") == "date" for c in dim_cols)
-    if dim_cols and not has_date and len(metric_cols) == 1:
-        return "pie"
-    if viz in ("line", "area") and len(metric_cols) == 1:
+    n_rows = len(rows or [])
+    n_metrics = len(metric_cols)
+
+    # Need exactly one dimension to plot against and at least one metric. Zero dims is a
+    # snapshot KPI; multiple dims is a cross-tab a single-axis chart only muddles.
+    if len(dim_cols) != 1 or n_metrics == 0:
+        return None
+    # Too few points to be worth a chart — a KPI card / the table says it better.
+    if n_rows < 2:
+        return None
+
+    if dim_cols[0].get("type") == "date":
+        # Trend over time.
+        if n_metrics >= 2:
+            return "clustered_bar"
+        if viz == "area":
+            return "area"
+        if viz == "bar":
+            return "clustered_bar"   # honour an explicit column-over-time intent
         return "line"
-    return "bar"
+
+    # One category dimension (kategori / vendor / tip / proje).
+    if n_metrics >= 2:
+        return "clustered_bar"       # side-by-side metric comparison
+    if n_rows <= 3:
+        return None                  # ≤3 categories — a KPI/table reads better
+    metric = metric_cols[0]
+    if metric.get("type") == "currency" and n_rows <= 6:
+        return "pie"                 # part-to-whole composition, few slices
+    return "bar"                     # ranking / comparison (horizontal bar)
 
 
 def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
-    """Build a native chart from a data-sheet range info and anchor it on the Özet."""
+    """Build a native chart from a data-sheet range info and anchor it on the Özet.
+    ``kind`` is a ``pick_chart`` result. Categories on a non-time ranking/composition
+    chart are capped (``_CAT_CAP``) for readability; a time series keeps every point so
+    the line reads left→right over the whole span (CR-050 chronological order)."""
     sheet = ref["sheet"]
     cat_col = ref["cat_col"]
     hr = ref["header_row"]
@@ -421,27 +521,43 @@ def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
     mfirst, mlast = ref["metric_first_col"], ref["metric_last_col"]
     if cat_col is None or last <= hr:
         return
-    cats = Reference(sheet, min_col=cat_col, max_col=cat_col, min_row=hr + 1, max_row=last)
+    is_time = bool(ref.get("time_grouped"))
+    data_last = last if is_time else min(last, hr + _CAT_CAP)
+    cats = Reference(sheet, min_col=cat_col, max_col=cat_col, min_row=hr + 1, max_row=data_last)
+    multi = mlast > mfirst
 
     if kind == "pie":
         chart = PieChart()
-        data = Reference(sheet, min_col=mfirst, max_col=mfirst, min_row=hr, max_row=last)
+        data = Reference(sheet, min_col=mfirst, max_col=mfirst, min_row=hr, max_row=data_last)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
         chart.dataLabels = DataLabelList(); chart.dataLabels.showPercent = True
-    elif kind == "line":
-        chart = LineChart()
-        chart.y_axis.numFmt = '#,##0'
-        data = Reference(sheet, min_col=mfirst, max_col=mlast, min_row=hr, max_row=last)
+        _apply_pie_colors(chart, data_last - hr)
+        _style_chart(chart, title, legend=True)
+    elif kind in ("line", "area"):
+        chart = LineChart() if kind == "line" else AreaChart()
+        chart.y_axis.numFmt = _AXIS_FMT
+        data = Reference(sheet, min_col=mfirst, max_col=mlast, min_row=hr, max_row=data_last)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
-    else:
+        _apply_series_colors(chart, line=(kind == "line"))
+        _style_chart(chart, title, legend=multi)
+    elif kind == "bar":
+        chart = BarChart(); chart.type = "bar"      # horizontal ranking
+        chart.x_axis.numFmt = _AXIS_FMT             # value axis is x for a horizontal bar
+        data = Reference(sheet, min_col=mfirst, max_col=mfirst, min_row=hr, max_row=data_last)
+        chart.add_data(data, titles_from_data=True)
+        chart.set_categories(cats)
+        _apply_series_colors(chart, line=False)
+        _style_chart(chart, title, legend=False)
+    else:  # clustered_bar — multi-series columns over the dim
         chart = BarChart(); chart.type = "col"; chart.grouping = "clustered"
-        chart.y_axis.numFmt = '#,##0'
-        data = Reference(sheet, min_col=mfirst, max_col=mlast, min_row=hr, max_row=last)
+        chart.y_axis.numFmt = _AXIS_FMT
+        data = Reference(sheet, min_col=mfirst, max_col=mlast, min_row=hr, max_row=data_last)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
-    _style_chart(chart, title)
+        _apply_series_colors(chart, line=False)
+        _style_chart(chart, title, legend=multi)
     ozet.add_chart(chart, anchor)
 
 
@@ -487,7 +603,7 @@ def build_workbook(widgets: list, results: dict, title: str, *,
 
     used_names: set = set()
     cards: list = []
-    chart_specs: list = []  # (ref, kind, title)
+    chart_candidates: list = []  # CR-052 — {sig, ref, kind, title, explicit}, deduped below
     rendered = False
 
     # Period from the result windows (no query). CR-049 — prefer a CONCRETE span (a
@@ -544,20 +660,38 @@ def build_workbook(widgets: list, results: dict, title: str, *,
             continue
         rendered = True
 
-        # Chart for chart-type widgets, or report widgets / single-reports with series.
-        viz = (w.get("spec") or {}).get("viz")
-        wants_chart = (
-            wtype == "chart"
-            or (wtype == "report" and res.get("series"))
-            or (single_report and viz in ("line", "area", "bar"))
-        )
-        if wants_chart:
-            sheet_columns = (ref["dim_cols"] or []) + (ref["metric_cols"] or [])
-            kind = _chart_kind(sheet_columns, viz)
-            chart_specs.append((ref, kind, w.get("title") or title))
+        # CR-052 — let EVERY rendered table earn a chart by its data shape (not one
+        # per table). pick_chart returns None for shapes a chart can't improve, so the
+        # Özet stays a curated dashboard. An explicit chart widget's viz is honoured.
+        spec = w.get("spec") or {}
+        viz = spec.get("viz")
+        sheet_columns = (ref["dim_cols"] or []) + (ref["metric_cols"] or [])
+        kind = pick_chart(sheet_columns, res.get("rows") or [], viz)
+        if kind:
+            # Signature includes FILTERS so two same-metric+dim widgets that differ only
+            # by filter (e.g. cost-by-month for project A vs B) are NOT collapsed — only
+            # a true twin (a table restating a chart's exact data) de-dups.
+            sig = (
+                tuple(sorted(c["id"] for c in ref["metric_cols"])),
+                tuple(c["id"] for c in ref["dim_cols"]),
+                _filter_key(spec),
+            )
+            chart_candidates.append({
+                "sig": sig, "ref": ref, "kind": kind,
+                "title": w.get("title") or title, "explicit": wtype == "chart",
+            })
 
     if not rendered:
         raise APIError(422, "NO_DATA", "Dışa aktarılacak veri yok")
+
+    # CR-052 de-dup: one chart per (metrics, dims) signature — don't chart a table that
+    # a twin chart widget already visualizes. An explicit chart widget wins the twin.
+    chosen: dict = {}
+    for cand in chart_candidates:
+        prev = chosen.get(cand["sig"])
+        if prev is None or (cand["explicit"] and not prev["explicit"]):
+            chosen[cand["sig"]] = cand
+    chart_specs = [(c["ref"], c["kind"], c["title"]) for c in chosen.values()]
 
     # Build the Özet sheet at the front, now that data sheets exist for chart refs.
     ozet = wb.create_sheet("Özet", 0)

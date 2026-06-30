@@ -231,7 +231,10 @@ def build_tool_schemas() -> list[dict]:
         "description": (
             "CR-032 Rapor Spec'i. metrics[] ZORUNLU. metrics, dimensions ve "
             "filtre alanları SADECE studio_catalog'daki kimliklerden olmalı "
-            "('coming_soon' olanları kullanma). viz: line|area|bar|kpi|table."
+            "('coming_soon' olanları kullanma). viz: line|area|bar|kpi|table — "
+            "veri şekline uygun seç: zaman serisi (month/quarter/year) → line/area, "
+            "kategori/vendor kırılımı → bar, tek değer/anlık → kpi. (Motor grafiği "
+            "şekle göre otomatik seçer/eler; uygunsuz grafik koyma.)"
         ),
         "properties": {
             "metrics": {"type": "array", "items": {"type": "string"},
@@ -1016,6 +1019,14 @@ _ACTION_GUIDANCE = (
     "(birkaç yıl) aylık 30-40 satır yerine `quarter` veya `year` grain kullan; kısa "
     "aralıklar için `month`. Dönemi gerçek aralıktan etiketle (motor meta.date_range'i "
     "doğru döndürür) — asla sabit yakın bir aralık yazma.\n"
+    "5) GÖRSEL/GRAFİK SEÇİMİ: Her widget'a veri ŞEKLİNE uygun bir viz seç — zaman "
+    "serisi (month/quarter/year) için `line` (tek metrik/kümülatif) veya `area`; "
+    "bir kategori/vendor/tip kırılımı için `bar`; tek değer/anlık için `kpi`. "
+    "Bir rapor/panoda AZ SAYIDA, yüksek değerli grafik kullan — HER bölüme/tabloya "
+    "grafik koyma (bu bir anti-desen). Motor grafiği veri şekline göre otomatik seçer "
+    "ve uygun olmayan şekillerde (anlık/tek değer/≤3 satır) grafiği ELER; tablo widget'ı "
+    "da şekil uygunsa kendi grafiğini kazanır — bu yüzden gereksiz/tekrar eden grafik "
+    "widget'ı ekleme.\n"
     "Birden fazla eylem istenirse her biri için AYRI bir araç çağrısı yap.\n"
     "NE ZAMAN ÇAĞIRMAMALISIN: Kullanıcı yalnızca GENEL TAVSİYE veya bir öneri/yapılacaklar "
     "LİSTESİ isterse (örn. 'ne yapmalıyım', 'önerilerin neler') eylem aracı çağırma; "
