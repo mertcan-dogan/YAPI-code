@@ -234,6 +234,14 @@ OWNER_SIDES = [OWNER_SIDE_YUKLENICI, OWNER_SIDE_ARSA_SAHIBI]
 SELL_SIDE_REVENUE_MODELS = {"kat_karsiligi", "yap_sat", "hasilat_paylasimi"}
 # Landowner ledger is only meaningful for share models (kat karşılığı / hasılat).
 LANDOWNER_REVENUE_MODELS = {"kat_karsiligi", "hasilat_paylasimi"}
+
+# CR-051: on the sell-side Nakit Akışı, do landowner payments count as CASH inflow?
+# They carry payment_date + amount_try and feed sell-side revenue (CR-031), so by
+# DEFAULT (True) they land on the cash timeline alongside unit sales. THE SINGLE
+# SWITCH — flip to False when, for a given kat-karşılığı deal, the landowner's
+# consideration is non-cash LAND (arsa) rather than money, so it must not appear in
+# *cash* flow. The default is stated in the premade Nakit Akış footnote.
+LANDOWNER_PAYMENTS_AS_CASH = True
 OWNERSHIP_TYPES = ["owned", "rented"]
 RATE_UNITS = ["day", "month"]
 

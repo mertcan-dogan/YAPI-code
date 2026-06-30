@@ -387,11 +387,14 @@ def _cashflow_span(db, project: Project, today: date) -> tuple[str, str]:
 def _cashflow_periods(db, project: Project, today: date) -> list:
     """The project's full-span monthly cashflow (CR-048: data-relative, NOT a trailing
     window), aggregated to quarters when the span is long. Each: {period, in, out, net,
-    cum}. Returns [] for a project with no cost/invoice activity (→ a calm note)."""
-    from app.services.financials import load_project_inputs, project_cashflow_window
+    cum}. Returns [] for a project with no cost/inflow activity (→ a calm note)."""
+    from app.services.financials import cashflow_inflows, load_project_inputs, project_cashflow_window
 
-    costs, invoices, _ = load_project_inputs(db, project)
-    if not costs and not invoices:
+    costs, _, _ = load_project_inputs(db, project)
+    # CR-051: the inflow side is revenue-model-aware, so a sell-side project with
+    # unit sales (but no client invoices) is NOT treated as empty.
+    inflows = cashflow_inflows(db, project, today=today)
+    if not costs and not inflows:
         return []
     from_m, to_m = _cashflow_span(db, project, today)
     rows = project_cashflow_window(db, project, from_m, to_m, today=today)["rows"]
@@ -422,6 +425,22 @@ def _cashflow_periods(db, project: Project, today: date) -> list:
     return [quarters[k] for k in order]
 
 
+def _cashflow_footnote(project: Project) -> str | None:
+    """CR-051 — disclose the sell-side cash-in basis (the decision-point default):
+    cash-in comes from unit sales (+ landowner payments by default), NOT hakediş
+    invoices. None for hakediş/maliyet_kâr (the default invoice basis needs no note)."""
+    from app.constants import LANDOWNER_PAYMENTS_AS_CASH
+
+    if project.revenue_model not in SELL_SIDE_REVENUE_MODELS:
+        return None
+    if LANDOWNER_PAYMENTS_AS_CASH:
+        return ("Not: Nakit girişleri birim satışlarından ve arsa sahibi ödemelerinden "
+                "(varsayılan: nakit kabul edilir) oluşur; hakediş faturaları dahil değildir. "
+                "Arsa sahibi katkısı nakit değil arsa ise rapor ayarından hariç tutulabilir.")
+    return ("Not: Nakit girişleri yalnızca birim satışlarından oluşur; arsa sahibi "
+            "ödemeleri (nakit dışı kabul edildiğinden) ve hakediş faturaları dahil değildir.")
+
+
 def build_cashflow_data(db, project: Project, company: Company, today: date | None = None) -> dict:
     today = today or date.today()
     periods = _cashflow_periods(db, project, today)
@@ -438,6 +457,7 @@ def build_cashflow_data(db, project: Project, company: Company, today: date | No
         "company_name": company.name, "project": project, "periods": periods,
         "kpis": [(lbl, _money_tr(v)) for _, lbl, v in kpi_metrics],
         "kpi_metrics": kpi_metrics,
+        "footnote": _cashflow_footnote(project),
     }
 
 
@@ -469,6 +489,8 @@ def _cashflow_pdf(d: dict) -> bytes:
                      _money_tr(p["net"]), _money_tr(p["cum"])] for p in periods]
             story += [dtable(header, body, [3.4 * cm, 3.55 * cm, 3.55 * cm, 3.55 * cm, 3.55 * cm],
                              aligns=[0, 2, 2, 2, 2])]
+            if d.get("footnote"):
+                story += [Spacer(1, 8), _note(d["footnote"])]
         else:
             story.append(_note("Bu projede nakit akış verisi bulunmuyor."))
         return _build_pdf(story, "Yapı Nakit Akış Raporu", d["company_name"],

@@ -174,12 +174,15 @@ def test_financing_separable_in_project_pnl(client, seed, db):
     p = _set_model(db, seed, "yap_sat")
     _seed_rate(db, "2025-03-01", "40.0000")
     _seed_rate(db, "2025-03-31", "40.0000")
-    # A cost (under the 500k approval threshold, so it isn't gated) with no
-    # offsetting income → underwater month → nonzero financing.
+    # A March cost (under the 500k approval threshold, so it isn't gated) whose sale
+    # income only arrives LATER → the months in between are underwater → nonzero
+    # financing. CR-051: a sell-side sale now counts as a cash inflow, so the sale
+    # must be dated after the cost (not the same month) to leave a genuine
+    # underwater gap — a same-month 5M sale would (correctly) cover the 400K cost.
     client.post(f"/api/v1/projects/{pid}/costs", json={
         "entry_date": "2025-03-01", "cost_category": "other", "amount_try": "400000", "vat_rate": "0"})
     client.post(f"/api/v1/projects/{pid}/unit-sales", json={
-        "unit_label": "A-1", "net_m2": "100", "sale_price_try": "5000000", "sale_date": "2025-03-01"})
+        "unit_label": "A-1", "net_m2": "100", "sale_price_try": "5000000", "sale_date": "2025-09-01"})
     company = seed["a"]["company"]
     company.financing_enabled = True
     company.financing_annual_rate_pct = Decimal("12.00")
