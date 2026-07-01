@@ -52,6 +52,9 @@ export interface Project {
   project_type: string;
   // CR: revenue/billing model — hakedis | kat_karsiligi | yap_sat | hasilat_paylasimi | maliyet_kar
   revenue_model: string;
+  // CR-053: per-project deal structure (sell-side only; null on hakediş / old projects).
+  // arsa_karsiligi_daire | kentsel_donusum | nakit_katki | yap_sat_kendi_arsa | diger
+  deal_structure: string | null;
   contractor_share_pct: string | null;
   unit_count: number | null;
   client_name: string;
@@ -95,6 +98,9 @@ export interface ProjectUnit {
   net_m2_each: string | null;
   sale_price_try: string | null;
   notes: string | null;
+  // CR-053: which side this planned daire belongs to — "yuklenici" (contractor's
+  // sellable stock) | "arsa_sahibi" (landowner's). Default "yuklenici".
+  owner_side: string;
 }
 
 // CR-016-B: computed residential aggregates on the dashboard payload.
@@ -302,6 +308,21 @@ export interface ProjectPnl {
     contractor_share_pct: string | null;
     contractor: { sales_try: string; sales_usd: string; allocated_cost_try: string | null };
     landowner: { sales_try: string; sales_usd: string; payments_try: string; payments_usd: string; allocated_cost_try: string | null };
+  };
+  // CR-053: operator-model extras — present ONLY for sell-side (revenue_source === "sales").
+  // Efektif arsa maliyeti = construction × landowner share. DERIVED/informational —
+  // never added to revenue or cost (the land's cost is already inside construction).
+  efektif_arsa_maliyeti_try?: string | null;
+  efektif_arsa_maliyeti_usd?: string | null;
+  landowner_share_pct?: string | null; // e.g. "40.00"
+  landowner_share_basis?: "units" | "pct" | null;
+  planned_split?: {
+    has_schedule: boolean;
+    total_gross_m2: string;
+    contractor: { units: number; gross_m2: string; net_m2: string; estimated_sales_try: string | null };
+    landowner: { units: number; gross_m2: string; net_m2: string; estimated_sales_try: string | null };
+    sold: { units: number; value_try: string; value_usd: string };
+    remaining: { units: number; projected_value_try: string | null };
   };
 }
 

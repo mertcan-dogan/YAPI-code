@@ -28,6 +28,10 @@ class Project(TimestampSoftDeleteMixin, Base):
     # Sales-based models (kat karşılığı / yap-sat / hasılat): contractor share + unit count
     contractor_share_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # CR-053: the per-project deal structure (founder's setting). Documents the deal
+    # and drives UI labels/hints/defaults; it does NOT compute the P&L (data-driven,
+    # §0). Nullable — meaningful for sell-side projects. See DEAL_STRUCTURES.
+    deal_structure: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # CR-001-A: free-text type entered when project_type == "other"
     custom_project_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)

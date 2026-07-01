@@ -426,19 +426,16 @@ def _cashflow_periods(db, project: Project, today: date) -> list:
 
 
 def _cashflow_footnote(project: Project) -> str | None:
-    """CR-051 — disclose the sell-side cash-in basis (the decision-point default):
-    cash-in comes from unit sales (+ landowner payments by default), NOT hakediş
-    invoices. None for hakediş/maliyet_kâr (the default invoice basis needs no note)."""
-    from app.constants import LANDOWNER_PAYMENTS_AS_CASH
-
+    """CR-051/053 — disclose the sell-side cash-in basis (the operator model):
+    cash-in comes from the contractor's OWN flat sales (yüklenici) + landowner cash
+    contributions, NOT hakediş invoices and NOT the landowner's own (arsa sahibi)
+    flat sales. None for hakediş/maliyet_kâr (the default invoice basis needs no note)."""
     if project.revenue_model not in SELL_SIDE_REVENUE_MODELS:
         return None
-    if LANDOWNER_PAYMENTS_AS_CASH:
-        return ("Not: Nakit girişleri birim satışlarından ve arsa sahibi ödemelerinden "
-                "(varsayılan: nakit kabul edilir) oluşur; hakediş faturaları dahil değildir. "
-                "Arsa sahibi katkısı nakit değil arsa ise rapor ayarından hariç tutulabilir.")
-    return ("Not: Nakit girişleri yalnızca birim satışlarından oluşur; arsa sahibi "
-            "ödemeleri (nakit dışı kabul edildiğinden) ve hakediş faturaları dahil değildir.")
+    return ("Not: Nakit girişleri yüklenicinin kendi daire satışlarından ve arsa sahibi "
+            "nakit katkılarından oluşur; arsa sahibinin kendi daire satışları ile hakediş "
+            "faturaları dahil değildir. Verilen arsanın bedeli inşaat maliyetine zaten "
+            "dahildir (efektif arsa maliyeti olarak ayrıca gösterilir).")
 
 
 def build_cashflow_data(db, project: Project, company: Company, today: date | None = None) -> dict:
@@ -544,19 +541,25 @@ def build_invoice_data(db, project: Project, company: Company) -> dict:
         from app.services import sales
 
         rc = sales.revenue_cost_totals(db, project)
-        unit_total = sales.sales_revenue_totals(db, project)
         units = sales.unit_sales_pnl(db, project)
         land = sales.landowner_rollup(db, project)
         base["mode"] = "sell_side"
+        # CR-053 operator model: Toplam Gelir = the contractor's OWN sales (yüklenici)
+        # + landowner cash contributions; "Birim Satış Geliri" is that own-sales lane
+        # (the breakdown's unit_sales_try), so the three lines reconcile.
         base["kpis"] = [
             ("Toplam Gelir", _money_tr(rc["revenue_try"])),
-            ("Birim Satış Geliri", _money_tr(unit_total.get("total_try"))),
-            ("Arsa Sahibi Ödemeleri", _money_tr(land.get("total_try"))),
+            ("Birim Satış Geliri (Yüklenici)", _money_tr(rc["revenue_breakdown"]["unit_sales_try"])),
+            ("Arsa Sahibi Nakit Katkısı", _money_tr(land.get("total_try"))),
         ]
+        # CR-053: the detail rows are the contractor's OWN (yüklenici) sales, so the
+        # "Birim Satışları" table reconciles with the "Birim Satış Geliri (Yüklenici)"
+        # KPI above it. arsa_sahibi sales are the landowner's flats (not revenue here).
         base["units"] = [
             {"label": u.get("unit_label") or "—", "type": u.get("unit_type") or "—",
              "price": u.get("sale_price_try"), "pnl": u.get("pnl_try")}
             for u in (units.get("allocations") or [])
+            if u.get("owner_side") == "yuklenici"
         ]
         base["landowner"] = {"paid": land.get("total_try"), "committed": land.get("committed_total_try"),
                              "remaining": land.get("remaining_try"), "count": land.get("count")}

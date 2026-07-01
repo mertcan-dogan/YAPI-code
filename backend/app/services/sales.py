@@ -216,21 +216,27 @@ def landowner_ledger(db: Session, project: Project) -> dict:
 # --------------------------------------------------------------------------- #
 def sales_by_owner_side(db: Session, project: Project) -> dict:
     """SQL Σ of unit-sales revenue grouped by ``owner_side`` (the contractor /
-    landowner split feed, §3.1). Pure aggregation."""
+    landowner split feed, §3.1) — TRY/USD + count per side. Pure aggregation.
+
+    CR-053: the operator P&L revenue lane reads the ``yuklenici`` side from here
+    (the contractor's OWN sales); ``arsa_sahibi`` sales are surfaced but EXCLUDED
+    from revenue and from cash-in (the landowner's flats are not the contractor's
+    money — their build cost is already in the construction total, §0)."""
     rows = db.execute(
         select(
             UnitSale.owner_side,
             func.coalesce(func.sum(UnitSale.sale_price_try), 0),
             func.coalesce(func.sum(UnitSale.sale_price_usd), 0),
+            func.count(UnitSale.id),
         )
         .where(UnitSale.project_id == project.id, UnitSale.is_deleted.is_(False))
         .group_by(UnitSale.owner_side)
     ).all()
-    out = {"yuklenici": {"try": money(D(0)), "usd": money(D(0))},
-           "arsa_sahibi": {"try": money(D(0)), "usd": money(D(0))}}
-    for side, s_try, s_usd in rows:
+    out = {"yuklenici": {"try": money(D(0)), "usd": money(D(0)), "count": 0},
+           "arsa_sahibi": {"try": money(D(0)), "usd": money(D(0)), "count": 0}}
+    for side, s_try, s_usd, cnt in rows:
         if side in out:
-            out[side] = {"try": money(D(s_try)), "usd": money(D(s_usd))}
+            out[side] = {"try": money(D(s_try)), "usd": money(D(s_usd)), "count": int(cnt)}
     return out
 
 
@@ -270,9 +276,21 @@ def revenue_cost_totals(db: Session, project: Project, today: date | None = None
     """The single revenue-model-aware revenue/cost selection (§0.2) — the ONE
     place the no-double-count rule lives, shared by the P&L (§3) and IRR/ROI (§4).
 
-    REVENUE: sell-side (kat_karsiligi/yap_sat/hasilat_paylasimi) → Σ unit_sales +
-    Σ landowner_payments; hakedis/maliyet_kar → client_invoices (existing rollup).
-    The two sources are NEVER summed. COST is the authoritative CR-007/014 rollup.
+    CR-053 — the founder's OPERATOR model for sell-side projects:
+    * REVENUE = the contractor's OWN flat sales (``unit_sales`` with
+      ``owner_side = yuklenici``) **+** any CASH contribution from the landowner
+      (``landowner_payments``, now defined as cash). The ``arsa_sahibi`` sales are
+      EXCLUDED — those flats are the landowner's, not the contractor's money.
+    * The contributed LAND is neither revenue nor a separate cost — its cost is
+      already embodied in the construction of the given-away flats (the authoritative
+      rollup includes every flat built). It is surfaced as ``efektif arsa maliyeti``
+      (derived, read-time; see ``project_pnl``), never added here.
+    * COST stays the authoritative CR-007/014 rollup (which now also counts any
+      ``kira_yardimi`` cost entries as normal cost — no special path).
+
+    hakedis/maliyet_kar → client_invoices (existing rollup). The two revenue sources
+    are NEVER summed; correctness is DATA-DRIVEN (sale ``owner_side`` + cash entries),
+    not ``deal_structure``-driven, so a mis-set deal_structure cannot corrupt it.
     """
     from app.constants import SELL_SIDE_REVENUE_MODELS
     from app.services import financials as fin_service
@@ -283,15 +301,22 @@ def revenue_cost_totals(db: Session, project: Project, today: date | None = None
     cost_usd = money(D(usd["costs"]["amount_usd"]))
 
     if project.revenue_model in SELL_SIDE_REVENUE_MODELS:
-        sales = sales_revenue_totals(db, project)
+        by_side = sales_by_owner_side(db, project)
         land = landowner_rollup(db, project)
-        revenue_try = money(sales["total_try"] + D(land["total_try"]))
-        revenue_usd = money(sales["total_usd"] + D(land["total_usd"]))
+        yk_try, yk_usd = by_side["yuklenici"]["try"], by_side["yuklenici"]["usd"]
+        as_try, as_usd = by_side["arsa_sahibi"]["try"], by_side["arsa_sahibi"]["usd"]
+        # Operator revenue = contractor's own sales + cash contributions ONLY.
+        revenue_try = money(yk_try + D(land["total_try"]))
+        revenue_usd = money(yk_usd + D(land["total_usd"]))
         revenue_source = "sales"
         breakdown = {
-            "unit_sales_try": str(sales["total_try"]),
-            "unit_sales_usd": str(sales["total_usd"]),
-            "landowner_try": land["total_try"],
+            # "unit_sales" = the contractor's OWN (yuklenici) sales — the revenue lane.
+            "unit_sales_try": str(yk_try),
+            "unit_sales_usd": str(yk_usd),
+            # arsa_sahibi sales: informational only, EXCLUDED from revenue (non-cash land).
+            "arsa_sahibi_sales_try": str(as_try),
+            "arsa_sahibi_sales_usd": str(as_usd),
+            "landowner_try": land["total_try"],   # cash contributions → revenue
             "landowner_usd": land["total_usd"],
             "client_invoices_try": "0.00",  # explicitly EXCLUDED (no double-count)
         }
@@ -359,7 +384,75 @@ def project_pnl(db: Session, project: Project, today: date | None = None) -> dic
     }
     if sell_side:
         block["split"] = _contractor_split(db, project, cost_try)
+        # CR-053 — efektif arsa maliyeti (derived, informational): construction ×
+        # landowner share. NEVER added into revenue or re-added to cost (the land's
+        # cost is already in the construction total via the given-away flats, §0/§4).
+        share, basis = _landowner_share(db, project)
+        if share is not None:
+            block["efektif_arsa_maliyeti_try"] = str(money(D(cost_try) * share))
+            block["efektif_arsa_maliyeti_usd"] = str(money(D(cost_usd) * share))
+            block["landowner_share_pct"] = str(money(share * D(100)))
+        else:
+            block["efektif_arsa_maliyeti_try"] = None
+            block["efektif_arsa_maliyeti_usd"] = None
+            block["landowner_share_pct"] = None
+        block["landowner_share_basis"] = basis  # "units" | "pct" | None
+        # CR-053 §2 — the planned "what's mine to sell" split.
+        block["planned_split"] = _planned_split(db, project)
     return block
+
+
+def _landowner_share(db: Session, project: Project) -> tuple:
+    """CR-053 — the robust landowner share (Decimal fraction 0..1) + its basis.
+
+    Prefer the EXPLICIT per-unit split (Σ arsa_sahibi gross m² ÷ Σ all gross m²)
+    when a unit schedule exists; else fall back to ``(1 − contractor_share_pct)``;
+    else ``(None, None)`` so efektif arsa maliyeti degrades to "–". Mirrors CR-031's
+    "prefer explicit, fall back" denominator discipline; degrade, never raise."""
+    from app.services import units as units_service
+
+    agg = units_service.split_aggregates(project.units)
+    if agg["landowner_share"] is not None:
+        return agg["landowner_share"], "units"
+    if project.contractor_share_pct is not None:
+        return (D(100) - D(project.contractor_share_pct)) / D(100), "pct"
+    return None, None
+
+
+def _planned_split(db: Session, project: Project) -> dict:
+    """CR-053 §2 — the planned unit split: the contractor's sellable stock vs the
+    landowner's share (units/m² from the schedule), what's SOLD (the contractor's
+    own ``yuklenici`` unit_sales) and the REMAINING inventory + its projected value.
+
+    Remaining value prorates the schedule's contractor estimated-sales by the unsold
+    fraction (null when the schedule carries no prices). Degrades to zeros / null
+    when no schedule exists."""
+    from app.services import units as units_service
+
+    agg = units_service.split_aggregates(project.units)
+    by_side = sales_by_owner_side(db, project)
+    contractor = agg["contractor"]
+    sellable_units = contractor["units"]
+    sold_units = by_side["yuklenici"]["count"]
+    remaining_units = max(0, sellable_units - sold_units)
+
+    est = contractor["estimated_sales_try"]
+    remaining_value = None
+    if est is not None and sellable_units > 0:
+        remaining_value = str(money(D(est) * D(remaining_units) / D(sellable_units)))
+
+    return {
+        "has_schedule": agg["has_schedule"],
+        "total_gross_m2": agg["total_gross_m2"],
+        "contractor": contractor,
+        "landowner": agg["landowner"],
+        "sold": {
+            "units": sold_units,
+            "value_try": str(by_side["yuklenici"]["try"]),
+            "value_usd": str(by_side["yuklenici"]["usd"]),
+        },
+        "remaining": {"units": remaining_units, "projected_value_try": remaining_value},
+    }
 
 
 def _contractor_split(db: Session, project: Project, cost_try) -> dict:
@@ -397,13 +490,19 @@ def _contractor_split(db: Session, project: Project, cost_try) -> dict:
 def cashflow_series(db: Session, project: Project) -> tuple[list, list]:
     """Dated, signed net-cash-flow series in TRY and USD (§4.1). Outflows = cost
     entries (by entry_date, NEGATIVE); inflows = the revenue-model-aware lane
-    (POSITIVE): sell-side → unit_sales (sale_date) + landowner (payment_date);
-    hakedis/maliyet_kar → client_invoices (invoice_date, matching the accrual P&L).
+    (POSITIVE): sell-side → the contractor's OWN (yüklenici) unit_sales (sale_date)
+    + landowner cash contributions (payment_date); hakedis/maliyet_kar →
+    client_invoices (invoice_date, matching the accrual P&L).
+
+    CR-053: the IRR/ROI series reads the SAME operator lane as ``revenue_cost_totals``
+    and ``financials.cashflow_inflows`` — ``arsa_sahibi`` sales are the landowner's
+    money (their flats) and are EXCLUDED, so the investment-return block never
+    contradicts the operator revenue (§3 "one selector").
 
     USD rows are included only where a CR-014 snapshot exists (null USD is skipped
     so a missing rate never poisons the USD IRR). Returns (try_flows, usd_flows).
     """
-    from app.constants import SELL_SIDE_REVENUE_MODELS
+    from app.constants import OWNER_SIDE_YUKLENICI, SELL_SIDE_REVENUE_MODELS
     from app.models.client_invoice import ClientInvoice
     from app.models.cost_entry import CostEntry
 
@@ -433,9 +532,12 @@ def cashflow_series(db: Session, project: Project) -> tuple[list, list]:
     for entry_date, amt_try, amt_usd in costs:
         add(entry_date, amt_try, amt_usd, D(-1))
 
-    # Inflows — revenue-model-aware.
+    # Inflows — revenue-model-aware (CR-053 operator lane: yüklenici sales + cash).
     if project.revenue_model in SELL_SIDE_REVENUE_MODELS:
         for s in list_unit_sales(db, project):
+            # arsa_sahibi sales are the landowner's money, not the contractor's cash.
+            if s.owner_side != OWNER_SIDE_YUKLENICI:
+                continue
             add(s.sale_date, s.sale_price_try, s.sale_price_usd, D(1))
         for p in list_landowner_payments(db, project):
             add(p.payment_date, p.amount_try, p.amount_usd, D(1))

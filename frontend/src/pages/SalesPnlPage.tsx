@@ -19,7 +19,7 @@ import type {
   UnitSalesPayload,
 } from "@/types";
 import { formatCurrency, formatDate, formatNumber, formatPct, formatUSD, toNumber } from "@/utils/format";
-import { Banknote, Coins, Gauge, Landmark, Pencil, Percent, Plus, TrendingUp, Trash2 } from "lucide-react";
+import { Banknote, Building2, Coins, Gauge, Landmark, Pencil, Percent, Plus, TrendingUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -190,6 +190,16 @@ export default function SalesPnlPage() {
         </Card>
       )}
 
+      {/* CR-053: operator-model surfaces — efektif arsa maliyeti + planlı daire dağılımı. */}
+      {sellSide && pnl && (
+        <div className="mb-5 grid gap-4 lg:grid-cols-3">
+          <EfektifArsaCard pnl={pnl} showUsd={showUsd} />
+          <div className="lg:col-span-2">
+            <PlannedSplitCard pnl={pnl} />
+          </div>
+        </div>
+      )}
+
       {/* IRR/ROI yearly feed */}
       {ir && ir.yearly.length > 0 && (
         <Card className="mb-5">
@@ -296,7 +306,9 @@ export default function SalesPnlPage() {
 
 function sourceLabel(pnl?: ProjectPnl): string {
   if (!pnl) return "—";
-  return pnl.revenue_source === "sales" ? "Satış + Arsa Sahibi" : "Hakediş";
+  // CR-053 operator model: sell-side revenue = the contractor's OWN sales +
+  // cash landowner contributions (arsa sahibi satışları ve devredilen arsa hariç).
+  return pnl.revenue_source === "sales" ? "Yüklenici satışları + nakit katkı" : "Hakediş";
 }
 
 function PnlRow({ label, hint, tryV, usdV, showUsd, muted, strong, colored }: {
@@ -360,6 +372,93 @@ function SummaryChip({ label, value, valueClass, hint }: { label: string; value:
       <div className="overline">{label}</div>
       <div className={cn("tabular text-base font-semibold", valueClass ?? "text-primary")}>{value}</div>
       {hint && <div className="mt-0.5 text-caption text-text-muted">{hint}</div>}
+    </div>
+  );
+}
+
+// CR-053: Efektif Arsa Maliyeti — construction × arsa sahibi payı. DERIVED /
+// informational only; it is NEVER added to revenue or cost (the land's cost is
+// already embodied in the construction of the flats given to the landowner).
+function EfektifArsaCard({ pnl, showUsd }: { pnl: ProjectPnl; showUsd: boolean }) {
+  const tryV = pnl.efektif_arsa_maliyeti_try ?? null;
+  const usdV = pnl.efektif_arsa_maliyeti_usd ?? null;
+  const sharePct = pnl.landowner_share_pct ?? null;
+  return (
+    <Card>
+      <CardBody>
+        <SectionTitle title="Efektif Arsa Maliyeti" subtitle="Bilgi amaçlı — türetilmiş" icon={Landmark} />
+        <div className="mt-3">
+          <div className="overline">Arsanın efektif maliyeti</div>
+          <div className="tabular mt-1 text-stat text-primary">{tryV != null ? formatCurrency(tryV) : "–"}</div>
+          {showUsd && usdV != null && <div className="mt-0.5 text-caption text-text-secondary">USD: {formatUSD(usdV)}</div>}
+        </div>
+        <p className="mt-3 rounded-card border border-border bg-bg p-3 text-caption text-text-secondary">
+          İnşaat maliyeti × arsa sahibi payı{sharePct != null ? ` (${formatPct(sharePct)})` : ""}. Bu tutar
+          <span className="font-medium text-text-primary"> bilgi amaçlıdır</span>; gelire eklenmez ve maliyete tekrar
+          yazılmaz — arsanın bedeli, arsa sahibine verilen dairelerin inşaat maliyetinin içinde zaten yer alır.
+        </p>
+      </CardBody>
+    </Card>
+  );
+}
+
+// CR-053: Planlı Daire Dağılımı — yüklenici satılabilir / arsa sahibi payı /
+// satılan / kalan (projeksiyon). Degrades calmly when no schedule is entered.
+function PlannedSplitCard({ pnl }: { pnl: ProjectPnl }) {
+  const ps = pnl.planned_split;
+  return (
+    <Card className="h-full">
+      <CardBody>
+        <SectionTitle title="Planlı Daire Dağılımı" subtitle="Yüklenici satılabilir stok, satılan ve kalan" icon={Building2} />
+        {!ps?.has_schedule ? (
+          <p className="mt-4 text-caption text-text-secondary">
+            Daire dağılımı girilmemiş. Konut Detayları’ndan daireleri “Yüklenici / Arsa Sahibi” olarak etiketleyin.
+          </p>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <SplitStat
+                label="Yüklenici (satılabilir)"
+                value={`${ps.contractor.units} daire`}
+                hint={`Brüt ${formatNumber(ps.contractor.gross_m2)} m² · Net ${formatNumber(ps.contractor.net_m2)} m²`}
+                extra={ps.contractor.estimated_sales_try != null ? `Tahmini: ${formatCurrency(ps.contractor.estimated_sales_try)}` : null}
+              />
+              <SplitStat
+                label="Arsa Sahibi"
+                value={`${ps.landowner.units} daire`}
+                hint={`Brüt ${formatNumber(ps.landowner.gross_m2)} m² · Net ${formatNumber(ps.landowner.net_m2)} m²`}
+                extra={null}
+              />
+              <SplitStat
+                label="Satılan"
+                value={`${ps.sold.units} daire`}
+                hint={formatCurrency(ps.sold.value_try)}
+                extra={null}
+              />
+              <SplitStat
+                label="Kalan"
+                value={`${ps.remaining.units} daire`}
+                hint={ps.remaining.projected_value_try != null ? `Projeksiyon: ${formatCurrency(ps.remaining.projected_value_try)}` : "Projeksiyon: –"}
+                extra={null}
+              />
+            </div>
+            <p className="mt-3 text-caption text-text-muted">
+              Kalan = yüklenici satılabilir stok − satılan. Projeksiyon, kalan dairelerin planlanan satış fiyatına göredir.
+            </p>
+          </>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function SplitStat({ label, value, hint, extra }: { label: string; value: string; hint: string; extra: string | null }) {
+  return (
+    <div className="rounded-card border border-border bg-bg p-3">
+      <div className="overline">{label}</div>
+      <div className="tabular mt-1 text-stat text-primary">{value}</div>
+      <div className="mt-0.5 text-caption text-text-secondary">{hint}</div>
+      {extra && <div className="text-caption text-text-secondary">{extra}</div>}
     </div>
   );
 }

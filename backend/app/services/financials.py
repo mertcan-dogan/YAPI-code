@@ -187,18 +187,24 @@ def cashflow_inflows(
     db: Session,
     project: Project,
     today: date | None = None,
-    include_landowner: bool | None = None,
 ) -> list[dict]:
-    """CR-051 — the revenue-model-aware cash-INFLOW list that
+    """CR-051/053 — the revenue-model-aware cash-INFLOW list that
     ``compute_monthly_cashflow`` consumes, mirroring ``sales.revenue_cost_totals``.
 
     * **hakediş / maliyet_kâr** → the existing ``client_invoices`` (unchanged).
     * **Sell-side** (kat_karşılığı / yap_sat / hasılat_paylaşımı) → invoice-shaped
-      dicts built from ``unit_sales`` (the sale's cash at ``sale_date``) and, by the
-      ``LANDOWNER_PAYMENTS_AS_CASH`` switch, ``landowner_payments`` (at
-      ``payment_date``) — NEVER ``client_invoices``. So a sell-side project's cash-in
-      is its REAL money (sales + landowner), and hakediş invoices can't leak in
-      (§0.2 — the two revenue sources are never summed).
+      dicts built from the contractor's OWN sales (``unit_sales`` with
+      ``owner_side = yuklenici``, the sale's cash at ``sale_date``) **+**
+      ``landowner_payments`` (now CASH contributions, at ``payment_date``) — NEVER
+      ``client_invoices``. So a sell-side project's cash-in is its REAL money, and
+      hakediş invoices can't leak in (§0.2 — the two revenue sources are never summed).
+
+    CR-053 SUPERSEDES CR-051's global ``LANDOWNER_PAYMENTS_AS_CASH`` switch: the
+    operator model is per-project and DATA-DRIVEN. ``arsa_sahibi`` sales are the
+    LANDOWNER's money (their flats) → excluded from the contractor's cash-in; the
+    contributed land is non-cash so it is never a payment. ``landowner_payments`` are
+    cash contributions by definition → always cash-in. Rent support (kira yardımı)
+    flows as a normal cost (cash-out) already, no special path here.
 
     The dicts carry only the fields ``calculations/cashflow.py::_build_buckets``
     reads. A sale/payment dated on/before ``today`` is treated as cash RECEIVED
@@ -207,7 +213,7 @@ def cashflow_inflows(
     engine. Installments are NOT modeled (there is only a free-text note, no
     structured schedule), so the full ``sale_price_try`` lands at ``sale_date``.
     """
-    from app.constants import LANDOWNER_PAYMENTS_AS_CASH, SELL_SIDE_REVENUE_MODELS
+    from app.constants import OWNER_SIDE_YUKLENICI, SELL_SIDE_REVENUE_MODELS
 
     if project.revenue_model not in SELL_SIDE_REVENUE_MODELS:
         _, invoices, _ = load_project_inputs(db, project)
@@ -216,8 +222,6 @@ def cashflow_inflows(
     from app.services import sales as sales_service
 
     today = today or date.today()
-    if include_landowner is None:
-        include_landowner = LANDOWNER_PAYMENTS_AS_CASH
 
     def _inflow(cash_date: date | None, amount) -> dict:
         received = cash_date is not None and cash_date <= today
@@ -231,12 +235,16 @@ def cashflow_inflows(
 
     inflows: list[dict] = []
     for s in sales_service.list_unit_sales(db, project):
+        # Only the contractor's OWN flats are its cash-in; arsa_sahibi sales are the
+        # landowner's money (CR-053). Non-cash land is never a unit_sale here.
+        if s.owner_side != OWNER_SIDE_YUKLENICI:
+            continue
         if s.sale_date is not None and s.sale_price_try is not None:
             inflows.append(_inflow(s.sale_date, s.sale_price_try))
-    if include_landowner:
-        for p in sales_service.list_landowner_payments(db, project):
-            if p.payment_date is not None and p.amount_try is not None:
-                inflows.append(_inflow(p.payment_date, p.amount_try))
+    # Landowner payments are cash contributions by definition → always cash-in.
+    for p in sales_service.list_landowner_payments(db, project):
+        if p.payment_date is not None and p.amount_try is not None:
+            inflows.append(_inflow(p.payment_date, p.amount_try))
     return inflows
 
 

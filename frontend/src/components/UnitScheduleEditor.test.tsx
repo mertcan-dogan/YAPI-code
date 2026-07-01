@@ -37,6 +37,16 @@ describe("computeScheduleSummary", () => {
     ]);
     expect(s.netM2).toBe(180); // only the first row contributes
   });
+
+  // CR-053: split daire counts by side; unlabelled rows default to yüklenici.
+  it("splits unit counts by owner_side (defaulting to yüklenici)", () => {
+    const s = computeScheduleSummary([
+      row({ count: "6", gross_m2_each: "100" }), // no owner_side → yüklenici
+      row({ count: "4", gross_m2_each: "100", owner_side: "arsa_sahibi" }),
+    ]);
+    expect(s.contractorUnits).toBe(6);
+    expect(s.landownerUnits).toBe(4);
+  });
 });
 
 describe("unitsForPayload", () => {
@@ -74,5 +84,15 @@ describe("unitsForPayload", () => {
     expect(u.net_m2_each).toBeNull();
     expect(u.sale_price_try).toBeNull();
     expect(u.notes).toBeNull();
+  });
+
+  // CR-053: owner_side flows through, defaulting to yüklenici when unset.
+  it("maps owner_side and defaults it to yuklenici", () => {
+    const out = unitsForPayload([
+      row({ count: "1", gross_m2_each: "90" }), // unset → yuklenici
+      row({ count: "1", gross_m2_each: "90", owner_side: "arsa_sahibi" }),
+    ]);
+    expect(out[0].owner_side).toBe("yuklenici");
+    expect(out[1].owner_side).toBe("arsa_sahibi");
   });
 });

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.calculations.money import D, money
+from app.calculations.money import D, money, safe_div
 from app.models.project import Project
 from app.models.project_unit import ProjectUnit
 
@@ -52,6 +52,7 @@ def sync_schedule(db: Session, project: Project, units_in, company_id: uuid.UUID
             row.gross_m2_each = item.gross_m2_each
             row.net_m2_each = item.net_m2_each
             row.sale_price_try = item.sale_price_try
+            row.owner_side = item.owner_side  # CR-053: planned split side
             row.notes = item.notes
             seen.add(row.id)
         else:
@@ -64,6 +65,7 @@ def sync_schedule(db: Session, project: Project, units_in, company_id: uuid.UUID
                 gross_m2_each=item.gross_m2_each,
                 net_m2_each=item.net_m2_each,
                 sale_price_try=item.sale_price_try,
+                owner_side=item.owner_side,  # CR-053: planned split side
                 notes=item.notes,
             ))
 
@@ -110,4 +112,51 @@ def schedule_aggregates(units: list[ProjectUnit]) -> dict:
         "total_sellable_gross_m2": money(gross),
         "total_sellable_net_m2": money(net),
         "total_estimated_sales_try": money(sales) if has_sales else None,
+    }
+
+
+def split_aggregates(units: list[ProjectUnit]) -> dict:
+    """CR-053 — the PLANNED unit split by ``owner_side`` (contractor vs landowner).
+
+    Per-side units / gross m² / net m² / estimated sales (from the schedule's own
+    ``sale_price_try``), plus the robust landowner-share basis: ``landowner_share``
+    = Σ arsa_sahibi gross m² ÷ Σ all gross m², derived ONLY when a schedule exists
+    (total gross > 0) — else None (the caller falls back to ``contractor_share_pct``,
+    mirroring CR-031's "prefer explicit, fall back" denominator discipline). Pure;
+    NOT stored. An unknown/blank owner_side counts as the contractor's (yuklenici)."""
+    sides = {
+        "yuklenici": {"units": 0, "gross": D(0), "net": D(0), "sales": D(0), "has_sales": False},
+        "arsa_sahibi": {"units": 0, "gross": D(0), "net": D(0), "sales": D(0), "has_sales": False},
+    }
+    for u in units:
+        side = u.owner_side if u.owner_side in sides else "yuklenici"
+        s = sides[side]
+        c = u.count or 0
+        s["units"] += c
+        s["gross"] += D(u.gross_m2_each) * c
+        if u.net_m2_each is not None:
+            s["net"] += D(u.net_m2_each) * c
+        if u.sale_price_try is not None:
+            s["sales"] += D(u.sale_price_try) * c
+            s["has_sales"] = True
+
+    total_gross = sides["yuklenici"]["gross"] + sides["arsa_sahibi"]["gross"]
+    share = safe_div(sides["arsa_sahibi"]["gross"], total_gross) if total_gross > 0 else None
+
+    def _side(key: str) -> dict:
+        s = sides[key]
+        return {
+            "units": s["units"],
+            "gross_m2": str(money(s["gross"])),
+            "net_m2": str(money(s["net"])),
+            "estimated_sales_try": str(money(s["sales"])) if s["has_sales"] else None,
+        }
+
+    return {
+        "contractor": _side("yuklenici"),
+        "landowner": _side("arsa_sahibi"),
+        "total_gross_m2": str(money(total_gross)),
+        # Decimal fraction (0..1) by gross m², or None when no schedule exists.
+        "landowner_share": share,
+        "has_schedule": total_gross > 0,
     }
