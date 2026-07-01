@@ -17,7 +17,16 @@ export interface UnitRow {
   net_m2_each?: string;
   sale_price_try?: string;
   notes?: string | null;
+  // CR-053: which side this planned daire belongs to — contractor's sellable stock
+  // ("yuklenici") or the landowner's ("arsa_sahibi"). Default "yuklenici".
+  owner_side?: string;
 }
+
+// CR-053: planned-side options for the daire schedule (mirrors unit_sale.owner_side).
+export const OWNER_SIDE_OPTIONS: { value: string; label: string }[] = [
+  { value: "yuklenici", label: "Yüklenici" },
+  { value: "arsa_sahibi", label: "Arsa Sahibi" },
+];
 
 export const emptyUnitRow = (): UnitRow => ({
   unit_type: "2+1",
@@ -26,6 +35,7 @@ export const emptyUnitRow = (): UnitRow => ({
   gross_m2_each: "",
   net_m2_each: "",
   sale_price_try: "",
+  owner_side: "yuklenici",
 });
 
 const has = (v: unknown) => v !== undefined && v !== null && String(v).trim() !== "";
@@ -41,6 +51,9 @@ export function computeScheduleSummary(units: UnitRow[]) {
   let netM2 = 0;
   let estimatedSales = 0;
   let hasSales = false;
+  // CR-053: split daire counts by side (informational mini-summary).
+  let contractorUnits = 0;
+  let landownerUnits = 0;
   for (const u of units) {
     const c = Math.max(0, Math.floor(toNumber(u.count)));
     totalUnits += c;
@@ -50,8 +63,10 @@ export function computeScheduleSummary(units: UnitRow[]) {
       estimatedSales += c * toNumber(u.sale_price_try);
       hasSales = true;
     }
+    if ((u.owner_side ?? "yuklenici") === "arsa_sahibi") landownerUnits += c;
+    else contractorUnits += c;
   }
-  return { totalUnits, grossM2, netM2, estimatedSales: hasSales ? estimatedSales : null };
+  return { totalUnits, grossM2, netM2, estimatedSales: hasSales ? estimatedSales : null, contractorUnits, landownerUnits };
 }
 
 // Keep only rows complete enough to satisfy backend validation (count ≥ 1, gross > 0,
@@ -69,6 +84,7 @@ export function unitsForPayload(units: UnitRow[]) {
       gross_m2_each: u.gross_m2_each,
       net_m2_each: has(u.net_m2_each) ? u.net_m2_each : null,
       sale_price_try: has(u.sale_price_try) ? u.sale_price_try : null,
+      owner_side: u.owner_side || "yuklenici",
       notes: has(u.notes) ? u.notes : null,
     }));
 }
@@ -140,6 +156,12 @@ export function ResidentialDetailsEditor({
                   <Label className="text-[11px]">Satış Fiyatı (TRY)</Label>
                   <Input type="number" value={u.sale_price_try ?? ""} disabled={disabled} onChange={(e) => patch(i, "sale_price_try", e.target.value)} placeholder="ops." />
                 </div>
+                <div className="w-28">
+                  <Label className="text-[11px]">Taraf</Label>
+                  <Select value={u.owner_side ?? "yuklenici"} disabled={disabled} onChange={(e) => patch(i, "owner_side", e.target.value)}>
+                    {OWNER_SIDE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </Select>
+                </div>
                 {!disabled && (
                   <button
                     type="button"
@@ -167,6 +189,9 @@ export function ResidentialDetailsEditor({
         <Stat label="Toplam Brüt Satılabilir" value={fmtM2(summary.grossM2)} />
         <Stat label="Toplam Net Satılabilir" value={fmtM2(summary.netM2)} />
         <Stat label="Tahmini Toplam Satış" value={summary.estimatedSales === null ? "—" : formatCurrency(summary.estimatedSales)} />
+        {/* CR-053: side split — contractor's sellable stock vs the landowner's */}
+        <Stat label="Yüklenici Daire" value={String(summary.contractorUnits)} />
+        <Stat label="Arsa Sahibi Daire" value={String(summary.landownerUnits)} />
       </div>
     </div>
   );

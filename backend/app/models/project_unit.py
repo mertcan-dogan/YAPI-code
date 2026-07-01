@@ -36,6 +36,13 @@ class ProjectUnit(TimestampSoftDeleteMixin, Base):
     net_m2_each: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     # Optional; strengthens CR-017 revenue/m².
     sale_price_try: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    # CR-053: which side this planned daire belongs to — the contractor's sellable
+    # stock (yuklenici) or the landowner's share (arsa_sahibi). Mirrors
+    # unit_sale.owner_side. Drives the planned split + the robust landowner-share
+    # denominator (services/sales.py). Default yuklenici (today's behaviour).
+    owner_side: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="yuklenici", server_default="yuklenici"
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Parent project (the Project.units side is view-only; see project.py).

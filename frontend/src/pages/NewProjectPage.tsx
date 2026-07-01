@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Card, CardBody, FieldError, Input, Label, Select } from "@/components/ui";
 import { InfoTooltip } from "@/components/ui/tooltip";
 import { ResidentialDetailsEditor, emptyUnitRow, unitsForPayload, type UnitRow } from "@/components/UnitScheduleEditor";
-import { COST_CATEGORY_OPTIONS, PROJECT_TYPE_GROUPS } from "@/constants";
+import { COST_CATEGORY_OPTIONS, DEAL_STRUCTURE_OPTIONS, PROJECT_TYPE_GROUPS } from "@/constants";
 import { apiGet, apiPost } from "@/lib/api";
 import { toast } from "@/store/toast";
 import { formatCurrency, toNumber } from "@/utils/format";
@@ -47,6 +47,7 @@ export default function NewProjectPage() {
     contingency_pct: "5",
     target_margin_pct: "",
     contractor_share_pct: "",
+    deal_structure: "",
     unit_count: "",
     construction_gross_m2: "",
     construction_net_m2: "",
@@ -141,6 +142,8 @@ export default function NewProjectPage() {
         revenue_model: form.revenue_model,
         retention_pct: model.showRetention ? form.retention_pct : "0",
         contractor_share_pct: model.showShare && form.contractor_share_pct ? form.contractor_share_pct : null,
+        // CR-053: deal structure only meaningful for sell-side models.
+        deal_structure: (model.showShare || model.showUnits) ? (form.deal_structure || null) : null,
         // CR-016: for residential models unit_count is derived server-side from the
         // schedule; keep it null here. Non-residential models have no units.
         unit_count: null,
@@ -243,6 +246,22 @@ export default function NewProjectPage() {
                 </Select>
                 <p className="mt-1 text-xs text-text-secondary">Proje türüne göre otomatik seçildi — gerekirse değiştirin. Satış bazlı modellerde hakediş yerine satış geliri esas alınır.</p>
               </Field>
+              {(model.showShare || model.showUnits) && (
+                <Field label="Anlaşma Yapısı">
+                  <Select value={form.deal_structure} onChange={(e) => set("deal_structure", e.target.value)}>
+                    <option value="">— Seçiniz —</option>
+                    {DEAL_STRUCTURE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Select>
+                  <p className="mt-1 text-xs text-text-secondary">Arsa sahibi / mülk sahibi anlaşmasının türü — etiketler ve ipuçları buna göre uyarlanır.</p>
+                  {form.deal_structure === "kentsel_donusum" && (
+                    <p className="mt-1 rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text-secondary">
+                      Kira yardımı, Maliyetler sayfasında “Kira Yardımı” kategorisi altında bir maliyet olarak girilir.
+                    </p>
+                  )}
+                </Field>
+              )}
               <Field label={model.employerLabel} required>
                 <Input value={form.client_name} onChange={(e) => set("client_name", e.target.value)} />
               </Field>

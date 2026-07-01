@@ -37,17 +37,48 @@ const NULL_TRIO = { try: null, usd: null, try_today: null };
 const M2 = { gross_m2: null, net_m2: null, unit_count: null, floor_count: null, per_gross_m2: NULL_TRIO, per_net_m2: NULL_TRIO, per_unit: NULL_TRIO, per_floor: NULL_TRIO };
 const FX = { today_rate: null, cost_try_original: "400000", cost_try_today: null, fx_effect_try: null, fx_effect_pct: null };
 
+// CR-053: sell-side operator-model extras (efektif arsa maliyeti + planned split).
+const PLANNED_SPLIT = {
+  has_schedule: true,
+  total_gross_m2: "1000",
+  contractor: { units: 6, gross_m2: "600", net_m2: "540", estimated_sales_try: "6000000.00" },
+  landowner: { units: 4, gross_m2: "400", net_m2: "360", estimated_sales_try: null },
+  sold: { units: 2, value_try: "2000000.00", value_usd: "0" },
+  remaining: { units: 4, projected_value_try: "4000000.00" },
+};
+
 function pnl(source: "sales" | "hakedis", extra: any = {}) {
+  const sellExtras =
+    source === "sales"
+      ? {
+          efektif_arsa_maliyeti_try: "2000000.00",
+          efektif_arsa_maliyeti_usd: null,
+          landowner_share_pct: "40.00",
+          landowner_share_basis: "units",
+          planned_split: PLANNED_SPLIT,
+        }
+      : {};
   return {
     revenue_model: source === "sales" ? "kat_karsiligi" : "hakedis",
     revenue_source: source,
-    revenue_breakdown: { unit_sales_try: "0.00", landowner_try: "0.00", client_invoices_try: "0.00" },
+    revenue_breakdown:
+      source === "sales"
+        ? {
+            unit_sales_try: "0.00",
+            unit_sales_usd: "0.00",
+            arsa_sahibi_sales_try: "0.00",
+            arsa_sahibi_sales_usd: "0.00",
+            landowner_try: "0.00",
+            landowner_usd: "0.00",
+            client_invoices_try: "0.00",
+          }
+        : { unit_sales_try: "0.00", landowner_try: "0.00", client_invoices_try: "0.00" },
     revenue_try: "500000", revenue_usd: "0", cost_try: "400000", cost_usd: "0",
     financing_try: "0.00", financing_usd: "0.00",
     net_excl_financing_try: "100000", net_incl_financing_try: "100000",
     net_excl_financing_usd: "0", net_incl_financing_usd: "0",
     margin_pct: "20.00", margin_incl_financing_pct: "20.00", usd_missing_count: 0,
-    m2_analysis: M2, fx_effect: FX, ...extra,
+    m2_analysis: M2, fx_effect: FX, ...sellExtras, ...extra,
   };
 }
 const IR = { irr_try_pct: "35.00", irr_usd_pct: null, roi_pct: "25.00", net_profit_try: "100000", total_cost_try: "400000", duration_months: 8, profit_per_net_m2_try: null, profit_per_unit_try: null, revenue_source: "sales", yearly: [] };
@@ -110,13 +141,17 @@ describe("SalesPnlPage — revenue-model awareness", () => {
     h.dashboard = { data: { pnl: pnl("hakedis"), investment_return: { ...IR, revenue_source: "hakedis" } }, meta: null, loading: false, error: null, refetch: () => {} };
     render(createElement(SalesPnlPage));
     expect(screen.getByText("Gelir kaynağı: Hakediş")).toBeInTheDocument();
-    expect(screen.queryByText("Gelir kaynağı: Satış + Arsa Sahibi")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gelir kaynağı: Yüklenici satışları + nakit katkı")).not.toBeInTheDocument();
+    // CR-053: efektif arsa maliyeti + planlı daire dağılımı are sell-side only.
+    expect(screen.queryByText("Efektif Arsa Maliyeti")).not.toBeInTheDocument();
+    expect(screen.queryByText("Planlı Daire Dağılımı")).not.toBeInTheDocument();
   });
 
-  it("sell-side: P&L 'Gelir kaynağı' label reads Satış + Arsa Sahibi", () => {
+  it("sell-side: P&L 'Gelir kaynağı' label reflects the operator model (own sales + cash)", () => {
     setProject("kat_karsiligi");
     render(createElement(SalesPnlPage));
-    expect(screen.getByText("Gelir kaynağı: Satış + Arsa Sahibi")).toBeInTheDocument();
+    // CR-053: revenue is the contractor's own sales + cash landowner contributions.
+    expect(screen.getByText("Gelir kaynağı: Yüklenici satışları + nakit katkı")).toBeInTheDocument();
   });
 
   it("clarifies the two profit figures and shows the reconciling unsold-cost chip", () => {
@@ -136,5 +171,53 @@ describe("SalesPnlPage — revenue-model awareness", () => {
     const loss = screen.getByText("-345.678,00 ₺");
     expect(profit.className).toContain("text-success");
     expect(loss.className).toContain("text-danger");
+  });
+});
+
+// CR-053: operator-model surfaces on the sell-side page.
+describe("SalesPnlPage — CR-053 operator model", () => {
+  it("sell-side: renders Efektif Arsa Maliyeti (derived, informational) with the amount", () => {
+    setProject("kat_karsiligi");
+    render(createElement(SalesPnlPage));
+    expect(screen.getByText("Efektif Arsa Maliyeti")).toBeInTheDocument();
+    // Efektif tutar 2.000.000,00 ₺ (also equals the sold value in the fixture → getAllByText).
+    expect(screen.getAllByText("2.000.000,00 ₺").length).toBeGreaterThan(0);
+    // The caption makes clear it is informational and NOT added to revenue/cost.
+    expect(screen.getByText(/bilgi amaçlıdır/)).toBeInTheDocument();
+    expect(screen.getByText(/arsa sahibi payı \(%40,0\)/)).toBeInTheDocument();
+  });
+
+  it("sell-side: renders Planlı Daire Dağılımı with sellable / sold / remaining", () => {
+    setProject("kat_karsiligi");
+    render(createElement(SalesPnlPage));
+    expect(screen.getByText("Planlı Daire Dağılımı")).toBeInTheDocument();
+    expect(screen.getByText("Yüklenici (satılabilir)")).toBeInTheDocument();
+    expect(screen.getByText("Arsa Sahibi")).toBeInTheDocument();
+    expect(screen.getByText("Satılan")).toBeInTheDocument();
+    expect(screen.getByText("Kalan")).toBeInTheDocument();
+    // Contractor sellable = 6 daire, remaining projection present.
+    expect(screen.getByText("Projeksiyon: 4.000.000,00 ₺")).toBeInTheDocument();
+  });
+
+  it("sell-side: Efektif shows '–' when the figure is null (share not derivable)", () => {
+    setProject("kat_karsiligi");
+    h.dashboard = {
+      data: { pnl: pnl("sales", { efektif_arsa_maliyeti_try: null, efektif_arsa_maliyeti_usd: null, landowner_share_pct: null }), investment_return: IR },
+      meta: null, loading: false, error: null, refetch: () => {},
+    };
+    render(createElement(SalesPnlPage));
+    expect(screen.getByText("Efektif Arsa Maliyeti")).toBeInTheDocument();
+    expect(screen.getByText("–")).toBeInTheDocument();
+  });
+
+  it("sell-side: Planlı Daire Dağılımı degrades calmly with no schedule", () => {
+    setProject("kat_karsiligi");
+    h.dashboard = {
+      data: { pnl: pnl("sales", { planned_split: { ...PLANNED_SPLIT, has_schedule: false } }), investment_return: IR },
+      meta: null, loading: false, error: null, refetch: () => {},
+    };
+    render(createElement(SalesPnlPage));
+    expect(screen.getByText("Planlı Daire Dağılımı")).toBeInTheDocument();
+    expect(screen.getByText(/Daire dağılımı girilmemiş/)).toBeInTheDocument();
   });
 });

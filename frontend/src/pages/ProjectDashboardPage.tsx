@@ -1,5 +1,5 @@
 import { CashFlowChart, MarginBridgeChart, SCurveChart } from "@/components/charts";
-import { AIDisclaimer, Button, Modal, Skeleton } from "@/components/ui";
+import { AIDisclaimer, Button, Label, Modal, Select, Skeleton } from "@/components/ui";
 import { CloseoutPanel } from "@/components/dashboard/CloseoutPanel";
 import { CostEntriesDrawer } from "@/components/dashboard/CostEntriesDrawer";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
@@ -10,7 +10,7 @@ import { EmptyState, LoadError } from "@/components/EmptyState";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
 import { ResidentialDetailsEditor, unitsForPayload, type UnitRow } from "@/components/UnitScheduleEditor";
-import { UNIT_TYPES } from "@/constants";
+import { DEAL_STRUCTURE_LABELS, DEAL_STRUCTURE_OPTIONS, UNIT_TYPES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { apiPost, apiPut } from "@/lib/api";
 import { useAuth } from "@/store/auth";
@@ -147,10 +147,13 @@ export default function ProjectDashboardPage() {
   const [resGross, setResGross] = useState("");
   const [resNet, setResNet] = useState("");
   const [resUnits, setResUnits] = useState<UnitRow[]>([]);
+  // CR-053: per-project deal structure (anlaşma yapısı) — editable here for sell-side.
+  const [resDeal, setResDeal] = useState("");
 
   const openResEdit = () => {
     setResGross(p?.construction_gross_m2 ?? "");
     setResNet(p?.construction_net_m2 ?? "");
+    setResDeal(p?.deal_structure ?? "");
     setResUnits(
       (p?.units ?? []).map((u) => ({
         id: u.id,
@@ -160,6 +163,7 @@ export default function ProjectDashboardPage() {
         gross_m2_each: u.gross_m2_each,
         net_m2_each: u.net_m2_each ?? "",
         sale_price_try: u.sale_price_try ?? "",
+        owner_side: u.owner_side ?? "yuklenici",
         notes: u.notes ?? "",
       }))
     );
@@ -172,6 +176,7 @@ export default function ProjectDashboardPage() {
       await apiPut(`/projects/${id}`, {
         construction_gross_m2: resGross || null,
         construction_net_m2: resNet || null,
+        deal_structure: resDeal || null,
         units: unitsForPayload(resUnits),
       });
       toast.success("Konut detayları kaydedildi");
@@ -805,6 +810,8 @@ export default function ProjectDashboardPage() {
               <ResStat label="İnşaat Net m²" value={p?.construction_net_m2 ? `${toNumber(p.construction_net_m2).toLocaleString("tr-TR")} m²` : "—"} />
               <ResStat label="Toplam Daire" value={String(data?.residential?.total_units ?? 0)} />
               <ResStat label="Tahmini Toplam Satış" value={data?.residential?.total_estimated_sales_try ? formatCurrency(data.residential.total_estimated_sales_try) : "—"} />
+              {/* CR-053: deal structure (anlaşma yapısı) label */}
+              <ResStat label="Anlaşma Yapısı" value={p?.deal_structure ? (DEAL_STRUCTURE_LABELS[p.deal_structure] ?? p.deal_structure) : "—"} />
             </div>
 
             {(p?.units?.length ?? 0) > 0 ? (
@@ -816,7 +823,8 @@ export default function ProjectDashboardPage() {
                       <th className="py-1.5 pr-3 text-right font-medium">Adet</th>
                       <th className="py-1.5 pr-3 text-right font-medium">Brüt m²/adet</th>
                       <th className="py-1.5 pr-3 text-right font-medium">Net m²/adet</th>
-                      <th className="py-1.5 text-right font-medium">Satış Fiyatı</th>
+                      <th className="py-1.5 pr-3 text-right font-medium">Satış Fiyatı</th>
+                      <th className="py-1.5 text-right font-medium">Taraf</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -826,7 +834,8 @@ export default function ProjectDashboardPage() {
                         <td className="py-1.5 pr-3 text-right tabular">{u.count}</td>
                         <td className="py-1.5 pr-3 text-right tabular">{toNumber(u.gross_m2_each).toLocaleString("tr-TR")}</td>
                         <td className="py-1.5 pr-3 text-right tabular">{u.net_m2_each ? toNumber(u.net_m2_each).toLocaleString("tr-TR") : "—"}</td>
-                        <td className="py-1.5 text-right tabular">{u.sale_price_try ? formatCurrency(u.sale_price_try) : "—"}</td>
+                        <td className="py-1.5 pr-3 text-right tabular">{u.sale_price_try ? formatCurrency(u.sale_price_try) : "—"}</td>
+                        <td className="py-1.5 text-right">{(u.owner_side ?? "yuklenici") === "arsa_sahibi" ? "Arsa Sahibi" : "Yüklenici"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -837,7 +846,8 @@ export default function ProjectDashboardPage() {
                       <td className="py-1.5 pr-3 text-right tabular" colSpan={2}>
                         Brüt {toNumber(data?.residential?.total_sellable_gross_m2).toLocaleString("tr-TR")} m² · Net {toNumber(data?.residential?.total_sellable_net_m2).toLocaleString("tr-TR")} m²
                       </td>
-                      <td className="py-1.5 text-right tabular">{data?.residential?.total_estimated_sales_try ? formatCurrency(data.residential.total_estimated_sales_try) : "—"}</td>
+                      <td className="py-1.5 pr-3 text-right tabular">{data?.residential?.total_estimated_sales_try ? formatCurrency(data.residential.total_estimated_sales_try) : "—"}</td>
+                      <td className="py-1.5" />
                     </tr>
                   </tfoot>
                 </table>
@@ -853,6 +863,21 @@ export default function ProjectDashboardPage() {
 
       <Modal open={resEdit} title="Konut Detaylarını Düzenle" onClose={() => setResEdit(false)} size="lg">
         <div className="space-y-4">
+          {/* CR-053: per-project deal structure (anlaşma yapısı) */}
+          <div>
+            <Label>Anlaşma Yapısı</Label>
+            <Select value={resDeal} onChange={(e) => setResDeal(e.target.value)}>
+              <option value="">— Seçiniz —</option>
+              {DEAL_STRUCTURE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </Select>
+            {resDeal === "kentsel_donusum" && (
+              <p className="mt-1 rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text-secondary">
+                Kira yardımı, Maliyetler sayfasında “Kira Yardımı” kategorisi altında bir maliyet olarak girilir.
+              </p>
+            )}
+          </div>
           <ResidentialDetailsEditor
             grossM2={resGross}
             netM2={resNet}

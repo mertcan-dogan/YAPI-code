@@ -13,7 +13,6 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.constants import LANDOWNER_PAYMENTS_AS_CASH
 from app.models.client_invoice import ClientInvoice
 from app.models.cost_entry import CostEntry
 from app.models.landowner_payment import LandownerPayment
@@ -127,19 +126,19 @@ def test_inflows_hakedis_unchanged_uses_invoices(db, seed):
     assert len(inflows) == 1 and D(inflows[0]["amount_received_try"]) == D("20000")
 
 
-def test_inflows_landowner_switch_excludes_when_off(db, seed):
+def test_inflows_excludes_arsa_sahibi_sales_includes_landowner(db, seed):
+    # CR-053 supersedes CR-051's LANDOWNER_PAYMENTS_AS_CASH switch with the per-project
+    # operator model. Cash-in = the contractor's OWN (yuklenici) sales + landowner CASH
+    # contributions. An arsa_sahibi sale is the landowner's money → it must NOT appear.
     p = _sellside(db, seed)
-    _sale(db, p, "5800000", date(2020, 12, 1))
-    _landowner(db, p, "500000", date(2020, 3, 1))
+    _sale(db, p, "5800000", date(2020, 12, 1))                       # yuklenici (default)
+    _sale(db, p, "3000000", date(2020, 11, 1), owner="arsa_sahibi")  # landowner's flat — excluded
+    _landowner(db, p, "500000", date(2020, 3, 1))                    # cash contribution → always in
     db.commit()
-    on = fin.cashflow_inflows(db, p, today=TODAY, include_landowner=True)
-    off = fin.cashflow_inflows(db, p, today=TODAY, include_landowner=False)
-    assert sum(D(i["net_due_try"]) for i in on) == D("6300000")
-    assert sum(D(i["net_due_try"]) for i in off) == D("5800000")  # landowner excluded
-    # Default follows the constant switch.
-    default = fin.cashflow_inflows(db, p, today=TODAY)
-    expected = D("6300000") if LANDOWNER_PAYMENTS_AS_CASH else D("5800000")
-    assert sum(D(i["net_due_try"]) for i in default) == expected
+    inflows = fin.cashflow_inflows(db, p, today=TODAY)
+    amounts = sorted(D(i["net_due_try"]) for i in inflows)
+    assert amounts == [D("500000"), D("5800000")]           # NOT the 3M arsa_sahibi sale
+    assert sum(D(i["net_due_try"]) for i in inflows) == D("6300000")
 
 
 # --------------------------------------------------------------------------- #

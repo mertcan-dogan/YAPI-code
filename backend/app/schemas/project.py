@@ -5,13 +5,21 @@ from decimal import Decimal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.constants import PROJECT_STATUSES, PROJECT_TYPES, UNIT_TYPE_KEYS
+from app.constants import (
+    DEAL_STRUCTURE_KEYS,
+    OWNER_SIDES,
+    PROJECT_STATUSES,
+    PROJECT_TYPES,
+    UNIT_TYPE_KEYS,
+)
 from app.schemas.common import ERR_CONTRACT, ERR_RETENTION, ORMModel
 
 ERR_UNIT_TYPE = "Geçersiz daire tipi"
 ERR_UNIT_CUSTOM = "Diğer için açıklama girin"
 ERR_UNIT_COUNT = "Adet en az 1 olmalıdır"
 ERR_UNIT_M2 = "m² 0'dan büyük olmalıdır"
+ERR_OWNER_SIDE = "Geçersiz mülkiyet tarafı"
+ERR_DEAL_STRUCTURE = "Geçersiz anlaşma yapısı"
 
 
 class UnitScheduleIn(BaseModel):
@@ -28,6 +36,8 @@ class UnitScheduleIn(BaseModel):
     gross_m2_each: Decimal
     net_m2_each: Decimal | None = None
     sale_price_try: Decimal | None = None
+    # CR-053: which side this planned daire belongs to (yuklenici | arsa_sahibi).
+    owner_side: str = "yuklenici"
     notes: str | None = None
 
     @field_validator("unit_type")
@@ -35,6 +45,13 @@ class UnitScheduleIn(BaseModel):
     def _unit_type(cls, v: str) -> str:
         if v not in UNIT_TYPE_KEYS:
             raise ValueError(ERR_UNIT_TYPE)
+        return v
+
+    @field_validator("owner_side")
+    @classmethod
+    def _owner_side(cls, v: str) -> str:
+        if v not in OWNER_SIDES:
+            raise ValueError(ERR_OWNER_SIDE)
         return v
 
     @field_validator("count")
@@ -75,6 +92,7 @@ class UnitScheduleOut(ORMModel):
     gross_m2_each: Decimal
     net_m2_each: Decimal | None
     sale_price_try: Decimal | None
+    owner_side: str
     notes: str | None
 
 
@@ -86,6 +104,8 @@ class ProjectCreate(BaseModel):
     custom_project_type: str | None = None
     contractor_share_pct: Decimal | None = None
     unit_count: int | None = None
+    # CR-053: the per-project deal structure (sell-side). Optional; documents the deal.
+    deal_structure: str | None = None
     client_name: str
     client_contact: str | None = None
     contract_number: str | None = None
@@ -130,6 +150,13 @@ class ProjectCreate(BaseModel):
         allowed = {"hakedis", "kat_karsiligi", "yap_sat", "hasilat_paylasimi", "maliyet_kar"}
         if v not in allowed:
             raise ValueError("Geçersiz gelir modeli")
+        return v
+
+    @field_validator("deal_structure")
+    @classmethod
+    def _deal_structure(cls, v):
+        if v is not None and v not in DEAL_STRUCTURE_KEYS:
+            raise ValueError(ERR_DEAL_STRUCTURE)
         return v
 
     @field_validator("contract_value_try")
@@ -180,6 +207,9 @@ class ProjectUpdate(BaseModel):
     target_margin_pct: Decimal | None = None
     completion_pct: Decimal | None = None
     project_manager_id: uuid.UUID | None = None
+    # CR-053: deal structure + the quick contractor-share fallback editable later.
+    deal_structure: str | None = None
+    contractor_share_pct: Decimal | None = None
 
     # CR-016-A: residential details editable after creation (persistence in CR-016-B).
     construction_gross_m2: Decimal | None = None
@@ -195,6 +225,13 @@ class ProjectUpdate(BaseModel):
     def _status(cls, v):
         if v is not None and v not in PROJECT_STATUSES:
             raise ValueError("Geçersiz proje durumu")
+        return v
+
+    @field_validator("deal_structure")
+    @classmethod
+    def _deal_structure(cls, v):
+        if v is not None and v not in DEAL_STRUCTURE_KEYS:
+            raise ValueError(ERR_DEAL_STRUCTURE)
         return v
 
     @field_validator("contract_value_try")
@@ -224,6 +261,8 @@ class ProjectOut(ORMModel):
     # frontend silently defaults every project to "hakedis".
     revenue_model: str
     contractor_share_pct: Decimal | None = None
+    # CR-053: the per-project deal structure (sell-side; null on others).
+    deal_structure: str | None = None
     client_name: str
     client_contact: str | None
     contract_number: str | None

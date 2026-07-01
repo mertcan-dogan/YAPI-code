@@ -88,6 +88,10 @@ COST_CATEGORIES = {
     "permits_fees": "İzin ve Harçlar",
     "site_overhead": "Şantiye Genel Giderleri",
     "engineering_design": "Mühendislik ve Tasarım",
+    # CR-053: rent support (kira yardımı) — paid to displaced occupants in kentsel
+    # dönüşüm deals. A normal cost (cost + cash-out), no special engine path; it is
+    # part of the operator-model cost line. App-level addition, no migration.
+    "kira_yardimi": "Kira Yardımı",
     "contingency": "Öngörülemeyen Giderler",
     "other": "Diğer",
 }
@@ -202,6 +206,7 @@ COST_SUBCATEGORIES: dict[str, list[tuple[str, str]]] = {
         ("danismanlik", "Danışmanlık"),
     ],
     # No sensible presets — free-text / company-custom only.
+    "kira_yardimi": [],  # CR-053: rent support — no sub-breakdown
     "contingency": [],
     "other": [],
 }
@@ -235,13 +240,24 @@ SELL_SIDE_REVENUE_MODELS = {"kat_karsiligi", "yap_sat", "hasilat_paylasimi"}
 # Landowner ledger is only meaningful for share models (kat karşılığı / hasılat).
 LANDOWNER_REVENUE_MODELS = {"kat_karsiligi", "hasilat_paylasimi"}
 
-# CR-051: on the sell-side Nakit Akışı, do landowner payments count as CASH inflow?
-# They carry payment_date + amount_try and feed sell-side revenue (CR-031), so by
-# DEFAULT (True) they land on the cash timeline alongside unit sales. THE SINGLE
-# SWITCH — flip to False when, for a given kat-karşılığı deal, the landowner's
-# consideration is non-cash LAND (arsa) rather than money, so it must not appear in
-# *cash* flow. The default is stated in the premade Nakit Akış footnote.
-LANDOWNER_PAYMENTS_AS_CASH = True
+# CR-053: the per-project deal structure (the founder's setting). Documents the
+# arrangement and drives UI labels/hints/defaults — it does NOT compute the P&L
+# (correctness is DATA-DRIVEN per §0, so a mis-set value can't corrupt the numbers).
+# Nullable on a project; meaningful for sell-side projects.
+DEAL_STRUCTURE_ARSA_KARSILIGI = "arsa_karsiligi_daire"   # land for units (daire)
+DEAL_STRUCTURE_KENTSEL_DONUSUM = "kentsel_donusum"        # urban renewal + rent support
+DEAL_STRUCTURE_NAKIT_KATKI = "nakit_katki"                # cash participation
+DEAL_STRUCTURE_YAP_SAT = "yap_sat_kendi_arsa"             # contractor owns the land
+DEAL_STRUCTURE_DIGER = "diger"
+DEAL_STRUCTURES = {
+    DEAL_STRUCTURE_ARSA_KARSILIGI: "Arsa Karşılığı (Daire)",
+    DEAL_STRUCTURE_KENTSEL_DONUSUM: "Kentsel Dönüşüm",
+    DEAL_STRUCTURE_NAKIT_KATKI: "Nakit Katkılı",
+    DEAL_STRUCTURE_YAP_SAT: "Yap-Sat (Kendi Arsası)",
+    DEAL_STRUCTURE_DIGER: "Diğer",
+}
+DEAL_STRUCTURE_KEYS = list(DEAL_STRUCTURES.keys())
+
 OWNERSHIP_TYPES = ["owned", "rented"]
 RATE_UNITS = ["day", "month"]
 
