@@ -36,6 +36,8 @@ def _cost_dict(c: CostEntry) -> dict:
         "amount_eur": c.amount_eur,
         "total_with_vat_try": c.total_with_vat_try,
         "amount_paid_try": c.amount_paid_try,
+        # CR-057: rate-at-date for the cashflow USD-at-date companion (₺ ÷ rate).
+        "fx_rate_usd": c.fx_rate_usd,
         "entry_type": c.entry_type,
         "payment_status": c.payment_status,
         "payment_due_date": c.payment_due_date,
@@ -52,6 +54,8 @@ def _invoice_dict(i: ClientInvoice) -> dict:
         "outstanding_try": i.outstanding_try,
         "retention_amount_try": i.retention_amount_try,
         "net_due_try": i.net_due_try,
+        # CR-057: rate-at-date for the cashflow USD-at-date companion (₺ ÷ rate).
+        "fx_rate_usd": i.fx_rate_usd,
         "due_date": i.due_date,
         "date_received": i.date_received,
         "payment_status": i.payment_status,
@@ -223,11 +227,14 @@ def cashflow_inflows(
 
     today = today or date.today()
 
-    def _inflow(cash_date: date | None, amount) -> dict:
+    def _inflow(cash_date: date | None, amount, rate=None) -> dict:
         received = cash_date is not None and cash_date <= today
         return {
             "amount_received_try": amount if received else D(0),
             "net_due_try": amount,
+            # CR-057: the sale/payment's rate-at-date, so the cashflow USD-at-date
+            # companion values sell-side cash-in exactly like an invoice's ₺ ÷ rate.
+            "fx_rate_usd": rate,
             "due_date": cash_date,
             "date_received": cash_date if received else None,
             "payment_status": "paid" if received else "unpaid",
@@ -240,11 +247,11 @@ def cashflow_inflows(
         if s.owner_side != OWNER_SIDE_YUKLENICI:
             continue
         if s.sale_date is not None and s.sale_price_try is not None:
-            inflows.append(_inflow(s.sale_date, s.sale_price_try))
+            inflows.append(_inflow(s.sale_date, s.sale_price_try, s.fx_rate_usd))
     # Landowner payments are cash contributions by definition → always cash-in.
     for p in sales_service.list_landowner_payments(db, project):
         if p.payment_date is not None and p.amount_try is not None:
-            inflows.append(_inflow(p.payment_date, p.amount_try))
+            inflows.append(_inflow(p.payment_date, p.amount_try, p.fx_rate_usd))
     return inflows
 
 

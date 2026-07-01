@@ -259,14 +259,16 @@ def test_run_both_currencies_pairs_try_and_usd(client, db, seed):
     assert float(u["totals"]["metrics"]["cost_try"]) == 3000.0
 
 
-def test_run_spec_usd_nulls_cash_metrics(client, db, seed):
-    # Cash has no USD in the engine → the companion nulls it (renders "–"), never ₺-as-$.
+def test_run_spec_usd_cash_metrics_carry_real_usd(client, db, seed):
+    # CR-057: cash metrics gained a USD-at-date companion (₺ ÷ rate) → the USD run now
+    # shows REAL USD, no longer nulled. (A month lacking a rate still degrades to "–";
+    # that path is covered in test_cr057_usd_cashflow.)
     from app.services.studio.engine import run_spec_usd
     p, uid = _login(client, seed)
-    _cost_usd(db, p, "100000", "3000", uid)   # produces a cashflow outflow month
+    _cost_usd(db, p, "100000", "3000", uid)   # rated cash outflow: 100000 / 33.3333 ≈ 3000
     usd_res = run_spec_usd(db, p.company_id, {"metrics": ["net_cash"], "dimensions": ["month"], "viz": "table"})
-    assert usd_res["totals"]["metrics"].get("net_cash") is None
-    assert all(r["metrics"].get("net_cash") is None for r in usd_res["rows"])
+    tot = usd_res["totals"]["metrics"].get("net_cash")
+    assert tot is not None and round(float(tot), 2) == -3000.0   # a real USD outflow, not None
 
 
 def test_end_to_end_xlsx_shows_real_usd(client, db, seed):
