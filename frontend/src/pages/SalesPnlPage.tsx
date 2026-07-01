@@ -489,7 +489,7 @@ function saleColumns(showUsd: boolean, onEdit: (r: UnitSaleAllocation) => void, 
   ];
 }
 
-const saleExportColumns: ExportColumn<UnitSaleAllocation>[] = [
+export const saleExportColumns: ExportColumn<UnitSaleAllocation>[] = [
   { header: "Daire", value: (r) => r.unit_label },
   { header: "Tip", value: (r) => r.unit_type ?? "" },
   { header: "Kat", value: (r) => r.floor ?? "" },
@@ -498,8 +498,11 @@ const saleExportColumns: ExportColumn<UnitSaleAllocation>[] = [
   { header: "Alıcı", value: (r) => r.buyer_name ?? "" },
   { header: "Satış (TRY)", value: (r) => toNumber(r.sale_price_try), type: "currency" },
   { header: "Satış (USD)", value: (r) => (r.sale_price_usd != null ? Number(r.sale_price_usd) : ""), type: "usd" },
+  // CR-057: money columns are dual — ₺ + $ for Satış, Maliyet Payı and Kar/Zarar.
+  { header: "Maliyet Payı (TRY)", value: (r) => (r.unit_cost_try != null ? Number(r.unit_cost_try) : ""), type: "currency" },
   { header: "Maliyet Payı (USD)", value: (r) => (r.unit_cost_usd != null ? Number(r.unit_cost_usd) : ""), type: "usd" },
   { header: "Kar/Zarar (TRY)", value: (r) => (r.pnl_try != null ? Number(r.pnl_try) : ""), type: "currency" },
+  { header: "Kar/Zarar (USD)", value: (r) => (r.pnl_usd != null ? Number(r.pnl_usd) : ""), type: "usd" },
   { header: "Marj (%)", value: (r) => (r.margin_pct != null ? Number(r.margin_pct) : ""), type: "percent" },
   { header: "Tarih", value: (r) => (r.sale_date ? formatDate(r.sale_date) : ""), type: "date" },
   { header: "Ödeme Türü", value: (r) => r.payment_type ?? "" },

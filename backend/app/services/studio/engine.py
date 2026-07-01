@@ -631,35 +631,84 @@ def _cash_dimvals(p, row, dims) -> dict:
     return out
 
 
+def _acc_usd(acc, val):
+    """Accumulate a USD figure that can poison to None: once either the running
+    accumulator OR a contribution is None (a missing rate → "–"), the sum is None
+    forever after — never a partial USD total (CR-057)."""
+    if acc is None or val is None:
+        return None
+    return acc + val
+
+
+def _sum_usd_or_none(vals):
+    """Sum USD figures across projects, degrading to None if ANY is None."""
+    total = ZERO
+    for v in vals:
+        if v is None:
+            return None
+        total += v
+    return total
+
+
+def _cash_eff_usd(row, past):
+    """The effective per-row USD (actual for past/current, planned for future),
+    mirroring the ₺ effective selection. Each can be None (poisoned bucket)."""
+    return (
+        row["actual_in_usd"] if past else row["planned_in_usd"],
+        row["actual_out_usd"] if past else row["planned_out_usd"],
+    )
+
+
 def _resolve_cash_groups(ctx, dims, metric_ids, date_from, date_to) -> dict:
     from_month = f"{date_from.year:04d}-{date_from.month:02d}" if date_from else None
     to_month = f"{date_to.year:04d}-{date_to.month:02d}" if date_to else None
+    # CR-057 — the cashflow calc now carries a USD-at-date companion. Under basis=usd
+    # the cash metrics return that USD (a month whose USD is None → the metric is None
+    # → "–"); the ₺ aggregation is unchanged. Both are accumulated so a single pass
+    # serves either basis.
+    usd = ctx.basis["currency"] == "usd"
 
     sums: dict = {}
-    cum_track: dict = {}  # key -> {project_id: (month_key, cumulative)}
+    cum_track: dict = {}  # key -> {project_id: (month_key, cumulative_try, cumulative_usd)}
     labels: dict = {}
     for p in ctx.projects:
         for row in ctx.cashflow_rows(p, from_month, to_month):
             past = row["is_past"] or row["is_current"]
             eff_in = D(row["actual_in_try"]) if past else D(row["planned_in_try"])
             eff_out = D(row["actual_out_try"]) if past else D(row["planned_out_try"])
+            eff_in_u, eff_out_u = _cash_eff_usd(row, past)
             dimvals = _cash_dimvals(p, row, dims)
             key = tuple(dimvals[d][0] for d in dims)
             if key not in sums:
-                sums[key] = {"cash_in": ZERO, "cash_out": ZERO, "net_cash": ZERO}
+                sums[key] = {"cash_in": ZERO, "cash_out": ZERO, "net_cash": ZERO,
+                             "cash_in_usd": ZERO, "cash_out_usd": ZERO, "net_cash_usd": ZERO}
                 cum_track[key] = {}
                 labels[key] = {d: dimvals[d][1] for d in dims}
-            sums[key]["cash_in"] += eff_in
-            sums[key]["cash_out"] += eff_out
-            sums[key]["net_cash"] += D(row["net_try"])
+            s = sums[key]
+            s["cash_in"] += eff_in
+            s["cash_out"] += eff_out
+            s["net_cash"] += D(row["net_try"])
+            s["cash_in_usd"] = _acc_usd(s["cash_in_usd"], eff_in_u)
+            s["cash_out_usd"] = _acc_usd(s["cash_out_usd"], eff_out_u)
+            s["net_cash_usd"] = _acc_usd(s["net_cash_usd"], row["net_usd"])
+            # Surface unratable months (mirrors the cost grain's missing-snapshot count)
+            # so the report footnote can warn — only on the USD companion pass.
+            if usd and row.get("usd_missing"):
+                ctx._usd_missing_ids.add(("cash", p.id, row["month"]))
             prev = cum_track[key].get(p.id)
             if prev is None or row["month"] >= prev[0]:
-                cum_track[key][p.id] = (row["month"], D(row["cumulative_try"]))
+                cum_track[key][p.id] = (row["month"], D(row["cumulative_try"]), row["cumulative_usd"])
 
     out: dict = {}
     for key, s in sums.items():
         cum = sum((v[1] for v in cum_track[key].values()), ZERO)
-        full = {"cash_in": s["cash_in"], "cash_out": s["cash_out"], "net_cash": s["net_cash"], "cum_cash": cum}
+        cum_u = _sum_usd_or_none(v[2] for v in cum_track[key].values())
+        if usd:
+            full = {"cash_in": s["cash_in_usd"], "cash_out": s["cash_out_usd"],
+                    "net_cash": s["net_cash_usd"], "cum_cash": cum_u}
+        else:
+            full = {"cash_in": s["cash_in"], "cash_out": s["cash_out"],
+                    "net_cash": s["net_cash"], "cum_cash": cum}
         out[key] = {"dims": labels[key], "metrics": {m: full[m] for m in metric_ids}}
     return out
 
@@ -964,15 +1013,23 @@ def run_spec(db, company_id, spec: dict, today: date | None = None) -> dict:
 
 # --------------------------------------------------------------------------- #
 # CR-055 — currency companion (USD alongside ₺, rate-at-date). No new FX work:
-# most metrics honour basis.currency="usd" already (CR-014). Two exceptions matter so
+# most metrics honour basis.currency="usd" already (CR-014). One exception matters so
 # a companion never mislabels a ₺ value as USD:
 #   * cost_try is currency-LOCKED to ₺ (_cost_amount_key); its honest USD-at-date is the
 #     sibling metric cost_usd — requested in the USD run, then relabelled back.
-#   * cash metrics have NO USD in the engine (the cashflow calc is ₺-only) — nulled in
-#     the companion so they render "–", never the ₺ figure with a $ sign.
+# CR-057 — the cash metrics (cash_in/out/net/cum) now carry a real USD-at-date companion
+# (the cashflow calc gained a per-bucket ₺ ÷ rate); _resolve_cash_groups returns it under
+# basis=usd, so they are NO LONGER in _USD_UNAVAILABLE. A month lacking a rate degrades to
+# None → "–" per cell (never a ₺ figure with a $ sign).
+# KNOWN CAVEAT (pre-existing to CR-055, applies to cost columns too): the ₺ and USD runs
+# each sort+truncate to `limit` INDEPENDENTLY, so on a NON-time-grouped table (e.g. cash by
+# project) with an explicit small `limit` AND rates that invert the ₺-vs-USD ordering, a ₺
+# row that survives its top-N can map to a USD row that was truncated → its paired "($)"
+# cell shows "–" though a rate exists. The monthly cash views (time-grouped → identical
+# chronological ordering in both runs) are immune. Fix belongs in a CR-055 follow-up.
 # --------------------------------------------------------------------------- #
 _USD_SIBLING = {"cost_try": "cost_usd"}
-_USD_UNAVAILABLE = frozenset({"cash_in", "cash_out", "net_cash", "cum_cash"})
+_USD_UNAVAILABLE = frozenset()
 
 
 def _spec_in_currency(spec: dict, currency: str) -> dict:
@@ -1018,10 +1075,10 @@ def _null_metrics(res: dict, ids) -> None:
 
 def run_spec_usd(db, company_id, spec: dict, today: date | None = None) -> dict:
     """CR-055 — the USD-at-date companion of a spec: the SAME rows valued in USD
-    (basis.currency='usd'), with cost_try swapped for its cost_usd sibling and cash
-    metrics nulled (no engine USD). Result ids match the request's, so it pairs
-    column-for-column with the ₺ run. Read-only; never fabricates FX (a row with no
-    amount_usd is None → "–"; ``meta.usd_missing_count`` reports how many)."""
+    (basis.currency='usd'), with cost_try swapped for its cost_usd sibling. Result ids
+    match the request's, so it pairs column-for-column with the ₺ run. Read-only; never
+    fabricates FX (a row with no amount_usd — or a cash month with no rate (CR-057) — is
+    None → "–"; ``meta.usd_missing_count`` reports how many)."""
     metrics = list(spec.get("metrics") or [])
     # requested id → the id whose USD value feeds it (cost_try borrows its cost_usd
     # sibling; every other metric is itself under basis=usd).

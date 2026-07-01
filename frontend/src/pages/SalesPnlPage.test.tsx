@@ -31,7 +31,7 @@ vi.mock("@/components/layout/AppLayout", () => ({
 }));
 vi.mock("react-router-dom", () => ({ useParams: () => ({ id: "p1" }) }));
 
-import SalesPnlPage from "./SalesPnlPage";
+import SalesPnlPage, { saleExportColumns } from "./SalesPnlPage";
 
 const NULL_TRIO = { try: null, usd: null, try_today: null };
 const M2 = { gross_m2: null, net_m2: null, unit_count: null, floor_count: null, per_gross_m2: NULL_TRIO, per_net_m2: NULL_TRIO, per_unit: NULL_TRIO, per_floor: NULL_TRIO };
@@ -219,5 +219,39 @@ describe("SalesPnlPage — CR-053 operator model", () => {
     render(createElement(SalesPnlPage));
     expect(screen.getByText("Planlı Daire Dağılımı")).toBeInTheDocument();
     expect(screen.getByText(/Daire dağılımı girilmemiş/)).toBeInTheDocument();
+  });
+});
+
+// CR-057: every money column in the Satışlar export is dual (₺ + $).
+describe("SalesPnlPage — CR-057 Satışlar export pairing", () => {
+  const byHeader = Object.fromEntries(saleExportColumns.map((c) => [c.header, c]));
+  const sample = {
+    sale_price_try: "5000000", sale_price_usd: "150000",
+    unit_cost_try: "240000", unit_cost_usd: "7200",
+    pnl_try: "612345.00", pnl_usd: "18360",
+  } as any;
+
+  it("has paired ₺/$ columns for Satış, Maliyet Payı and Kar/Zarar", () => {
+    for (const base of ["Satış", "Maliyet Payı", "Kar/Zarar"]) {
+      expect(byHeader[`${base} (TRY)`]).toBeDefined();
+      expect(byHeader[`${base} (USD)`]).toBeDefined();
+    }
+  });
+
+  it("₺ columns are type currency reading the _try field; $ columns are type usd reading the _usd field", () => {
+    expect(byHeader["Maliyet Payı (TRY)"].type).toBe("currency");
+    expect(byHeader["Maliyet Payı (TRY)"].value(sample)).toBe(240000);
+    expect(byHeader["Maliyet Payı (USD)"].type).toBe("usd");
+    expect(byHeader["Maliyet Payı (USD)"].value(sample)).toBe(7200);
+    expect(byHeader["Kar/Zarar (TRY)"].type).toBe("currency");
+    expect(byHeader["Kar/Zarar (TRY)"].value(sample)).toBe(612345);
+    expect(byHeader["Kar/Zarar (USD)"].type).toBe("usd");
+    expect(byHeader["Kar/Zarar (USD)"].value(sample)).toBe(18360);
+  });
+
+  it("a null USD figure exports blank (never fabricated)", () => {
+    const noUsd = { ...sample, pnl_usd: null, unit_cost_usd: null } as any;
+    expect(byHeader["Kar/Zarar (USD)"].value(noUsd)).toBe("");
+    expect(byHeader["Maliyet Payı (USD)"].value(noUsd)).toBe("");
   });
 });
