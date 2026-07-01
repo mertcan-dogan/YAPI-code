@@ -58,8 +58,12 @@ function download(blob: Blob, filename: string) {
  * a larger set, supply an async resolver that returns the FULL filtered set. It
  * is awaited on click so the export is never silently truncated; `rows` is used
  * only to gate the disabled/empty state.
+ *
+ * `csvOnly` (optional): hide the Excel (.xlsx) option and offer only raw CSV — used
+ * as the secondary "raw data" control on pages whose primary export is a backend
+ * decision-grade workbook (CR-054). `triggerLabel` overrides the button text.
  */
-export function ExportMenu<T>({ rows, columns, filename, disabled, fetchRows }: { rows: T[]; columns: ExportColumn<T>[]; filename: string; disabled?: boolean; fetchRows?: () => Promise<T[]> }) {
+export function ExportMenu<T>({ rows, columns, filename, disabled, fetchRows, csvOnly, triggerLabel }: { rows: T[]; columns: ExportColumn<T>[]; filename: string; disabled?: boolean; fetchRows?: () => Promise<T[]>; csvOnly?: boolean; triggerLabel?: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const empty = !rows || rows.length === 0;
@@ -111,17 +115,19 @@ export function ExportMenu<T>({ rows, columns, filename, disabled, fetchRows }: 
           "flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary transition-colors hover:border-brand disabled:cursor-not-allowed disabled:opacity-50"
         )}
       >
-        <Download className="h-4 w-4" /> Dışa Aktar
+        <Download className="h-4 w-4" /> {triggerLabel ?? "Dışa Aktar"}
         <ChevronDown className="h-3.5 w-3.5 text-text-secondary" />
       </button>
       {open && !empty && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-xl border border-border bg-surface py-1 shadow-lg">
-            <button onClick={exportXLSX} disabled={busy} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text-primary hover:bg-navy-50 disabled:opacity-50">
-              <FileSpreadsheet className="h-4 w-4 text-success" /> Excel (.xlsx)
-            </button>
-            <button onClick={exportCSV} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text-primary hover:bg-navy-50">
+            {!csvOnly && (
+              <button onClick={exportXLSX} disabled={busy} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text-primary hover:bg-navy-50 disabled:opacity-50">
+                <FileSpreadsheet className="h-4 w-4 text-success" /> Excel (.xlsx)
+              </button>
+            )}
+            <button onClick={exportCSV} disabled={busy} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text-primary hover:bg-navy-50 disabled:opacity-50">
               <FileText className="h-4 w-4 text-brand" /> CSV
             </button>
           </div>

@@ -1,13 +1,16 @@
 import { CashFlowChart } from "@/components/charts";
-import { Card, CardBody } from "@/components/ui";
+import { Button, Card, CardBody } from "@/components/ui";
 import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { DashboardSection } from "@/components/dashboard/DashboardSection";
 import { LoadError } from "@/components/EmptyState";
 import { CashFlowMonthDrawer } from "@/components/cashflow/CashFlowMonthDrawer";
 import { PageHeader } from "@/components/layout/AppLayout";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useFetch } from "@/hooks/useFetch";
+import { toast } from "@/store/toast";
 import { formatCurrency, toNumber } from "@/utils/format";
+import { Download } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -87,7 +90,9 @@ export default function CashFlowPage() {
   const showOut = (r: Row) => (view === "planned" ? r.planned_out_try : view === "actual" ? r.actual_out_try : r.is_past || r.is_current ? r.actual_out_try : r.planned_out_try);
   const showIn = (r: Row) => (view === "planned" ? r.planned_in_try : view === "actual" ? r.actual_in_try : r.is_past || r.is_current ? r.actual_in_try : r.planned_in_try);
 
-  // Export respects the active Planlanan/Gerçekleşen/İkisi de view.
+  // Export respects the active Planlanan/Gerçekleşen/İkisi de view. This feeds the
+  // secondary "Ham veri (CSV)" option only — the primary export is the backend
+  // decision-grade workbook (below).
   const exportColumns: ExportColumn<Row>[] = [
     { header: "Ay", value: (r) => r.month },
     { header: "Gider", value: (r) => toNumber(showOut(r)) },
@@ -95,6 +100,29 @@ export default function CashFlowPage() {
     { header: "Net Aylık", value: (r) => toNumber(r.net_try) },
     { header: "Kümülatif", value: (r) => toNumber(r.cumulative_try) },
   ];
+
+  // CR-054 — the primary "Dışa Aktar" downloads the CR-048 decision-grade workbook
+  // (Özet KPIs + ₺-formatted table + cumulative line) from the existing backend
+  // endpoint, not the raw client-side "Veri" dump. Mirrors the Raporlar download.
+  const [exporting, setExporting] = useState(false);
+  const exportWorkbook = async () => {
+    if (!id) return;
+    setExporting(true);
+    try {
+      const res = await api.get(`/reports/cashflow/${id}`, { responseType: "blob", params: { fmt: "xlsx" } });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "nakit-akis-raporu.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Rapor indirildi");
+    } catch (e: any) {
+      toast.error(e?.message ?? "Rapor oluşturulamadı");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div>
@@ -109,7 +137,10 @@ export default function CashFlowPage() {
                 </button>
               ))}
             </div>
-            <ExportMenu rows={rows} columns={exportColumns} filename="nakit-akisi" />
+            <Button loading={exporting} disabled={!id} onClick={exportWorkbook}>
+              <Download className="h-4 w-4" /> Dışa Aktar
+            </Button>
+            <ExportMenu rows={rows} columns={exportColumns} filename="nakit-akisi" csvOnly triggerLabel="Ham veri (CSV)" />
           </div>
         }
       />

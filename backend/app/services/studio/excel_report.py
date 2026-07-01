@@ -68,7 +68,13 @@ _grey_font = Font(name=_FONT, color=_argb(MUT))
 
 # Number formats — ₺ with negatives in parens (red) and zeros as an en-dash.
 _FMT_TRY = '#,##0" ₺";[Red](#,##0)" ₺";"–"'
-_FMT_PCT = "0.0%"
+# CR-054 — percent has TWO formats, because the two kinds of percent carry different
+# scales and Excel's "%" token multiplies by 100:
+#   * VALUE cells hold percent-UNITS (28.42, 39.7 — the engine already ×100 via HUNDRED),
+#     so a LITERAL "%" that does NOT re-scale, else 0.0% would render 28.42 as %2842.
+#   * DELTA cells hold FRACTIONS (0.15), so 0.0% (Excel ×100) → %15,0 (unchanged).
+_FMT_PCT_VALUE = '0.0"%"'      # percent-unit metric values (KPI cards + table cells)
+_FMT_PCT_FRACTION = "0.0%"     # pct deltas (fractions) — Excel multiplies by 100
 _FMT_NUM = '#,##0;[Red](#,##0);"–"'
 # CR-047 — a model-inapplicable metric is None; show the en-dash (a numeric format's
 # zero-section only fires for an actual 0, so a None/blank cell would otherwise be empty).
@@ -82,7 +88,7 @@ def _num_fmt(col_type: str) -> str:
     if col_type == "currency":
         return _FMT_TRY
     if col_type == "percent":
-        return _FMT_PCT
+        return _FMT_PCT_VALUE   # CR-054 — percent-unit VALUE (literal %, no ×100)
     return _FMT_NUM
 
 
@@ -277,8 +283,8 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
     delta_unit = ((result.get("meta") or {}).get("comparison_unit")) or "pct"
 
     def _delta_fmt(col: dict) -> str:
-        # pct deltas are fractions → 0.0%; abs deltas are ₺/number differences.
-        return _FMT_PCT if delta_unit == "pct" else _num_fmt(col.get("type"))
+        # pct deltas are FRACTIONS → 0.0% (Excel ×100); abs deltas are ₺/number diffs.
+        return _FMT_PCT_FRACTION if delta_unit == "pct" else _num_fmt(col.get("type"))
 
     name = _sheet_name(sheet_title, used_names)
     used_names.add(name)
@@ -436,6 +442,79 @@ def _apply_pie_colors(chart, n_points: int) -> None:
         pass
 
 
+# CR-054 — signed single-series colouring (net nakit / a variance) --------------- #
+def _is_signed_series(values) -> bool:
+    """True when a single-series chart is a SIGNED value worth per-sign colouring —
+    i.e. its plotted points actually dip below zero (net nakit with a deficit month, a
+    ± variance). An all-positive ranking / composition keeps the categorical palette."""
+    for v in values:
+        try:
+            if float(v) < 0:
+                return True
+        except (TypeError, ValueError):
+            continue   # a "–"/None cell is not a number — skip it
+    return False
+
+
+def _apply_signed_colors(chart, values) -> None:
+    """CR-054 — colour a single-series signed chart per data point: green > 0, red < 0,
+    neutral grey at exactly 0 — so the sign of net nakit / a variance reads at a glance.
+    Uses per-point ``DataPoint`` on series[0] (the same ``spPr`` mechanism as the pie).
+    Defensive: a styling failure must NEVER break the workbook (file-opens-clean)."""
+    try:
+        if not chart.series:
+            return
+        ser = chart.series[0]
+        for i, v in enumerate(values):
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            color = GREEN if fv > 0 else (RED if fv < 0 else MUT)
+            ser.data_points.append(
+                DataPoint(idx=i, spPr=GraphicalProperties(solidFill=_color6(color))))
+    except Exception:
+        pass
+
+
+# CR-054 — the value axis follows the CHARTED metric's type (not a hard-wired ₺) so a
+# ₺ chart shows ₺ ticks and a genuine % chart shows % ticks.
+def _axis_value_fmt(col_type: str) -> str:
+    if col_type == "percent":
+        return _FMT_PCT_VALUE   # literal % (percent-unit ticks, no ×100)
+    if col_type == "number":
+        return "#,##0"
+    return _AXIS_FMT            # currency (default) — ₺ ticks
+
+
+def _axis_value_title(col_type: str) -> str | None:
+    """Unit label for the value axis: ₺ for currency, % for percent, none otherwise."""
+    if col_type == "currency":
+        return "₺"
+    if col_type == "percent":
+        return "%"
+    return None
+
+
+def _style_value_axis(axis, num_fmt: str, title) -> None:
+    """CR-054 — the openpyxl trap: an axis with ``delete=None`` is HIDDEN by Excel, so
+    ticks/labels vanish even though numFmt is set. Un-hide it, give it the type-correct
+    number format and a unit title. Value axis is ALWAYS ``y_axis`` (NumericAxis) — even
+    for a horizontal bar, where only the visual orientation swaps, not the axis object."""
+    axis.delete = False
+    axis.numFmt = num_fmt
+    if title:
+        axis.title = title
+
+
+def _style_cat_axis(axis, title) -> None:
+    """CR-054 — un-hide the category axis (``x_axis``, TextAxis) and title it from the
+    charted dimension (e.g. 'Ay', 'Maliyet kategorisi')."""
+    axis.delete = False
+    if title:
+        axis.title = title
+
+
 def _style_chart(chart, title: str, *, legend: bool = True):
     chart.title = _safe_cell(title or "Grafik")
     chart.height = 8
@@ -526,6 +605,24 @@ def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
     cats = Reference(sheet, min_col=cat_col, max_col=cat_col, min_row=hr + 1, max_row=data_last)
     multi = mlast > mfirst
 
+    # CR-054 — value axis follows the CHARTED metric's type; category axis titled from
+    # the dimension. (metric_cols/dim_cols carry the RENDERED columns, snapshot-dropped.)
+    metric_cols = ref.get("metric_cols") or []
+    dim_cols = ref.get("dim_cols") or []
+    value_type = metric_cols[0].get("type") if metric_cols else "currency"
+    value_fmt = _axis_value_fmt(value_type)
+    value_title = _axis_value_title(value_type)
+    cat_title = dim_cols[0].get("label") if dim_cols else None
+
+    def _color_single(chart, *, line: bool):
+        # A single-series chart of a signed value → per-point green/red; otherwise the
+        # Heneka palette (an all-positive ranking/composition stays on-brand).
+        vals = [sheet.cell(row=r, column=mfirst).value for r in range(hr + 1, data_last + 1)]
+        if _is_signed_series(vals):
+            _apply_signed_colors(chart, vals)
+        else:
+            _apply_series_colors(chart, line=line)
+
     if kind == "pie":
         chart = PieChart()
         data = Reference(sheet, min_col=mfirst, max_col=mfirst, min_row=hr, max_row=data_last)
@@ -534,30 +631,40 @@ def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
         chart.dataLabels = DataLabelList(); chart.dataLabels.showPercent = True
         _apply_pie_colors(chart, data_last - hr)
         _style_chart(chart, title, legend=True)
-    elif kind in ("line", "area"):
+        # Pie has no x/y axes (it uses showPercent labels) — nothing to un-hide.
+        ozet.add_chart(chart, anchor)
+        return
+
+    if kind in ("line", "area"):
         chart = LineChart() if kind == "line" else AreaChart()
-        chart.y_axis.numFmt = _AXIS_FMT
         data = Reference(sheet, min_col=mfirst, max_col=mlast, min_row=hr, max_row=data_last)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
-        _apply_series_colors(chart, line=(kind == "line"))
+        if multi:
+            _apply_series_colors(chart, line=(kind == "line"))
+        else:
+            _color_single(chart, line=(kind == "line"))
         _style_chart(chart, title, legend=multi)
     elif kind == "bar":
         chart = BarChart(); chart.type = "bar"      # horizontal ranking
-        chart.x_axis.numFmt = _AXIS_FMT             # value axis is x for a horizontal bar
         data = Reference(sheet, min_col=mfirst, max_col=mfirst, min_row=hr, max_row=data_last)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
-        _apply_series_colors(chart, line=False)
+        _color_single(chart, line=False)
         _style_chart(chart, title, legend=False)
     else:  # clustered_bar — multi-series columns over the dim
         chart = BarChart(); chart.type = "col"; chart.grouping = "clustered"
-        chart.y_axis.numFmt = _AXIS_FMT
         data = Reference(sheet, min_col=mfirst, max_col=mlast, min_row=hr, max_row=data_last)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
         _apply_series_colors(chart, line=False)
         _style_chart(chart, title, legend=multi)
+
+    # CR-054 — un-hide both axes (openpyxl leaves delete=None → Excel hides them, the
+    # blank-axis bug) with the type-correct value format + titles. Value axis is always
+    # y_axis (NumericAxis); category axis is x_axis (TextAxis) — true for bar & col alike.
+    _style_value_axis(chart.y_axis, value_fmt, value_title)
+    _style_cat_axis(chart.x_axis, cat_title)
     ozet.add_chart(chart, anchor)
 
 
