@@ -45,12 +45,12 @@ export default function EquipmentPage() {
     { header: "Ekipman", value: (r) => r.equipment_name },
     { header: "Sahiplik", value: (r) => (r.ownership_type === "owned" ? "Şirkete Ait" : "Kiralık") },
     { header: "Tedarikçi", value: (r) => r.supplier_name ?? "" },
-    { header: "Birim Ücret", value: (r) => (r.rate_try ? toNumber(r.rate_try) : "") },
+    { header: "Birim Ücret", value: (r) => (r.rate_try ? toNumber(r.rate_try) : ""), type: "currency" },
     { header: "Birim", value: (r) => (r.rate_unit ? (r.rate_unit === "month" ? "Ay" : "Gün") : "") },
-    { header: "Başlangıç", value: (r) => (r.deployment_start ? formatDate(r.deployment_start) : "") },
-    { header: "Bitiş", value: (r) => (r.deployment_end ? formatDate(r.deployment_end) : "") },
-    { header: "Süre (gün)", value: (r) => r.duration_days ?? "" },
-    { header: "Toplam Maliyet", value: (r) => toNumber(r.total_cost_try) },
+    { header: "Başlangıç", value: (r) => (r.deployment_start ? formatDate(r.deployment_start) : ""), type: "date" },
+    { header: "Bitiş", value: (r) => (r.deployment_end ? formatDate(r.deployment_end) : ""), type: "date" },
+    { header: "Süre (gün)", value: (r) => r.duration_days ?? "", type: "number" },
+    { header: "Toplam Maliyet", value: (r) => toNumber(r.total_cost_try), type: "currency" },
   ];
 
   return (

@@ -60,10 +60,10 @@ export default function VendorsPage() {
 
   const exportColumns: ExportColumn<VendorRow>[] = [
     { header: "Tedarikçi", value: (v) => v.canonical_name },
-    { header: "Toplam Harcama", value: (v) => Number(v.total_try) },
-    { header: "Proje", value: (v) => v.project_count },
-    { header: "Kayıt", value: (v) => v.cost_entry_count },
-    { header: "Takma Adlar", value: (v) => v.alias_count },
+    { header: "Toplam Harcama", value: (v) => Number(v.total_try), type: "currency" },
+    { header: "Proje", value: (v) => v.project_count, type: "number" },
+    { header: "Kayıt", value: (v) => v.cost_entry_count, type: "number" },
+    { header: "Takma Adlar", value: (v) => v.alias_count, type: "number" },
   ];
 
   const clusters = suggestionsQ.data ?? [];

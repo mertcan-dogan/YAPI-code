@@ -35,7 +35,7 @@ from app.schemas.dashboard import (
 from app.schemas.report import ReportCreate, ReportListItem, ReportOut, ReportUpdate
 from app.services.studio import creators
 from app.services.studio.catalog import get_catalog_public, validate_spec
-from app.services.studio.engine import run_spec
+from app.services.studio.engine import run_both_currencies, run_spec, run_spec_usd
 from app.services.studio.export import studio_export, studio_export_dashboard
 
 router = APIRouter(tags=["studio"])
@@ -244,9 +244,13 @@ def export_report(
     report = _get_viewable(db, user, report_id)
     if format not in EXPORT_FORMATS:
         raise APIError(422, "INVALID_FORMAT", "Geçersiz dışa aktarma biçimi (pdf, xlsx veya csv)")
-    result = run_spec(db, user.company_id, report.spec)
+    # CR-055 — xlsx gets a USD-at-date companion; pdf/csv stay ₺-only (no extra run).
+    if format == "xlsx":
+        result, result_usd = run_both_currencies(db, user.company_id, report.spec)
+    else:
+        result, result_usd = run_spec(db, user.company_id, report.spec), None
     return studio_export(result, format, report.title, viz=(report.spec or {}).get("viz"),
-                         company=_company_name(db, user))
+                         company=_company_name(db, user), result_usd=result_usd)
 
 
 # --------------------------------------------------------------------------- #
@@ -375,7 +379,7 @@ def _global_merge(spec: dict, dashboard: Dashboard, project_scope=None) -> dict:
     return merged
 
 
-def _run_dashboard_batch(db: Session, user, dashboard: Dashboard) -> dict:
+def _run_dashboard_batch(db: Session, user, dashboard: Dashboard, *, currency: str | None = None) -> dict:
     """Render every kpi/chart/table/report widget on the deck → {widget_id:
     result-or-status}. Text widgets are omitted (the FE renders their content).
     Read-only and company-scoped (``company_id`` from auth). A report widget
@@ -385,22 +389,29 @@ def _run_dashboard_batch(db: Session, user, dashboard: Dashboard) -> dict:
     CR-047 — a skill deck may carry a ``project_scope`` (set on the transient deck by
     ``skills._plan_dashboard``); it is merged into every data/report widget so the
     whole report is scoped to that project. Manual dashboards have no such attribute
-    → ``project_scope`` is None → unchanged behaviour."""
+    → ``project_scope`` is None → unchanged behaviour.
+
+    CR-055 — ``currency`` (optional) forces ``basis.currency`` on every widget spec, so
+    a caller can run the SAME deck a second time in USD (``currency='usd'``) for the
+    decision-grade export's ₺+USD companion. None → each widget's own basis (unchanged)."""
     results: dict = {}
     project_scope = getattr(dashboard, "project_scope", None)
+    # CR-055 — currency='usd' runs the USD-at-date companion (cost_try→cost_usd, cash
+    # nulled, sibling ids relabelled) so the companion lines up with the ₺ run.
+    _run = (lambda spec: run_spec_usd(db, user.company_id, spec)) if currency == "usd" \
+        else (lambda spec: run_spec(db, user.company_id, spec))
+
     for w in dashboard.widgets or []:
         wtype = w.get("type")
         wid = w.get("id")
         if wtype in ("kpi", "chart", "table"):
-            merged = _global_merge(w.get("spec") or {}, dashboard, project_scope)
-            results[wid] = run_spec(db, user.company_id, merged)
+            results[wid] = _run(_global_merge(w.get("spec") or {}, dashboard, project_scope))
         elif wtype == "report":
             ref = _resolve_report_widget(db, user, w.get("report_id"))
             if ref is None:
                 results[wid] = {"unavailable": True}
             else:
-                merged = _global_merge(ref.spec or {}, dashboard, project_scope)
-                results[wid] = run_spec(db, user.company_id, merged)
+                results[wid] = _run(_global_merge(ref.spec or {}, dashboard, project_scope))
         # text widgets carry no data → omitted from the batch result.
     return results
 
@@ -540,5 +551,7 @@ def export_dashboard(
     if format not in DASHBOARD_EXPORT_FORMATS:
         raise APIError(422, "INVALID_FORMAT", "Pano için geçersiz dışa aktarma biçimi (pdf veya xlsx)")
     results = _run_dashboard_batch(db, user, dashboard)
+    # CR-055 — xlsx gets a USD-at-date companion (same deck run with basis.currency='usd').
+    results_usd = _run_dashboard_batch(db, user, dashboard, currency="usd") if format == "xlsx" else None
     return studio_export_dashboard(dashboard.widgets or [], results, dashboard.title, format,
-                                   company=_company_name(db, user))
+                                   company=_company_name(db, user), results_usd=results_usd)

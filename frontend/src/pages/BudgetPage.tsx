@@ -278,19 +278,19 @@ export default function BudgetPage() {
   // always present regardless of the ₺/$ toggle so the file is self-contained.
   const ENTRY_TYPE_LABELS: Record<string, string> = { actual: "Gerçekleşen", committed: "Taahhüt", forecast: "Tahmin" };
   const exportColumns: ExportColumn<CostEntry>[] = [
-    { header: "Tarih", value: (r) => (r.entry_date ? formatDate(r.entry_date) : "") },
+    { header: "Tarih", value: (r) => (r.entry_date ? formatDate(r.entry_date) : ""), type: "date" },
     { header: "Giriş Tipi", value: (r) => ENTRY_TYPE_LABELS[r.entry_type] ?? r.entry_type },
     { header: "Kategori", value: (r) => COST_CATEGORIES[r.cost_category] ?? r.cost_category },
     { header: "Alt Kategori", value: (r) => (r.subcategory && r.subcategory.trim() ? r.subcategory : "Belirtilmemiş") },
     { header: "Tedarikçi", value: (r) => r.supplier_name ?? "" },
     { header: "Açıklama", value: (r) => r.description ?? "" },
     { header: "Fatura No", value: (r) => r.invoice_number ?? "" },
-    { header: "Tutar (TRY)", value: (r) => toNumber(r.amount_try) },
-    { header: "KDV Oranı (%)", value: (r) => toNumber(r.vat_rate) },
-    { header: "KDV Dahil (TRY)", value: (r) => toNumber(r.total_with_vat_try) },
-    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : "") },
-    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : "") },
-    { header: "Vade", value: (r) => (r.payment_due_date ? formatDate(r.payment_due_date) : "") },
+    { header: "Tutar (TRY)", value: (r) => toNumber(r.amount_try), type: "currency" },
+    { header: "KDV Oranı (%)", value: (r) => toNumber(r.vat_rate), type: "percent" },
+    { header: "KDV Dahil (TRY)", value: (r) => toNumber(r.total_with_vat_try), type: "currency" },
+    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : ""), type: "usd" },
+    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : ""), type: "number" },
+    { header: "Vade", value: (r) => (r.payment_due_date ? formatDate(r.payment_due_date) : ""), type: "date" },
     { header: "Durum", value: (r) => STATUS_LABELS[r.payment_status] ?? r.payment_status },
   ];
 

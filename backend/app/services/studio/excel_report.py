@@ -65,9 +65,14 @@ _red_tint = PatternFill("solid", fgColor=_argb(TINT["r"]))
 _green_font = Font(name=_FONT, bold=True, color=_argb(GREEN))
 _red_font = Font(name=_FONT, bold=True, color=_argb(RED))
 _grey_font = Font(name=_FONT, color=_argb(MUT))
+_usd_font = Font(name=_FONT, size=11, color=_argb(MUT))       # CR-055 — KPI USD secondary line
+_footnote_font = Font(name=_FONT, italic=True, size=8, color=_argb(MUT))
 
 # Number formats — ₺ with negatives in parens (red) and zeros as an en-dash.
 _FMT_TRY = '#,##0" ₺";[Red](#,##0)" ₺";"–"'
+# CR-055 — USD-at-date companion (mirrors _FMT_TRY). USD is NEVER fabricated: a cell
+# with no amount_usd renders the en-dash, never a converted-at-today number.
+_FMT_USD = '#,##0" $";[Red](#,##0)" $";"–"'
 # CR-054 — percent has TWO formats, because the two kinds of percent carry different
 # scales and Excel's "%" token multiplies by 100:
 #   * VALUE cells hold percent-UNITS (28.42, 39.7 — the engine already ×100 via HUNDRED),
@@ -90,6 +95,20 @@ def _num_fmt(col_type: str) -> str:
     if col_type == "percent":
         return _FMT_PCT_VALUE   # CR-054 — percent-unit VALUE (literal %, no ×100)
     return _FMT_NUM
+
+
+# CR-055 — the Özet footnote making the USD basis honest (rate-at-date, CR-014).
+_USD_FOOTNOTE = "USD değerleri her işlemin kendi tarihindeki kur ile hesaplanmıştır (CR-014)."
+
+
+def _usd_label(label: str) -> str:
+    """Derive a paired USD column header from a ₺ one: 'Maliyet (₺)' → 'Maliyet ($)',
+    otherwise append ' ($)' (e.g. 'Gelir' → 'Gelir ($)')."""
+    if "(₺)" in (label or ""):
+        return label.replace("(₺)", "($)")
+    if "₺" in (label or ""):
+        return label.replace("₺", "$")
+    return f"{label or ''} ($)".strip()
 
 
 # --------------------------------------------------------------------------- #
@@ -202,9 +221,16 @@ def header_band(ws, title: str, company: str | None, period: str, start_row: int
 # --------------------------------------------------------------------------- #
 def kpi_cards(ws, cards: list, start_row: int) -> int:
     """A 2–4-across grid of cards: muted label / large ₺ value / RAG delta. ``cards``
-    are dicts {label, value, value_type, delta, favourable_up}. Returns next free row."""
+    are dicts {label, value, value_type, delta, favourable_up}. Returns next free row.
+
+    CR-055 — when any card carries a ``usd_value`` (a currency card with a USD
+    companion), the whole grid gains a 4th row: the ₺ headline gets a muted USD
+    secondary line beneath it (``≈ 312.400 $``), so every ₺ figure shows its USD-at-date
+    equivalent. A missing USD renders "–" (never a fabricated number)."""
     if not cards:
         return start_row
+    dual = any("usd_value" in c for c in cards)   # a USD secondary line is present
+    body_rows = 4 if dual else 3                    # label, value, [usd], delta
     per_row = 4
     col_pairs = [(1, 2), (3, 4), (5, 6), (7, 8)]  # each card spans 2 cols
     r = start_row
@@ -213,6 +239,8 @@ def kpi_cards(ws, cards: list, start_row: int) -> int:
         for j, card in enumerate(band):
             c0, c1 = col_pairs[j]
             cl0, cl1 = get_column_letter(c0), get_column_letter(c1)
+            usd_row = (r + 2) if dual else None
+            delta_row = (r + 3) if dual else (r + 2)
             # label
             ws.merge_cells(f"{cl0}{r}:{cl1}{r}")
             lc = ws.cell(row=r, column=c0, value=_safe_cell(card["label"]))
@@ -229,9 +257,22 @@ def kpi_cards(ws, cards: list, start_row: int) -> int:
                 vc.number_format = _num_fmt(card.get("value_type") or "currency")
             vc.font = _value_font
             vc.alignment = Alignment(horizontal="left", indent=1)
+            # CR-055 — USD secondary line (currency cards only; blank for %/count cards).
+            if dual:
+                ws.merge_cells(f"{cl0}{usd_row}:{cl1}{usd_row}")
+                uc = ws.cell(row=usd_row, column=c0)
+                if "usd_value" in card:
+                    uv = card.get("usd_value")
+                    if uv is None:
+                        uc.value = _DASH   # no amount_usd for this figure → honest en-dash
+                    else:
+                        uc.value = uv
+                        uc.number_format = _FMT_USD
+                    uc.font = _usd_font
+                    uc.alignment = Alignment(horizontal="left", indent=1)
             # delta — a styled string (arrow + %), RAG-coloured by favourable direction.
-            ws.merge_cells(f"{cl0}{r + 2}:{cl1}{r + 2}")
-            dc = ws.cell(row=r + 2, column=c0)
+            ws.merge_cells(f"{cl0}{delta_row}:{cl1}{delta_row}")
+            dc = ws.cell(row=delta_row, column=c0)
             delta = card.get("delta")
             if delta is None:
                 dc.value = "—"
@@ -248,24 +289,30 @@ def kpi_cards(ws, cards: list, start_row: int) -> int:
                 fav = card.get("favourable_up", True)
                 dc.font = _grey_font if d == 0 else (_green_font if (d > 0) == fav else _red_font)
             dc.alignment = Alignment(horizontal="left", indent=1)
-            # card border on the 3 rows
-            for rr in (r, r + 1, r + 2):
+            # card border on the body rows
+            for rr in range(r, r + body_rows):
                 for cc in (c0, c1):
                     ws.cell(row=rr, column=cc).border = _thin_border
                     if rr != r:
                         ws.cell(row=rr, column=cc).fill = _card_fill
-        r += 4  # 3 card rows + 1 gap
+        r += body_rows + 1  # body rows + 1 gap
     return r
 
 
 # --------------------------------------------------------------------------- #
 # Data sheet (consolidated table) — returns chart-range info
 # --------------------------------------------------------------------------- #
-def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | None:
+def data_sheet(wb, result: dict, sheet_title: str, used_names: set,
+               result_usd: dict | None = None) -> dict | None:
     """Write a styled data sheet from a result. Snapshot metrics in a time-grouped
     table are dropped here (rerouted to KPI cards by the caller). Returns a dict with
     the chart-range info ({sheet, cat_col, metric_cols, header_row, last_data_row}) or
-    None when there is nothing tabular to render."""
+    None when there is nothing tabular to render.
+
+    CR-055 — when ``result_usd`` (the same spec run with basis.currency='usd') is given,
+    each ₺ currency column gains a paired USD-at-date column ('Maliyet (₺)' → 'Maliyet
+    ($)'), placed right after the ₺ metric block so the chart's ₺ range is unchanged. A
+    figure with no ``amount_usd`` renders "–" (never fabricated)."""
     all_columns = result.get("columns") or []
     rows = result.get("rows") or []
     time_grouped = _is_time_grouped(all_columns)
@@ -286,12 +333,28 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
         # pct deltas are FRACTIONS → 0.0% (Excel ×100); abs deltas are ₺/number diffs.
         return _FMT_PCT_FRACTION if delta_unit == "pct" else _num_fmt(col.get("type"))
 
+    # CR-055 — USD companion: a $ column per ₺ currency metric. Match USD rows/totals by
+    # dimension key (order-independent — same spec, same groups) so a re-sorted USD run
+    # still lines up. usd_missing_count flags rows the FX snapshot couldn't value.
+    # A $ pair is added only for ₺ currency columns; a column already in USD (its label
+    # carries "$", e.g. cost_usd "Maliyet ($)") is not paired again with a redundant column.
+    usd_metric_cols = ([c for c in metric_cols
+                        if c.get("type") == "currency" and "$" not in (c.get("label") or "")]
+                       if result_usd else [])
+    usd_by_key: dict = {}
+    usd_totals: dict = {}
+    if usd_metric_cols:
+        for ur in (result_usd.get("rows") or []):
+            key = tuple((ur.get("dims") or {}).get(d["id"]) for d in dim_cols)
+            usd_by_key[key] = ur.get("metrics") or {}
+        usd_totals = (result_usd.get("totals") or {}).get("metrics") or {}
+
     name = _sheet_name(sheet_title, used_names)
     used_names.add(name)
     ws = wb.create_sheet(title=name)
 
-    # Column plan: [dims...] [metrics...] [Δ metrics... (if comparison)]
-    plan: list = []  # (col_index, col_dict, role)  role: dim|metric|delta
+    # Column plan: [dims...] [₺ metrics...] [$ USD metrics...] [Δ metrics... (if compare)]
+    plan: list = []  # (col_index, col_dict, role)  role: dim|metric|usd|delta
     ci = 1
     for c in dim_cols:
         plan.append((ci, c, "dim")); ci += 1
@@ -299,6 +362,10 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
     for c in metric_cols:
         plan.append((ci, c, "metric")); ci += 1
     metric_last_col = ci - 1
+    # $ block sits AFTER the ₺ block so metric_first/last_col (the chart's ₺ range) never
+    # shift — charts stay ₺-only and CR-052/054 chart behaviour is untouched.
+    for c in usd_metric_cols:
+        plan.append((ci, c, "usd")); ci += 1
     delta_cols: list = []
     if has_delta:
         for c in metric_cols:
@@ -307,7 +374,12 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
 
     # Header row
     for col_idx, c, role in plan:
-        label = c["label"] if role != "delta" else f"Δ {c['label']}"
+        if role == "delta":
+            label = f"Δ {c['label']}"
+        elif role == "usd":
+            label = _usd_label(c["label"])
+        else:
+            label = c["label"]
         cell = ws.cell(row=1, column=col_idx, value=_safe_cell(label))
         cell.font = _white_bold
         cell.fill = _navy_fill
@@ -318,6 +390,7 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
         dims = row.get("dims") or {}
         metrics = row.get("metrics") or {}
         deltas = row.get("deltas") or {}
+        rkey = tuple(dims.get(d["id"]) for d in dim_cols)   # CR-055 — USD row match key
         banded = (ri % 2 == 0)
         for col_idx, c, role in plan:
             if role == "dim":
@@ -330,6 +403,13 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
                 else:
                     cell = ws.cell(row=ri, column=col_idx, value=mv)
                     cell.number_format = _num_fmt(c["type"])
+            elif role == "usd":  # CR-055 — USD-at-date pair; "–" when no amount_usd
+                uv = usd_by_key.get(rkey, {}).get(c["id"])
+                if uv is None:
+                    cell = ws.cell(row=ri, column=col_idx, value=_DASH)
+                else:
+                    cell = ws.cell(row=ri, column=col_idx, value=uv)
+                    cell.number_format = _FMT_USD
             else:  # delta (fraction for pct; absolute ₺/number for abs)
                 cell = ws.cell(row=ri, column=col_idx, value=deltas.get(c["id"]))
                 cell.number_format = _delta_fmt(c)
@@ -356,11 +436,18 @@ def data_sheet(wb, result: dict, sheet_title: str, used_names: set) -> dict | No
             else:
                 cell.value = tv
                 cell.number_format = _num_fmt(c["type"])
+        elif role == "usd":  # CR-055 — USD-at-date total (authoritative usd-run total)
+            uv = usd_totals.get(c["id"])
+            if uv is None:
+                cell.value = _DASH
+            else:
+                cell.value = uv
+                cell.number_format = _FMT_USD
         else:
             cell.value = (total_deltas or {}).get(c["id"]) if total_deltas else None
             cell.number_format = _delta_fmt(c)
         cell.font = _bold
-        cell.fill = _gold_fill if role != "dim" else _gold_fill
+        cell.fill = _gold_fill
 
     # RAG conditional formatting on each Δ column (favourable green / unfavourable red)
     for col_idx, c in delta_cols:
@@ -516,9 +603,8 @@ def _style_cat_axis(axis, title) -> None:
 
 
 def _style_chart(chart, title: str, *, legend: bool = True):
+    # Size is set by add_chart (CR-055 content-aware); this only sets title + legend.
     chart.title = _safe_cell(title or "Grafik")
-    chart.height = 8
-    chart.width = 16
     if legend:
         try:
             chart.legend.position = "b"
@@ -526,6 +612,26 @@ def _style_chart(chart, title: str, *, legend: bool = True):
             pass
     else:
         chart.legend = None  # a single-series chart needs no legend
+
+
+# CR-055 — content-aware chart sizing (no more cramped 3-bar or 30-month charts) ---- #
+def _chart_size(n_categories: int, max_label_len: int, *, multi: bool, legend: bool) -> tuple:
+    """Chart (width, height) in cm. Width grows with the category count and the longest
+    category label so a 30-month trend / 10-category bar has room (clamped 16–40); a
+    3-bar chart stays compact. Height bumps for a bottom legend / many series (7–12)."""
+    width = 16.0 + 0.55 * max(0, n_categories - 4)
+    if max_label_len > 12:
+        width += min(6.0, 0.3 * (max_label_len - 12))
+    width = max(16.0, min(width, 40.0))
+    height = 8.0 + (1.5 if legend else 0.0) + (1.0 if multi else 0.0)
+    height = max(7.0, min(height, 12.0))
+    return round(width, 1), round(height, 1)
+
+
+def _chart_rows(height_cm: float) -> int:
+    """Rows to advance the Özet anchor for a chart of this height (+ a gap) so stacked
+    charts never overlap. Excel's default row height ≈ 0.53 cm."""
+    return int(round((height_cm or 8.0) / 0.53)) + 2
 
 
 def _filter_key(spec: dict) -> tuple:
@@ -588,18 +694,21 @@ def pick_chart(columns: list, rows: list, viz: str | None) -> str | None:
     return "bar"                     # ranking / comparison (horizontal bar)
 
 
-def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
+def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str) -> float:
     """Build a native chart from a data-sheet range info and anchor it on the Özet.
     ``kind`` is a ``pick_chart`` result. Categories on a non-time ranking/composition
     chart are capped (``_CAT_CAP``) for readability; a time series keeps every point so
-    the line reads left→right over the whole span (CR-050 chronological order)."""
+    the line reads left→right over the whole span (CR-050 chronological order).
+
+    Returns the chart's height in cm (CR-055) so the caller can advance the Özet anchor
+    without overlap; returns 0.0 when nothing was drawn."""
     sheet = ref["sheet"]
     cat_col = ref["cat_col"]
     hr = ref["header_row"]
     last = ref["last_data_row"]
     mfirst, mlast = ref["metric_first_col"], ref["metric_last_col"]
     if cat_col is None or last <= hr:
-        return
+        return 0.0
     is_time = bool(ref.get("time_grouped"))
     data_last = last if is_time else min(last, hr + _CAT_CAP)
     cats = Reference(sheet, min_col=cat_col, max_col=cat_col, min_row=hr + 1, max_row=data_last)
@@ -613,6 +722,16 @@ def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
     value_fmt = _axis_value_fmt(value_type)
     value_title = _axis_value_title(value_type)
     cat_title = dim_cols[0].get("label") if dim_cols else None
+
+    # CR-055 — content-aware size from the plotted category count + longest label.
+    n_categories = max(0, data_last - hr)
+    try:
+        max_label_len = max((len(str(sheet.cell(row=rr, column=cat_col).value or ""))
+                             for rr in range(hr + 1, data_last + 1)), default=0)
+    except Exception:
+        max_label_len = 0
+    legend_shown = True if kind == "pie" else (False if kind == "bar" else multi)
+    w_cm, h_cm = _chart_size(n_categories, max_label_len, multi=multi, legend=legend_shown)
 
     def _color_single(chart, *, line: bool):
         # A single-series chart of a signed value → per-point green/red; otherwise the
@@ -632,8 +751,9 @@ def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
         _apply_pie_colors(chart, data_last - hr)
         _style_chart(chart, title, legend=True)
         # Pie has no x/y axes (it uses showPercent labels) — nothing to un-hide.
+        chart.width = w_cm; chart.height = h_cm
         ozet.add_chart(chart, anchor)
-        return
+        return h_cm
 
     if kind in ("line", "area"):
         chart = LineChart() if kind == "line" else AreaChart()
@@ -665,18 +785,26 @@ def add_chart(ozet, ref: dict, kind: str, title: str, anchor: str):
     # y_axis (NumericAxis); category axis is x_axis (TextAxis) — true for bar & col alike.
     _style_value_axis(chart.y_axis, value_fmt, value_title)
     _style_cat_axis(chart.x_axis, cat_title)
+    chart.width = w_cm; chart.height = h_cm
     ozet.add_chart(chart, anchor)
+    return h_cm
 
 
 # --------------------------------------------------------------------------- #
 # Card builders from a result
 # --------------------------------------------------------------------------- #
-def _cards_from_result(result: dict, *, only_snapshot: bool = False, suffix: str = "") -> list:
+def _cards_from_result(result: dict, *, only_snapshot: bool = False, suffix: str = "",
+                       result_usd: dict | None = None) -> list:
     """Build KPI cards from a result's totals. ``only_snapshot`` keeps just snapshot
-    metrics (for the time-grouped reroute); otherwise all metric columns."""
+    metrics (for the time-grouped reroute); otherwise all metric columns.
+
+    CR-055 — when ``result_usd`` is given, each CURRENCY card carries a ``usd_value``
+    (the USD-at-date total from the companion run) so the card can show ₺ + USD; a
+    missing USD is None → rendered "–" (never fabricated)."""
     totals = (result.get("totals") or {}).get("metrics") or {}
     deltas = (result.get("totals") or {}).get("deltas") or {}
     unit = ((result.get("meta") or {}).get("comparison_unit")) or "pct"
+    usd_totals = (result_usd.get("totals") or {}).get("metrics") or {} if result_usd else {}
     cards: list = []
     for c in result.get("columns") or []:
         if c.get("kind") != "metric":
@@ -684,27 +812,60 @@ def _cards_from_result(result: dict, *, only_snapshot: bool = False, suffix: str
         mid = c["id"]
         if only_snapshot and not _is_snapshot(mid):
             continue
-        cards.append({
+        card = {
             "label": (c.get("label") or mid) + suffix,
             "value": totals.get(mid),
             "value_type": c.get("type"),
             "delta": (deltas or {}).get(mid) if deltas else None,
             "delta_unit": unit,
             "favourable_up": _favourable_up(mid),
-        })
+        }
+        if result_usd is not None and c.get("type") == "currency":
+            card["usd_value"] = usd_totals.get(mid)   # None → "–" (no amount_usd)
+        cards.append(card)
     return cards
 
 
 # --------------------------------------------------------------------------- #
 # The orchestrator
 # --------------------------------------------------------------------------- #
+def _usd_footnote(ws, row: int, results_usd: dict) -> int:
+    """CR-055 — write the USD honesty footnote (rate-at-date, CR-014) on the Özet at
+    ``row``, plus a 'no FX for N rows' note when any companion run reported
+    ``usd_missing_count`` > 0. Returns the next free row."""
+    span = 8
+    last_col = get_column_letter(span)
+    ws.merge_cells(f"A{row}:{last_col}{row}")
+    c = ws.cell(row=row, column=1, value=_safe_cell(_USD_FOOTNOTE))
+    c.font = _footnote_font
+    c.alignment = Alignment(horizontal="left", indent=1)
+    row += 1
+    missing = sum((r.get("meta") or {}).get("usd_missing_count") or 0
+                  for r in (results_usd or {}).values() if isinstance(r, dict))
+    if missing:
+        ws.merge_cells(f"A{row}:{last_col}{row}")
+        c2 = ws.cell(row=row, column=1,
+                     value=_safe_cell(f"{missing} kayıt için USD kuru yok — bu değerler “–” gösterilir."))
+        c2.font = _footnote_font
+        c2.alignment = Alignment(horizontal="left", indent=1)
+        row += 1
+    return row
+
+
 def build_workbook(widgets: list, results: dict, title: str, *,
                    company: str | None = None, period: str | None = None,
-                   single_report: bool = False) -> bytes:
+                   single_report: bool = False, results_usd: dict | None = None) -> bytes:
     """Render a decision-grade workbook → bytes. ``widgets`` is the ordered widget
     list (section-grouped by the caller); ``results`` maps widget id → run_spec result
     or {"unavailable": True}. Raises ``APIError(422, NO_DATA)`` when nothing is
-    renderable (no empty workbook)."""
+    renderable (no empty workbook).
+
+    CR-055 — ``results_usd`` (optional): the SAME widgets run with basis.currency='usd'
+    (a USD-at-date companion, ``run_both_currencies``). When given, every currency KPI
+    shows a ₺ headline + USD secondary line, currency table columns get a paired $
+    column, and an Özet footnote states the rate-at-date basis. When None, ₺-only —
+    identical to the pre-CR-055 output (premade cost/cashflow, which have no runnable
+    USD spec, pass None and are unchanged)."""
     wb = Workbook()
     wb.remove(wb.active)  # drop the default sheet; Özet is inserted at the front later
 
@@ -735,10 +896,11 @@ def build_workbook(widgets: list, results: dict, title: str, *,
         if wtype == "text":
             continue
         res = results.get(w.get("id"))
+        res_usd = (results_usd or {}).get(w.get("id"))   # CR-055 — USD companion (or None)
 
         if wtype == "kpi":
             if _is_renderable(res):
-                cards.extend(_cards_from_result(res))
+                cards.extend(_cards_from_result(res, result_usd=res_usd))
                 rendered = True
             continue
 
@@ -748,11 +910,12 @@ def build_workbook(widgets: list, results: dict, title: str, *,
         columns = res.get("columns") or []
         if single_report:
             # Özet-lite: headline KPI cards from the report's totals (all metrics).
-            cards = _cards_from_result(res) + cards
+            cards = _cards_from_result(res, result_usd=res_usd) + cards
             rendered = True
         elif _is_time_grouped(columns):
             # Snapshot reroute: a snapshot metric in a time-grouped table → KPI card.
-            snap_cards = _cards_from_result(res, only_snapshot=True, suffix=" (tüm proje)")
+            snap_cards = _cards_from_result(res, only_snapshot=True, suffix=" (tüm proje)",
+                                            result_usd=res_usd)
             if snap_cards:
                 # A card-only Özet built from authoritative run_spec totals is a valid
                 # decision dashboard, so this counts as rendered even if the table that
@@ -760,7 +923,7 @@ def build_workbook(widgets: list, results: dict, title: str, *,
                 cards.extend(snap_cards)
                 rendered = True
 
-        ref = data_sheet(wb, res, w.get("title") or "Veri", used_names)
+        ref = data_sheet(wb, res, w.get("title") or "Veri", used_names, result_usd=res_usd)
         if ref is None:
             # All metrics were snapshot → already rerouted to cards above; no tabular
             # sheet to write for this widget.
@@ -805,11 +968,15 @@ def build_workbook(widgets: list, results: dict, title: str, *,
     ozet.sheet_view.showGridLines = False
     next_row = header_band(ozet, title, company, period or "Tüm zamanlar")
     next_row = kpi_cards(ozet, cards, next_row + 1)
-    # Anchor charts below the KPIs, stacked.
+    # Anchor charts below the KPIs, stacked. CR-055 — advance by each chart's ACTUAL
+    # (content-aware) height so a tall / many-category chart never overlaps the next.
     anchor_row = next_row + 1
     for ref, kind, ctitle in chart_specs:
-        add_chart(ozet, ref, kind, ctitle, f"A{anchor_row}")
-        anchor_row += 16  # ~chart height in rows
+        height_cm = add_chart(ozet, ref, kind, ctitle, f"A{anchor_row}")
+        anchor_row += _chart_rows(height_cm)
+    # CR-055 — honesty footnote for the USD-at-date basis (+ a note when rows had no FX).
+    if results_usd is not None:
+        anchor_row = _usd_footnote(ozet, anchor_row + 1, results_usd)
     for col in range(1, 9):
         ozet.column_dimensions[get_column_letter(col)].width = 18
     ozet.freeze_panes = "A6"
@@ -824,9 +991,12 @@ def build_workbook(widgets: list, results: dict, title: str, *,
 # Single-report convenience wrapper (xlsx branch of studio_export)
 # --------------------------------------------------------------------------- #
 def build_single_report(result: dict, title: str, viz: str | None, *,
-                        company: str | None = None) -> bytes:
+                        company: str | None = None, result_usd: dict | None = None) -> bytes:
     """The single-report xlsx: one synthetic widget through the same engine, giving an
-    Özet-lite (title band + headline KPIs + the report's own chart) + the data sheet."""
+    Özet-lite (title band + headline KPIs + the report's own chart) + the data sheet.
+
+    CR-055 — ``result_usd`` (the same report run with basis.currency='usd') adds the USD
+    companion (₺+USD KPIs, paired $ columns, footnote). None → ₺-only (unchanged)."""
     wtype = "kpi" if viz == "kpi" else ("chart" if viz in ("line", "area", "bar") else "table")
     widget = {"id": "r", "type": wtype, "title": title, "spec": {"viz": viz}}
     if wtype == "kpi":
@@ -834,4 +1004,5 @@ def build_single_report(result: dict, title: str, viz: str | None, *,
         # table path, so single_report still surfaces the table. Treat as report.
         widget["type"] = "report"
     return build_workbook([widget], {"r": result}, title, company=company,
-                          period=_period_label(result), single_report=True)
+                          period=_period_label(result), single_report=True,
+                          results_usd=({"r": result_usd} if result_usd is not None else None))

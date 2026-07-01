@@ -276,9 +276,25 @@ export default function StudioReportEditorPage() {
   };
 
   // Client-side export columns/rows for the current preview (CSV/xlsx via ExportMenu).
+  // CR-055 — carry the studio column type so amounts export ₺/$/% (USD when the run is in
+  // USD basis), not raw General numbers. Dimensions stay text (dates tagged for clarity).
   const exportColumns: ExportColumn<RunRow>[] = (result?.columns ?? []).map((col) => ({
     header: col.label,
     value: (row) => (col.kind === "dimension" ? row.dims[col.id] ?? "" : row.metrics[col.id] ?? null),
+    type:
+      col.kind === "dimension"
+        ? col.type === "date"
+          ? "date"
+          : undefined
+        : col.type === "currency"
+          ? currency === "usd"
+            ? "usd"
+            : "currency"
+          : col.type === "percent"
+            ? "percent"
+            : col.type === "number"
+              ? "number"
+              : undefined,
   }));
 
   // --- catalog gate ---
