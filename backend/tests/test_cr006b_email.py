@@ -3,8 +3,9 @@
 - RESEND_API_KEY yokken servis çalışır, hata fırlatmaz, loglar.
 - send_overdue_cost_email çağrılınca Resend API'ye istek gider.
 - Gönderim hatası uygulamayı çökertmez.
-- POST /users/invite davet e-postası gönderir.
 - Marj %5 altına düşünce trigger çalışır (24 saat dedup).
+
+Davet akışı (POST /settings/invites + kabul) artık test_cr041_invites.py'de.
 """
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -12,7 +13,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.constants import ROLE_DIRECTOR
 from app.models.budget_line_item import BudgetLineItem
 from app.services.email_service import EmailService, email_service
 
@@ -73,31 +73,6 @@ def test_send_error_does_not_crash(monkeypatch):
     svc = EmailService(api_key="re_test_key")
     result = svc.send_overdue_cost_email(_fake_cost(), SimpleNamespace(name="P", id="1"), ["a@b.com"])
     assert result["sent"] is False and result["reason"] == "error"
-
-
-# --- Invite endpoint --------------------------------------------------------
-def test_invite_endpoint_sends_email(client, seed, monkeypatch):
-    calls = {}
-
-    def fake_invite(email, company_name, token):
-        calls["email"] = email
-        calls["company"] = company_name
-        return {"sent": True, "id": "x"}
-
-    monkeypatch.setattr(email_service, "send_user_invitation_email", fake_invite)
-    client.login(seed["a"]["users"][ROLE_DIRECTOR])
-    r = client.post("/api/v1/users/invite", json={"email": "yeni@firma.com", "role": "finance"})
-    assert r.status_code == 200, r.text
-    assert calls["email"] == "yeni@firma.com"
-    assert r.json()["data"]["email_sent"] is True
-
-
-def test_invite_requires_director(client, seed):
-    from app.constants import ROLE_SITE_MANAGER
-
-    client.login(seed["a"]["users"][ROLE_SITE_MANAGER])
-    r = client.post("/api/v1/users/invite", json={"email": "x@y.com"})
-    assert r.status_code == 403
 
 
 # --- Margin warning trigger -------------------------------------------------

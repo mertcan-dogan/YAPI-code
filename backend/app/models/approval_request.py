@@ -9,7 +9,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampSoftDeleteMixin
@@ -24,9 +24,15 @@ class ApprovalRequest(TimestampSoftDeleteMixin, Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("projects.id"), nullable=True)
 
     # budget_change | subcontractor_change | cost_deletion | variation_approval
+    # CR-011-C adds agent-proposed kinds: agent_reminder | agent_flag_invoice | agent_task
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
     target_table: Mapped[str] = mapped_column(String(50), nullable=False)
     target_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+
+    # CR-011-C: True when the YAPI agent proposed this request (never written
+    # directly — applied only after a human approves it). Lets the UI surface it
+    # as a "Yapı AI öneriyor" card and lets the agent list its own proposals.
+    proposed_by_agent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

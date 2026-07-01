@@ -1,5 +1,6 @@
 """Yapı FastAPI application entrypoint (Section 2.5, 8.1, 13.2)."""
 import logging
+import os
 from contextlib import asynccontextmanager
 
 # Verify TLS against the OS trust store (Windows/macOS/Linux system CAs) rather
@@ -24,35 +25,56 @@ from app.config import settings
 from app.middleware.errors import CatchAllErrorMiddleware, register_error_handlers
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.services.observability import (
+    check_migration_head,
+    get_expected_head,
+    init_sentry,
+    verify_migration_head_on_boot,
+)
 from app.startup import run_migrations
 
 # Routers
 from app.api import (
     ai,
+    ai_conversations,
     ai_import,
+    automations,
+    automations_internal,
     document_capture,
     approvals,
     audit,
     budget_templates,
     auth,
     cashflow,
+    closeout,
+    cost_subcategories,
     costs,
     custom_categories,
     equipment,
     imports,
     invoices,
+    landowner_payments,
+    milestones,
     notifications,
     projects,
     reminders,
     reports,
     settings as settings_router,
+    skills,
+    studio,
     subcontractors,
+    unit_sales,
     uploads,
-    users,
     variations,
+    vendors,
+    workspace,
 )
 
 logging.basicConfig(level=logging.INFO)
+
+# Initialize error monitoring BEFORE the app is created so init-time failures are
+# captured too. No-op when SENTRY_DSN is unset (local dev + tests run unchanged).
+init_sentry(dsn=settings.sentry_dsn, environment=settings.environment)
 
 
 @asynccontextmanager
@@ -60,6 +82,22 @@ async def lifespan(app: FastAPI):
     # Reconcile the database schema to the models on every boot, regardless of
     # how the platform builds/starts the container (see app/startup.py).
     run_migrations()
+    # Silent-failure protection: verify the applied Alembic revision matches the
+    # latest script head. A mismatch logs an ERROR + alerts Sentry but never
+    # blocks startup. Best-effort — only meaningful against the real (Postgres) DB.
+    try:
+        # CR-040: read alembic_version on the escalated (RLS-bypassing) engine so
+        # the NOBYPASSRLS app role can never trip on it. Falls back to the normal
+        # engine when ADMIN_DATABASE_URL is unset.
+        from app.db import get_admin_engine
+
+        if settings.database_url.startswith(("postgres://", "postgresql")):
+            with get_admin_engine().connect() as conn:
+                verify_migration_head_on_boot(conn)
+    except Exception:  # noqa: BLE001 - diagnostics must never block boot
+        logging.getLogger("yapi.startup").exception(
+            "[startup] migration-head integrity check failed to run"
+        )
     yield
 
 
@@ -100,7 +138,51 @@ register_error_handlers(app)
 # --- Health check (Section 13.2) ---
 @app.get("/health", tags=["health"])
 def health():
-    return {"status": "ok"}
+    # Resilient liveness probe: ALWAYS returns HTTP 200 while the process is up.
+    # The container HEALTHCHECK does raise_for_status() with retries, so a 500 here
+    # during a transient DB outage could trigger a restart loop that makes the blip
+    # worse. We therefore do NOT use Depends(get_db) (dependency resolution can
+    # raise before the handler body, escaping any try/except) and instead open the
+    # connection inside the handler, swallowing DB errors.
+    #
+    # On DB error db_migration_ok is null (unknown) — NOT false — so a blip is never
+    # mistaken for a schema mismatch. The real mismatch signal is the boot-time
+    # ERROR log + Sentry alert from verify_migration_head_on_boot().
+    expected_head = get_expected_head()
+    # CR-037: surface the deployed git SHA so every deploy — including no-migration
+    # ones — is externally confirmable from /health. Railway sets this per build;
+    # falls back to "dev" locally / when unset.
+    version = os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "dev"
+    try:
+        # CR-040: use the escalated (RLS-bypassing) session for the alembic_version
+        # read so the NOBYPASSRLS app role never trips it. Falls back to the normal
+        # session when ADMIN_DATABASE_URL is unset.
+        from app.db import AdminSessionLocal
+
+        db = AdminSessionLocal()
+        try:
+            status = check_migration_head(db.connection())
+        finally:
+            db.close()
+        return {
+            "status": "ok",
+            "version": version,
+            "db_migration_ok": status.ok,
+            "db_revision": status.current,
+            "expected_revision": status.expected,
+        }
+    except Exception:  # noqa: BLE001 - liveness must never 500 on a DB blip
+        logging.getLogger("yapi").warning(
+            "[health] DB/migration check unavailable; returning liveness-only", exc_info=True
+        )
+        return {
+            "status": "ok",
+            "version": version,
+            "db_migration_ok": None,
+            "db_revision": None,
+            "expected_revision": expected_head,
+            "db_error": True,
+        }
 
 
 # --- API v1 routers ---
@@ -108,25 +190,36 @@ API_PREFIX = "/api/v1"
 for r in (
     auth.router,
     projects.router,
+    closeout.router,
     costs.router,
     invoices.router,
     subcontractors.router,
+    milestones.router,
     equipment.router,
     cashflow.router,
     imports.router,
     reminders.router,
     reports.router,
     ai.router,
+    ai_conversations.router,
     uploads.router,
     audit.router,
     settings_router.router,
     custom_categories.router,
+    cost_subcategories.router,
     ai_import.router,
     document_capture.router,
     variations.router,
     approvals.router,
     budget_templates.router,
-    users.router,
     notifications.router,
+    workspace.router,
+    studio.router,
+    skills.router,
+    vendors.router,
+    unit_sales.router,
+    landowner_payments.router,
+    automations.router,
+    automations_internal.router,
 ):
     app.include_router(r, prefix=API_PREFIX)

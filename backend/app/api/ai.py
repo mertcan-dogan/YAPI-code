@@ -2,30 +2,98 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from pydantic import BaseModel
 
 from app.db import get_db
-from app.deps import CurrentUser, DirectorOrPMUser
+from app.deps import CurrentUser, DirectorOrPMUser, DirectorUser
 from app.models.ai_alert import AIAlert
+from app.models.ai_feedback import AIFeedback
+from app.models.ai_query_log import AIQueryLog
 from app.models.project import Project
+from app.models.user import User
 from app.responses import APIError, success
 from app.services import ai as ai_service
 from app.services.access import get_company_project
 from app.services.alert_engine import analyze_project
+from app.services.audit import record_audit
 from app.services.financials import forecast_at_completion, project_financials
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 MAX_PDF_BYTES = 10 * 1024 * 1024
+# CR-024-A: reject pathologically long feedback comments.
+MAX_FEEDBACK_COMMENT = 2000
+
+
+def _ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
 
 
 class AssistantQuestion(BaseModel):
     question: str
     project_id: uuid.UUID | None = None
+
+
+class AgentMessage(BaseModel):
+    role: str  # "user" | "assistant" (Anthropic shape; mapped from the store in CR-007-F)
+    content: str
+
+
+class AgentRequest(BaseModel):
+    messages: list[AgentMessage]
+    project_id: uuid.UUID | None = None
+    # CR-011-B §2.1 — optional domain scope (gider|gelir|finans|hakedis|belge).
+    # null/unknown = the general agent. Validated leniently: an unknown value is
+    # treated as genel rather than rejected.
+    scope: str | None = None
+    # CR-035 — "Bu rapor hakkında sor": ground a read-only Q&A in a saved report.
+    # The server loads the report (company-scoped; 404 if not viewable), runs its
+    # spec for fresh totals/rows, and injects that as read-only system context.
+    report_id: uuid.UUID | None = None
+    # CR-039 — the active authoring DRAFT the user is refining ({kind, spec|widgets,
+    # title}). Threaded back so the agent edits the real spec instead of rebuilding
+    # from prose. Request-only context (mirrors scope/report_id) — never persisted,
+    # no schema/migration. The agent still writes nothing; creation is the user's
+    # explicit OLUŞTUR click.
+    draft: dict | None = None
+
+
+def _report_grounding(db: Session, user, report_id: uuid.UUID) -> str:
+    """CR-035 — build a compact, read-only Turkish grounding block for "Bu rapor
+    hakkında sor": the report's spec + a fresh server-run of its result (trusted
+    totals/rows). Company-scoped via ``_get_viewable`` (404 if the caller can't see
+    it). The numbers come from the server's own ``run_spec`` — never the client."""
+    import json
+
+    from app.api.studio import _get_viewable
+    from app.services.studio.engine import run_spec
+
+    report = _get_viewable(db, user, report_id)  # 404 if cross-company / private-stranger
+    spec = report.spec or {}
+    parts = [
+        f"Kullanıcı şu kayıtlı rapor hakkında soru soruyor: «{report.title}». "
+        "Yanıtını YALNIZCA bu raporun verilerine dayandır; yeni bir rapor/pano ÖNERME.",
+        f"Spec — metrikler: {spec.get('metrics')}; boyutlar: {spec.get('dimensions') or '—'}; "
+        f"görsel: {spec.get('viz', 'table')}; tarih: {spec.get('date_range') or 'varsayılan'}.",
+    ]
+    try:
+        result = run_spec(db, user.company_id, spec)
+        totals = (result.get("totals") or {}).get("metrics") or {}
+        rows = result.get("rows") or []
+        parts.append("Toplamlar: " + json.dumps(totals, ensure_ascii=False, default=str))
+        parts.append(f"Satır sayısı: {len(rows)}.")
+        if rows:
+            parts.append(
+                "Satırlar (örnek): "
+                + json.dumps(rows[:15], ensure_ascii=False, default=str)[:2000]
+            )
+    except Exception:  # grounding is best-effort; degrade to spec-only context
+        parts.append("(Rapor sonucu şu an çalıştırılamadı; spec'e göre yanıtla.)")
+    return "\n".join(parts)
 
 
 def _active_projects(db: Session, company_id):
@@ -72,6 +140,200 @@ def assistant(payload: AssistantQuestion, user: CurrentUser, db: Session = Depen
     return success({"answer": answer, "data_points": context, "generated_at": datetime.now(timezone.utc).isoformat()})
 
 
+@router.post("/agent")
+def agent(
+    payload: AgentRequest,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+    stream: int = Query(0),
+):
+    """CR-007-B/E: agentic tool-use loop. The model calls read-only, company-scoped
+    tools (which compute via SQL) and narrates the results in Turkish. Rate-limited
+    to 10 req/min/user; one ai_query_log row per successful request; graceful
+    degradation on Claude error/timeout.
+
+    CR-011-A §1.1: ``?stream=1`` returns an SSE stream — incremental ``delta`` text
+    events + ``step`` events as tools run + one ``final`` event carrying the same
+    structured payload (charts/citations/log). On any streaming error it falls back
+    so the answer is never lost; with no model available it emits a degraded final."""
+    from app.config import settings
+    from app.middleware.limits import enforce_user_limit
+    from app.services import agent as agent_service
+
+    if not payload.messages:
+        raise APIError(422, "VALIDATION_ERROR", "En az bir mesaj gerekli")
+
+    # CR-007-E: 10 req/min/user (raises APIError 429 in Turkish).
+    enforce_user_limit(user.id, "ai_agent", settings.ai_agent_rate_per_minute)
+
+    messages = [{"role": m.role, "content": m.content} for m in payload.messages]
+
+    # CR-035 — "Bu rapor hakkında sor": ground the answer in a saved report. Built
+    # synchronously so a bad/cross-company report_id 404s BEFORE any streaming starts.
+    extra_context = _report_grounding(db, user, payload.report_id) if payload.report_id else ""
+
+    if stream:
+        import anyio
+        from fastapi.responses import StreamingResponse
+
+        company_id, uid, pid = user.company_id, user.id, payload.project_id
+        scope = payload.scope
+        draft = payload.draft  # CR-039 — active authoring draft (refine context)
+
+        # ASYNC generator (CR-011 streaming fix): an async iterator is driven in
+        # the event loop, NOT via Starlette's iterate_in_threadpool — so it never
+        # parks a threadpool worker (a sync StreamingResponse generator can leak a
+        # worker when the client doesn't drain it). The blocking agent loop is
+        # pulled one event at a time off the loop via anyio.to_thread, keeping the
+        # loop responsive; the generator is always closed on completion/disconnect.
+        async def event_stream():
+            gen = agent_service.run_agent_stream(
+                db, company_id, messages, project_id=pid, user_id=uid, scope=scope,
+                extra_context=extra_context, draft=draft,
+            )
+            sentinel = object()
+
+            def _next():
+                try:
+                    return next(gen)
+                except StopIteration:
+                    return sentinel
+
+            try:
+                while True:
+                    ev = await anyio.to_thread.run_sync(_next)
+                    if ev is sentinel:
+                        break
+                    yield agent_service.sse_event(ev)
+            except ai_service.AIUnavailable:
+                # Never lose the answer: emit a degraded final event (§1.1 fallback).
+                yield agent_service.sse_event(
+                    {"type": "final", "data": agent_service.degraded_response()}
+                )
+            finally:
+                gen.close()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    try:
+        result = agent_service.run_agent(
+            db, user.company_id, messages, project_id=payload.project_id,
+            user_id=user.id, scope=payload.scope, extra_context=extra_context,
+            draft=payload.draft,
+        )
+    except ai_service.AIUnavailable:
+        return success(agent_service.degraded_response())
+    return success(result)
+
+
+# CR-044.1 — the chat analysis-transcript export (POST /agent/export +
+# AgentAnalysisExport) was retired: it was confusing and now redundant (Skills
+# produce the real deliverables). The render helpers in services/reports.py
+# (render_agent_analysis_pdf/excel) are kept (still unit-tested) for possible reuse.
+
+
+class AgentFeedbackIn(BaseModel):
+    query_log_id: uuid.UUID | None = None
+    question: str
+    rating: str  # "up" | "down"
+    comment: str | None = None
+
+
+@router.post("/agent/feedback")
+def agent_feedback(
+    payload: AgentFeedbackIn, user: CurrentUser, request: Request, db: Session = Depends(get_db)
+):
+    """CR-024-A: record a 👍/👎 (+ optional comment) on an agent answer.
+
+    Append-only and company-scoped; mirrors the alert-feedback write. It never
+    mutates/regenerates the answer (§0.2.4) — it only stores the signal. Free-text
+    comments stay in this company-scoped row and are not forwarded anywhere (§0.2.5).
+    """
+    if payload.rating not in ("up", "down"):
+        raise APIError(422, "VALIDATION_ERROR", "Geçersiz değerlendirme")
+
+    question = (payload.question or "").strip()
+    if not question:
+        raise APIError(422, "VALIDATION_ERROR", "Soru gerekli", field="question")
+
+    comment = (payload.comment or "").strip() or None
+    if comment and len(comment) > MAX_FEEDBACK_COMMENT:
+        raise APIError(422, "VALIDATION_ERROR", "Yorum en fazla 2000 karakter olabilir", field="comment")
+
+    # Only link a query_log_id that belongs to this company; otherwise store null
+    # (never link across companies, never 404 — feedback is still worth keeping).
+    log_id = None
+    if payload.query_log_id is not None:
+        log_id = db.execute(
+            select(AIQueryLog.id).where(
+                AIQueryLog.id == payload.query_log_id,
+                AIQueryLog.company_id == user.company_id,
+            )
+        ).scalar_one_or_none()
+
+    fb = AIFeedback(
+        company_id=user.company_id,
+        user_id=user.id,
+        ai_query_log_id=log_id,
+        question=question,
+        rating=payload.rating,
+        comment=comment,
+    )
+    db.add(fb)
+    db.flush()
+    # Audit the signal, NOT the free-text comment (privacy minimization §0.2.5).
+    record_audit(
+        db, company_id=user.company_id, user_id=user.id, table_name="ai_feedback",
+        record_id=fb.id, action="INSERT",
+        new_values={"rating": fb.rating, "ai_query_log_id": str(log_id) if log_id else None},
+        ip_address=_ip(request),
+    )
+    db.commit()
+    return success({"id": str(fb.id)})
+
+
+@router.get("/agent/feedback")
+def list_agent_feedback(
+    user: DirectorUser,
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+):
+    """CR-024-A: directors-only review of recent agent feedback (company-scoped,
+    newest first). For a future 'ne işe yaramıyor' review. Cross-user, so it is
+    restricted to directors even though PMs may use the agent."""
+    total = db.execute(
+        select(func.count()).select_from(AIFeedback).where(AIFeedback.company_id == user.company_id)
+    ).scalar_one()
+    rows = db.execute(
+        select(AIFeedback)
+        .where(AIFeedback.company_id == user.company_id)
+        .order_by(AIFeedback.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    ).scalars().all()
+    names = {
+        u.id: u.full_name
+        for u in db.execute(select(User).where(User.company_id == user.company_id)).scalars().all()
+    }
+    data = [
+        {
+            "id": str(f.id),
+            "question": f.question,
+            "rating": f.rating,
+            "comment": f.comment,
+            "created_at": f.created_at.isoformat(),
+            "user": names.get(f.user_id),
+        }
+        for f in rows
+    ]
+    return success(data, meta={"total": total, "page": page, "per_page": per_page})
+
+
 @router.post("/analyze-project/{project_id}")
 def analyze(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     project = get_company_project(db, project_id, user)
@@ -104,6 +366,11 @@ def list_alerts(user: CurrentUser, db: Session = Depends(get_db)):
                 "is_actioned": a.is_actioned,
                 "feedback": a.feedback,
                 "created_at": a.created_at.isoformat(),
+                # CR-022: record linkage for the Finans Güvence view (NULL on
+                # legacy health alerts — the view filters on dedup_key presence).
+                "source_type": a.source_type,
+                "source_id": str(a.source_id) if a.source_id else None,
+                "dedup_key": a.dedup_key,
             }
         )
     return success(visible, meta={"total": len(visible), "ai_available": ai_service.is_available()})
@@ -128,9 +395,23 @@ def alert_feedback(alert_id: uuid.UUID, payload: AlertFeedback, user: CurrentUse
     return success({"id": str(alert_id), "feedback": payload.feedback})
 
 
+@router.post("/assurance/scan")
+def assurance_scan(user: CurrentUser, db: Session = Depends(get_db)):
+    """CR-022-B: run the read-only assurance rule pack for the caller's company and
+    upsert anomaly findings (dedup-aware, respects dismissals). Returns the honest
+    scan summary {scanned, found, total_found, created}. Same permission as
+    analyze-project/analyze-all (any authenticated user)."""
+    from app.services import assurance
+
+    return success(assurance.scan_company(db, user.company_id))
+
+
 @router.post("/analyze-all")
 def analyze_all(user: CurrentUser, db: Session = Depends(get_db)):
-    """CR-003-M: re-run the alert engine across all active projects."""
+    """CR-003-M: re-run the alert engine across all active projects.
+    CR-022-B: also refresh the company's assurance findings in the same pass."""
+    from app.services import assurance
+
     total = 0
     for p in db.execute(
         select(Project).where(
@@ -138,7 +419,8 @@ def analyze_all(user: CurrentUser, db: Session = Depends(get_db)):
         )
     ).scalars().all():
         total += len(analyze_project(db, p))
-    return success({"alerts_created": total})
+    assurance_summary = assurance.scan_company(db, user.company_id)
+    return success({"alerts_created": total, "assurance": assurance_summary})
 
 
 @router.put("/alerts/{alert_id}/dismiss")

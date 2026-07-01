@@ -42,6 +42,7 @@ def create_request(
     description: str,
     amount_try=None,
     requested_by: uuid.UUID,
+    proposed_by_agent: bool = False,
 ) -> ApprovalRequest:
     req = ApprovalRequest(
         company_id=company_id,
@@ -54,14 +55,19 @@ def create_request(
         amount_try=amount_try,
         status="pending",
         requested_by=requested_by,
+        proposed_by_agent=proposed_by_agent,
     )
     db.add(req)
     db.flush()
     return req
 
 
-def apply_request(db: Session, req: ApprovalRequest) -> None:
-    """Apply the requested change to its target row. Called on approval."""
+def apply_request(db: Session, req: ApprovalRequest) -> dict | None:
+    """Apply the requested change to its target row. Called on approval.
+
+    Returns a ``{"table", "id"}`` descriptor of a row this approval CREATED (CR-035
+    report/dashboard), so the caller can deep-link to it; ``None`` for kinds that
+    mutate an existing row in place."""
     if req.kind == "budget_change":
         _apply_budget_change(db, req)
     elif req.kind == "subcontractor_change":
@@ -70,6 +76,26 @@ def apply_request(db: Session, req: ApprovalRequest) -> None:
         _apply_cost_deletion(db, req)
     elif req.kind == "variation_approval":
         _apply_variation_approval(db, req)
+    # CR-011-C — agent-proposed actions. These run ONLY here, after a human has
+    # approved the pending request; the agent itself never reaches this code.
+    elif req.kind in ("agent_reminder", "agent_task"):
+        _apply_agent_notification(db, req)
+    elif req.kind == "agent_flag_invoice":
+        _apply_agent_flag_invoice(db, req)
+    # CR-012 Template A — auto-file: create the proposed cost/client-invoice record
+    # using the SAME creation logic as document-capture/confirm. Runs only here,
+    # after a human approves; the automation itself never writes a record.
+    elif req.kind == "agent_file_document":
+        _apply_agent_file_document(db, req)
+    # CR-035 — agent-authored Report Studio report / dashboard. Runs ONLY here,
+    # after a human approves; the agent only ever PROPOSED it. Uses the SAME shared
+    # creators as the human endpoints, with company_id/owner from the request row
+    # (never the payload) so a proposal can only create a row in its own company.
+    elif req.kind == "agent_create_report":
+        return _apply_agent_create_report(db, req)
+    elif req.kind == "agent_create_dashboard":
+        return _apply_agent_create_dashboard(db, req)
+    return None
 
 
 def mark_decided(req: ApprovalRequest, *, user_id: uuid.UUID, status: str, reason: str | None = None) -> None:
@@ -138,3 +164,213 @@ def _apply_variation_approval(db: Session, req: ApprovalRequest) -> None:
         v.approved_date = _date.fromisoformat(payload["approved_date"])
     db.flush()
     _sync_category_budget(db, v.project_id, v.company_id, v.cost_category)
+
+
+# --- CR-011-C agent-proposed appliers ----------------------------------------
+def _apply_agent_notification(db: Session, req: ApprovalRequest) -> None:
+    """An approved agent reminder/task becomes an in-app notification (CR-006-C
+    bell). Scoped to the user who triggered the agent (requested_by)."""
+    from app.models.notification import Notification
+
+    payload = req.payload or {}
+    note = Notification(
+        company_id=req.company_id,
+        user_id=req.requested_by,
+        title=(payload.get("title") or req.description or "Hatırlatıcı")[:200],
+        body=payload.get("body"),
+        notification_type="ai_alert",
+        severity=payload.get("severity") or "medium",
+        related_project_id=req.project_id,
+    )
+    db.add(note)
+    db.flush()
+
+
+def _apply_agent_flag_invoice(db: Session, req: ApprovalRequest) -> None:
+    """An approved 'flag for review' becomes a manual AIAlert review finding on
+    the target record — so it shows up in Finans Güvence and is dismissible."""
+    from app.models.ai_alert import AIAlert
+
+    payload = req.payload or {}
+    source_type = payload.get("source_type")  # client_invoice | cost_entry
+    alert = AIAlert(
+        company_id=req.company_id,
+        project_id=req.project_id,
+        alert_type="agent_flag",
+        severity=payload.get("severity") or "medium",
+        title_tr=(payload.get("title") or "İnceleme için işaretlendi")[:200],
+        body_tr=payload.get("reason") or req.description or "",
+        recommended_action="Bu kaydı inceleyin.",
+        source_type=source_type,
+        source_id=req.target_id,
+        dedup_key=f"agent_flag:{source_type}:{req.target_id}",
+    )
+    db.add(alert)
+    db.flush()
+
+
+# --- CR-012 Template A applier ------------------------------------------------
+DOCS_BUCKET = "documents"
+
+
+def _apply_agent_file_document(db: Session, req: ApprovalRequest) -> None:
+    """Create the proposed record on approval, reusing the exact document-capture/
+    confirm creation logic so VAT/total/net-due/audit stay byte-identical. The
+    target project is ``req.project_id`` (the AI guess, or the project the approver
+    picked when the guess was null). Cost stays the authoritative CR-007/014 input."""
+    from datetime import date
+    from decimal import Decimal
+
+    from pydantic import ValidationError
+
+    from app.responses import APIError
+    from app.services.audit import record_audit, snapshot
+    from app.services.calc_fields import coerce_confidence, invoice_net_due, total_with_vat, vat_amount
+
+    payload = req.payload or {}
+    destination = payload.get("destination")
+    fields = dict(payload.get("fields") or {})
+    if req.project_id is None:
+        raise APIError(422, "VALIDATION_ERROR", "Bu öneri için bir proje seçmelisiniz")
+    doc_path = payload.get("document_path")
+    doc_url = f"{DOCS_BUCKET}/{doc_path}" if doc_path else None
+
+    if destination == "cost":
+        from app.models.cost_entry import CostEntry
+        from app.schemas.cost import CostEntryCreate
+        from app.services import fx
+
+        try:
+            rec = CostEntryCreate(
+                entry_date=fields.get("entry_date") or fields.get("invoice_date"),
+                cost_category=fields.get("cost_category") or "material_other",
+                supplier_name=fields.get("supplier_name") or None,
+                invoice_number=fields.get("invoice_number") or None,
+                description=fields.get("description") or None,
+                amount_try=Decimal(str(fields.get("amount_try"))),
+                vat_rate=Decimal(str(fields.get("vat_rate", "20"))),
+                payment_due_date=fields.get("payment_due_date") or None,
+                payment_status=fields.get("payment_status") or "unpaid",
+                document_url=doc_url,
+                extraction_confidence=payload.get("confidence"),
+            )
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise APIError(422, "VALIDATION_ERROR", "Belge alanları geçersiz: " + str(exc)[:120])
+        d = rec.model_dump()
+        entry = CostEntry(
+            project_id=req.project_id, company_id=req.company_id, created_by=req.requested_by,
+            vat_amount_try=vat_amount(d["amount_try"], d["vat_rate"]),
+            total_with_vat_try=total_with_vat(d["amount_try"], d["vat_rate"]),
+            **d,
+        )
+        db.add(entry)
+        db.flush()
+        # CR-008-F: auto-link the auto-filed cost to a canonical vendor.
+        from app.services.vendor_backfill import resolve_or_create_vendor_id
+        entry.vendor_id = entry.vendor_id or resolve_or_create_vendor_id(
+            db, req.company_id, entry.supplier_name
+        )
+        # CR-023.1: snapshot USD like the manual cost-create + the invoice branch
+        # below — otherwise auto-filed costs save with null amount_usd. Degrades
+        # gracefully, never raises.
+        fx.snapshot_cost_usd(db, entry)
+        record_audit(db, company_id=req.company_id, user_id=req.requested_by, table_name="cost_entries",
+                     record_id=entry.id, action="INSERT", new_values=snapshot(entry))
+
+    elif destination == "client_invoice":
+        from sqlalchemy.exc import IntegrityError
+
+        from app.models.client_invoice import ClientInvoice
+        from app.schemas.invoice import ClientInvoiceCreate
+        from app.services import fx
+
+        invoice_date = fields.get("invoice_date")
+        due_date = fields.get("due_date") or invoice_date
+        try:
+            rec = ClientInvoiceCreate(
+                invoice_number=fields.get("invoice_number") or "—",
+                invoice_date=invoice_date,
+                hakkedis_period=fields.get("hakkedis_period") or None,
+                description=fields.get("description") or None,
+                amount_try=Decimal(str(fields.get("amount_try"))),
+                vat_rate=Decimal(str(fields.get("vat_rate", "20"))),
+                retention_amount_try=Decimal(str(fields.get("retention_amount_try", "0") or "0")),
+                due_date=due_date,
+                document_url=doc_url,
+            )
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise APIError(422, "VALIDATION_ERROR", "Belge alanları geçersiz: " + str(exc)[:120])
+        data = rec.model_dump()
+        inv = ClientInvoice(
+            project_id=req.project_id, company_id=req.company_id, created_by=req.requested_by,
+            vat_amount_try=vat_amount(data["amount_try"], data["vat_rate"]),
+            total_with_vat_try=total_with_vat(data["amount_try"], data["vat_rate"]),
+            net_due_try=invoice_net_due(data["amount_try"], data["vat_rate"], data["retention_amount_try"]),
+            amount_received_try=0, payment_status="unpaid",
+            extraction_confidence=coerce_confidence(payload.get("confidence")), **data,
+        )
+        db.add(inv)
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            raise APIError(422, "VALIDATION_ERROR", "Bu fatura numarası zaten mevcut")
+        fx.snapshot_invoice_usd(db, inv)
+        record_audit(db, company_id=req.company_id, user_id=req.requested_by, table_name="client_invoices",
+                     record_id=inv.id, action="INSERT", new_values=snapshot(inv))
+    else:
+        from app.responses import APIError as _APIError
+
+        raise _APIError(422, "VALIDATION_ERROR", "Bilinmeyen belge hedefi")
+
+
+# --- CR-035 agent-authored report/dashboard appliers --------------------------
+def _apply_agent_create_report(db: Session, req: ApprovalRequest) -> dict:
+    """Create the proposed Report on approval, reusing the SAME ``creators`` path as
+    POST /studio/reports. ``company_id`` / ``owner`` come from the request row, never
+    the payload — tenant isolation. The spec is re-validated by the creator."""
+    from app.services.audit import record_audit, snapshot
+    from app.services.studio import creators
+
+    payload = req.payload or {}
+    report = creators.create_report(
+        db,
+        company_id=req.company_id,
+        owner_id=req.requested_by,
+        created_by=req.requested_by,
+        title=(payload.get("title") or req.description or "Rapor")[:200],
+        spec=payload.get("spec") or {},
+        visibility=payload.get("visibility") or "private",
+        labels=payload.get("labels"),
+    )
+    record_audit(db, company_id=req.company_id, user_id=req.requested_by,
+                 table_name="reports", record_id=report.id, action="INSERT",
+                 new_values=snapshot(report))
+    return {"table": "reports", "id": str(report.id)}
+
+
+def _apply_agent_create_dashboard(db: Session, req: ApprovalRequest) -> dict:
+    """Create the proposed Dashboard (pano) on approval, reusing the SAME
+    ``creators`` path as POST /studio/dashboards. ``company_id`` / ``owner`` come
+    from the request row, never the payload. Widgets are re-validated by the creator."""
+    from app.services.audit import record_audit, snapshot
+    from app.services.studio import creators
+
+    payload = req.payload or {}
+    dashboard = creators.create_dashboard(
+        db,
+        company_id=req.company_id,
+        owner_id=req.requested_by,
+        created_by=req.requested_by,
+        title=(payload.get("title") or req.description or "Pano")[:200],
+        widgets=payload.get("widgets") or [],
+        date_range=payload.get("date_range"),
+        comparison=payload.get("comparison"),
+        filters=payload.get("filters"),
+        visibility=payload.get("visibility") or "private",
+        labels=payload.get("labels"),
+    )
+    record_audit(db, company_id=req.company_id, user_id=req.requested_by,
+                 table_name="dashboards", record_id=dashboard.id, action="INSERT",
+                 new_values=snapshot(dashboard))
+    return {"table": "dashboards", "id": str(dashboard.id)}

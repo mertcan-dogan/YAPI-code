@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,11 +25,28 @@ KIND_LABELS = {
     "subcontractor_change": "Alt Yüklenici Değişikliği",
     "cost_deletion": "Maliyet Silme",
     "variation_approval": "Ek İş Onayı",
+    # CR-011-C — agent-proposed action kinds.
+    "agent_reminder": "Hatırlatıcı (AI önerisi)",
+    "agent_flag_invoice": "İnceleme İşareti (AI önerisi)",
+    "agent_task": "Görev (AI önerisi)",
+    # CR-012 Template A — document auto-file proposal.
+    "agent_file_document": "Belge Dosyalama (AI önerisi)",
+    # CR-035 — agent-authored Report Studio report / dashboard.
+    "agent_create_report": "Rapor (AI önerisi)",
+    "agent_create_dashboard": "Pano (AI önerisi)",
 }
 
 
 class RejectBody(BaseModel):
     reason: str
+
+
+class ApproveBody(BaseModel):
+    """Optional patch sent on approve. For ``agent_file_document`` the approver can
+    correct the extracted fields and (when the AI guess was null) pick the project
+    before the record is created."""
+    project_id: uuid.UUID | None = None
+    fields: dict | None = None
 
 
 @router.get("/approvals")
@@ -72,7 +89,7 @@ def list_approvals(user: DirectorUser, db: Session = Depends(get_db)):
         ).order_by(ApprovalRequest.created_at.desc())
     ).scalars().all()
     for r in requests:
-        items.append({
+        item = {
             "kind": r.kind,
             "kind_label": KIND_LABELS.get(r.kind, r.kind),
             "id": str(r.id),
@@ -83,7 +100,14 @@ def list_approvals(user: DirectorUser, db: Session = Depends(get_db)):
             "amount_try": str(r.amount_try) if r.amount_try is not None else None,
             "created_by": str(r.requested_by),
             "created_at": r.created_at.isoformat(),
-        })
+            # CR-011-C — lets the UI badge agent-proposed requests ("Yapı AI öneriyor").
+            "proposed_by_agent": bool(r.proposed_by_agent),
+        }
+        # CR-012: the auto-file card needs the destination, editable fields and
+        # the CR-024 confidence to render (the doc bytes stay in the bucket).
+        if r.kind == "agent_file_document":
+            item["payload"] = r.payload
+        items.append(item)
     return success(items, meta={"total": len(items)})
 
 
@@ -101,12 +125,34 @@ def _get_pending_request(db: Session, user, req_id: uuid.UUID) -> ApprovalReques
 
 
 @router.put("/approvals/request/{req_id}/approve")
-def approve_request(req_id: uuid.UUID, user: DirectorUser, db: Session = Depends(get_db)):
+def approve_request(
+    req_id: uuid.UUID,
+    user: DirectorUser,
+    db: Session = Depends(get_db),
+    payload: ApproveBody | None = Body(default=None),
+):
     req = _get_pending_request(db, user, req_id)
-    approvals_service.apply_request(db, req)
+    # CR-012: apply the approver's corrections (edited fields + chosen project)
+    # to an auto-file proposal before the record is created.
+    if payload and req.kind == "agent_file_document":
+        patched = dict(req.payload or {})
+        if payload.fields:
+            patched["fields"] = {**(patched.get("fields") or {}), **payload.fields}
+        req.payload = patched
+        if payload.project_id is not None:
+            from app.services.access import get_company_project
+
+            get_company_project(db, payload.project_id, user)  # 404s if not in company
+            req.project_id = payload.project_id
+    created = approvals_service.apply_request(db, req)
     approvals_service.mark_decided(req, user_id=user.id, status="approved")
     db.commit()
-    return success({"id": str(req_id), "message": "Onaylandı"})
+    resp = {"id": str(req_id), "message": "Onaylandı"}
+    # CR-035: a report/dashboard proposal creates a row on approval — surface its
+    # {table, id} so the chat card can navigate straight to the new report/pano.
+    if created:
+        resp["created"] = created
+    return success(resp)
 
 
 @router.put("/approvals/request/{req_id}/reject")

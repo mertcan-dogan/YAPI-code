@@ -5,10 +5,13 @@ import { AppLayout } from "./components/layout/AppLayout";
 import { Toaster } from "./components/Toaster";
 import { useAuth } from "./store/auth";
 
+import AcceptInvitePage from "./pages/AcceptInvitePage";
 import AIAlertsPage from "./pages/AIAlertsPage";
 import AIAssistantPage from "./pages/AIAssistantPage";
+import AiPrinciplesPage from "./pages/AiPrinciplesPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import AuditLogPage from "./pages/AuditLogPage";
+import AutomationsPage from "./pages/AutomationsPage";
 import BudgetPage from "./pages/BudgetPage";
 import CashFlowPage from "./pages/CashFlowPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -21,10 +24,18 @@ import ProjectDashboardPage from "./pages/ProjectDashboardPage";
 import ProjectsListPage from "./pages/ProjectsListPage";
 import RemindersPage from "./pages/RemindersPage";
 import ReportsPage from "./pages/ReportsPage";
+import SalesPnlPage from "./pages/SalesPnlPage";
 import SettingsPage from "./pages/SettingsPage";
+import SkillsPage from "./pages/SkillsPage";
+import StudioDashboardCanvasPage from "./pages/StudioDashboardCanvasPage";
+import StudioDashboardsPage from "./pages/StudioDashboardsPage";
+import StudioReportEditorPage from "./pages/StudioReportEditorPage";
+import StudioReportsPage from "./pages/StudioReportsPage";
 import SubcontractorsPage from "./pages/SubcontractorsPage";
 import TwoFactorSetupPage from "./pages/TwoFactorSetupPage";
 import VariationsPage from "./pages/VariationsPage";
+import VendorsPage from "./pages/VendorsPage";
+import WorkspacePage from "./pages/WorkspacePage";
 
 function FullScreenLoader() {
   return (
@@ -66,6 +77,7 @@ export default function App() {
       <Toaster />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/accept-invite" element={<AcceptInvitePage />} />
         <Route
           element={
             <Protected>
@@ -79,6 +91,7 @@ export default function App() {
           <Route path="/projects/:id/dashboard" element={<ProjectDashboardPage />} />
           <Route path="/projects/:id/budget" element={<BudgetPage />} />
           <Route path="/projects/:id/invoices" element={<InvoicesPage />} />
+          <Route path="/projects/:id/sales-pnl" element={<SalesPnlPage />} />
           <Route path="/projects/:id/variations" element={<VariationsPage />} />
           <Route path="/projects/:id/subcontractors" element={<SubcontractorsPage />} />
           <Route path="/projects/:id/cashflow" element={<CashFlowPage />} />
@@ -87,9 +100,20 @@ export default function App() {
           <Route path="/audit-log" element={<AuditLogPage />} />
           <Route path="/reminders" element={<RemindersPage />} />
           <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/studio/reports" element={<StudioReportsPage />} />
+          <Route path="/studio/reports/new" element={<StudioReportEditorPage />} />
+          <Route path="/studio/reports/:id" element={<StudioReportEditorPage />} />
+          <Route path="/studio/dashboards" element={<StudioDashboardsPage />} />
+          <Route path="/studio/dashboards/new" element={<StudioDashboardCanvasPage />} />
+          <Route path="/studio/dashboards/:id" element={<StudioDashboardCanvasPage />} />
+          <Route path="/studio/skills" element={<SkillsPage />} />
           <Route path="/ai-alerts" element={<AIAlertsPage />} />
           <Route path="/ai-assistant" element={<AIAssistantPage />} />
+          <Route path="/ai-principles" element={<AiPrinciplesPage />} />
+          <Route path="/workspace" element={<WorkspacePage />} />
+          <Route path="/vendors" element={<VendorsPage />} />
           <Route path="/document-capture" element={<DocumentCapturePage />} />
+          <Route path="/automations" element={<AutomationsPage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/settings/*" element={<SettingsPage />} />
           <Route path="/2fa-setup" element={<TwoFactorSetupPage />} />

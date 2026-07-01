@@ -12,6 +12,8 @@ from app.models.notification import Notification
 
 VALID_TYPES = {
     "overdue_payment", "margin_warning", "budget_overrun", "invoice_received", "ai_alert",
+    # CR-012: periodic-digest automation delivers in-app via this type.
+    "digest",
 }
 VALID_SEVERITIES = {"high", "medium", "low"}
 

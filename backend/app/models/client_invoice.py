@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Computed, Date, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Computed, Date, Float, ForeignKey, Numeric, String, Text, UniqueConstraint
 from app.models.types import GUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +31,9 @@ class ClientInvoice(TimestampSoftDeleteMixin, Base):
 
     amount_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     amount_eur: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    # CR-014-B: USD snapshot (amount + the daily rate applied at the relevant date).
+    amount_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    fx_rate_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("20.00"), server_default="20.00")
     vat_amount_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     total_with_vat_try: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
@@ -49,4 +52,7 @@ class ClientInvoice(TimestampSoftDeleteMixin, Base):
 
     document_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # CR-024: AI document-extraction confidence (0..1) for auto-filed / AI-imported
+    # invoices; NULL when entered manually. Display + monitoring only.
+    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

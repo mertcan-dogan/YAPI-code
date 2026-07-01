@@ -1,4 +1,7 @@
 import { DataTable, type Column } from "@/components/DataTable";
+import { ExtractionConfidenceBadge } from "@/components/ai/ExtractionConfidenceBadge";
+import { CurrencyToggle, UsdAmountCell, useShowUsd } from "@/components/currency";
+import { ExportMenu, type ExportColumn } from "@/components/ExportMenu";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { SideDrawer } from "@/components/SideDrawer";
@@ -7,11 +10,11 @@ import { INVOICE_TYPE_LABELS, STATUS_LABELS, VAT_RATES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { api, apiPost, apiPut } from "@/lib/api";
 import { toast } from "@/store/toast";
-import type { ClientInvoice } from "@/types";
+import type { ClientInvoice, CloseoutResponse } from "@/types";
 import { daysUntil, formatCurrency, formatDate, toNumber } from "@/utils/format";
-import { FileText, Pencil, Plus, Upload } from "lucide-react";
+import { AlertTriangle, FileText, Pencil, Plus, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 function Chip({ label, value }: { label: string; value: string }) {
   return (
@@ -25,11 +28,30 @@ function Chip({ label, value }: { label: string; value: string }) {
 export default function InvoicesPage() {
   const { id } = useParams();
   const { data, loading, refetch, error } = useFetch<ClientInvoice[]>(`/projects/${id}/invoices`);
+  // Closeout status — a "completed" project warns that new invoices affect the report.
+  const closeout = useFetch<CloseoutResponse>(`/projects/${id}/closeout`);
+  const projectCompleted = closeout.data?.project_status === "completed";
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ClientInvoice | null>(null);
   const [collecting, setCollecting] = useState<ClientInvoice | null>(null);
+  const showUsd = useShowUsd(); // CR-014-D
 
   const rows = data ?? [];
+
+  // CR-007-H: deep-link from an AI citation chip — ?highlight=<invoice id>.
+  // Capture the id once the rows load, scroll/flash it, then clear the URL param
+  // so a refresh/back doesn't re-flash.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    const h = searchParams.get("highlight");
+    if (!h || rows.length === 0) return;
+    setHighlightId(h);
+    searchParams.delete("highlight");
+    setSearchParams(searchParams, { replace: true });
+    const t = setTimeout(() => setHighlightId(null), 2500);
+    return () => clearTimeout(t);
+  }, [searchParams, rows.length, setSearchParams]);
   const sum = (k: keyof ClientInvoice) => rows.reduce((s, r) => s + toNumber(r[k] as string), 0);
 
   const columns: Column<ClientInvoice>[] = [
@@ -41,8 +63,32 @@ export default function InvoicesPage() {
     { key: "vat_amount_try", header: "KDV", align: "right", render: (r) => formatCurrency(r.vat_amount_try) },
     { key: "retention_amount_try", header: "Kesinti", align: "right", render: (r) => formatCurrency(r.retention_amount_try) },
     { key: "net_due_try", header: "Net Tahsil", align: "right", render: (r) => formatCurrency(r.net_due_try) },
+    // CR-014-D: USD snapshot (point-in-time). "—" while null (pre-backfill).
+    ...(showUsd ? [{
+      key: "amount_usd",
+      header: "USD (Anlık)",
+      align: "right" as const,
+      render: (r: ClientInvoice) => (
+        <UsdAmountCell
+          amountUsd={r.amount_usd}
+          rate={r.fx_rate_usd}
+          paid={r.payment_status === "paid"}
+          relevantDate={r.payment_status === "paid" ? r.date_received : r.invoice_date}
+        />
+      ),
+    }] : []),
     { key: "due_date", header: "Vade", align: "right", render: (r) => <span className={daysUntil(r.due_date) < 0 && r.payment_status !== "paid" ? "text-danger" : ""}>{formatDate(r.due_date)}</span> },
-    { key: "payment_status", header: "Durum", render: (r) => <StatusBadge status={r.payment_status} /> },
+    {
+      key: "payment_status",
+      header: "Durum",
+      render: (r) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge status={r.payment_status} />
+          {/* CR-024: AI-read invoices carry a confidence pill (none on manual rows). */}
+          <ExtractionConfidenceBadge confidence={r.extraction_confidence} />
+        </div>
+      ),
+    },
     { key: "outstanding_try", header: "Bakiye", align: "right", render: (r) => formatCurrency(r.outstanding_try) },
     {
       // CR-002-D: Gecikme (Gün) — empty unless overdue & unpaid.
@@ -85,17 +131,47 @@ export default function InvoicesPage() {
     },
   ];
 
+  const exportColumns: ExportColumn<ClientInvoice>[] = [
+    { header: "Fatura No", value: (r) => r.invoice_number },
+    { header: "Tarih", value: (r) => (r.invoice_date ? formatDate(r.invoice_date) : ""), type: "date" },
+    { header: "Dönem", value: (r) => r.hakkedis_period ?? r.description ?? "" },
+    { header: "Tür", value: (r) => INVOICE_TYPE_LABELS[r.invoice_type] ?? r.invoice_type },
+    { header: "Tutar", value: (r) => toNumber(r.amount_try), type: "currency" },
+    { header: "KDV", value: (r) => toNumber(r.vat_amount_try), type: "currency" },
+    { header: "Kesinti", value: (r) => toNumber(r.retention_amount_try), type: "currency" },
+    { header: "Net Tahsil", value: (r) => toNumber(r.net_due_try), type: "currency" },
+    { header: "Vade", value: (r) => (r.due_date ? formatDate(r.due_date) : ""), type: "date" },
+    { header: "Durum", value: (r) => STATUS_LABELS[r.payment_status] ?? r.payment_status },
+    { header: "Bakiye", value: (r) => toNumber(r.outstanding_try), type: "currency" },
+    { header: "Gecikme (gün)", value: (r) => (r.payment_status !== "paid" && daysUntil(r.due_date) < 0 ? Math.abs(daysUntil(r.due_date)) : ""), type: "number" },
+    // CR-014-D: USD snapshot + the rate applied (blank when no snapshot yet).
+    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : ""), type: "usd" },
+    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : ""), type: "number" },
+  ];
+
   return (
     <div>
-      <PageHeader title="Faturalar & Hakediş" action={<Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Fatura Ekle</Button>} />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Chip label="Toplam Faturalanan" value={formatCurrency(sum("amount_try"))} />
-        <Chip label="Tahsil Edilen" value={formatCurrency(sum("amount_received_try"))} />
-        <Chip label="Bekleyen" value={formatCurrency(sum("outstanding_try"))} />
-        <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
-      </div>
-      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
-      <InvoiceDrawer open={open} projectId={id!} editing={editing} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
+      <PageHeader
+        title="Faturalar & Hakediş"
+        action={
+          <div className="flex items-center gap-2">
+            <CurrencyToggle />
+            <ExportMenu rows={rows} columns={exportColumns} filename="faturalar-hakedis" />
+            <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> Fatura Ekle</Button>
+          </div>
+        }
+      />
+      {/* Hide the summary band on load failure so ₺0 totals aren't read as real. */}
+      {!error && (
+        <div className="mb-4 flex flex-wrap gap-3">
+          <Chip label="Toplam Faturalanan" value={formatCurrency(sum("amount_try"))} />
+          <Chip label="Tahsil Edilen" value={formatCurrency(sum("amount_received_try"))} />
+          <Chip label="Bekleyen" value={formatCurrency(sum("outstanding_try"))} />
+          <Chip label="Kesinti" value={formatCurrency(sum("retention_amount_try"))} />
+        </div>
+      )}
+      <DataTable columns={columns} rows={rows} loading={loading} error={error} onRetry={refetch} highlightId={highlightId} emptyMessage="Bu proje için henüz hakediş faturası yok." emptyAction={{ label: "Fatura Ekle", onClick: () => setOpen(true) }} />
+      <InvoiceDrawer open={open} projectId={id!} editing={editing} projectCompleted={projectCompleted} onClose={() => { setOpen(false); setEditing(null); }} onSaved={() => { setEditing(null); refetch(); }} />
       {collecting && (
         <CollectModal
           projectId={id!}
@@ -143,7 +219,7 @@ function CollectModal({ projectId, invoice, onClose, onSaved }: { projectId: str
   );
 }
 
-function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: boolean; projectId: string; editing?: ClientInvoice | null; onClose: () => void; onSaved: () => void }) {
+function InvoiceDrawer({ open, projectId, editing, projectCompleted, onClose, onSaved }: { open: boolean; projectId: string; editing?: ClientInvoice | null; projectCompleted?: boolean; onClose: () => void; onSaved: () => void }) {
   const empty = { invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), hakkedis_period: "", invoice_type: "hakedis", description: "", amount_try: "", vat_rate: "20", retention_amount_try: "0", due_date: "", payment_status: "unpaid", amount_received_try: "0", date_received: "", document_url: "" };
   const [form, setForm] = useState<any>(empty);
   const [saving, setSaving] = useState(false);
@@ -194,17 +270,20 @@ function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: b
   const save = async () => {
     setSaving(true);
     try {
+      let res: any;
       if (editing) {
-        await apiPut(`/projects/${projectId}/invoices/${editing.id}`, {
+        res = await apiPut(`/projects/${projectId}/invoices/${editing.id}`, {
           ...form,
           amount_eur: null,
           date_received: form.date_received || null,
         });
         toast.success("Fatura güncellendi");
       } else {
-        await apiPost(`/projects/${projectId}/invoices`, { ...form, amount_eur: null });
+        res = await apiPost(`/projects/${projectId}/invoices`, { ...form, amount_eur: null });
         toast.success("Fatura kaydedildi");
       }
+      // Completed-project guard: backend flags entries that affect a closed report.
+      if (res?.closeout_warning) toast.warning(res.closeout_warning);
       setForm(empty);
       onSaved();
       onClose();
@@ -218,6 +297,20 @@ function InvoiceDrawer({ open, projectId, editing, onClose, onSaved }: { open: b
   return (
     <SideDrawer open={open} title={editing ? "Fatura Düzenle" : "Fatura Ekle"} onClose={onClose} onSave={save} saving={saving} dirty={!!form.invoice_number}>
       <div className="space-y-3">
+        {/* Completed-project warning — a new/edited invoice may affect the closeout report. */}
+        {projectCompleted && (
+          <div className="flex items-start gap-2 rounded-md border border-accent bg-amber-50 px-3 py-2 text-xs text-text-secondary">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+            <span>Proje tamamlandı olarak işaretli — bu kayıt kapanış raporunu etkileyebilir.</span>
+          </div>
+        )}
+        {/* CR-024: this invoice was captured/imported by AI — surface the confidence. */}
+        {editing?.extraction_confidence != null && (
+          <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-secondary">
+            <span>Bu fatura yapay zeka ile okundu.</span>
+            <ExtractionConfidenceBadge confidence={editing.extraction_confidence} showLabel />
+          </div>
+        )}
         <div><Label required>Fatura No</Label><Input value={form.invoice_number} onChange={(e) => set("invoice_number", e.target.value)} /></div>
         <div><Label required>Fatura Tarihi</Label><Input type="date" value={form.invoice_date} onChange={(e) => set("invoice_date", e.target.value)} /></div>
         <div><Label>Hakediş Dönemi</Label><Input value={form.hakkedis_period} onChange={(e) => set("hakkedis_period", e.target.value)} placeholder="Mayıs 2025 — 3. Hakediş" /></div>

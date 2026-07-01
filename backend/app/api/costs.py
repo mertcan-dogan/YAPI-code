@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.calculations.money import D
 from app.constants import (
+    COST_CATEGORIES,
     ROLE_DIRECTOR,
     ROLE_FINANCE,
     ROLE_PROJECT_MANAGER,
@@ -18,6 +19,8 @@ from app.deps import CurrentUser
 from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
 from app.schemas.cost import CostEntryCreate, CostEntryOut, CostEntryUpdate
+from app.services import fx
+from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
@@ -46,6 +49,40 @@ def _bump_custom_category(db: Session, company_id, category: str) -> None:
     ).scalar_one_or_none()
     if cat is not None:
         cat.usage_count = (cat.usage_count or 0) + 1
+
+
+def _validate_commitment(
+    db: Session, project, commitment_id, entry_type: str, self_id=None
+) -> None:
+    """CR-023: a relief link is only valid when it points to a *committed* entry in
+    the SAME project + company, and the linking entry is itself an *actual*.
+
+    Raises APIError(422) on any violation so a mislinked invoice can never quietly
+    double-count or escape company scope.
+    """
+    if commitment_id is None:
+        return
+    if entry_type != "actual":
+        raise APIError(
+            422, "INVALID_COMMITMENT",
+            "Yalnızca gerçekleşen (fatura) girişleri bir taahhüde bağlanabilir",
+        )
+    if self_id is not None and commitment_id == self_id:
+        raise APIError(422, "INVALID_COMMITMENT", "Bir giriş kendisine bağlanamaz")
+    target = db.execute(
+        select(CostEntry).where(
+            CostEntry.id == commitment_id,
+            CostEntry.project_id == project.id,
+            CostEntry.company_id == project.company_id,
+            CostEntry.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise APIError(422, "INVALID_COMMITMENT", "Taahhüt kaydı bu projede bulunamadı")
+    if target.entry_type != "committed":
+        raise APIError(
+            422, "INVALID_COMMITMENT", "Bağlanan kayıt bir taahhüt (committed) girişi olmalı"
+        )
 
 
 def _refresh_payment_status(c: CostEntry, today: date | None = None) -> None:
@@ -102,6 +139,124 @@ def list_costs(
     return success(data, meta={"total": total, "page": page, "per_page": per_page})
 
 
+UNSPECIFIED_SUBCATEGORY = "Belirtilmemiş"  # CR-018-B: null/blank subcategory bucket
+
+
+@router.get("/projects/{project_id}/costs/by-subcategory")
+def costs_by_subcategory(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+):
+    """CR-018-B: SUM(amount_try / total_with_vat_try) per (category, subcategory).
+
+    Exact Decimal, summed in Python so it's dialect-safe (SQLite tests / Postgres
+    prod). Null or blank subcategory rolls up under "Belirtilmemiş". Company-scoped
+    via the project access check.
+    """
+    project = get_company_project(db, project_id, user)
+    rows = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False)
+        )
+    ).scalars().all()
+
+    # category -> subcategory label -> {amount_try, total_with_vat_try}
+    cats: dict[str, dict] = {}
+    for c in rows:
+        sub = (c.subcategory or "").strip() or UNSPECIFIED_SUBCATEGORY
+        cat = cats.setdefault(c.cost_category, {"subs": {}, "amount_try": D(0), "total_with_vat_try": D(0)})
+        bucket = cat["subs"].setdefault(sub, {"amount_try": D(0), "total_with_vat_try": D(0)})
+        bucket["amount_try"] += D(c.amount_try)
+        bucket["total_with_vat_try"] += D(c.total_with_vat_try)
+        cat["amount_try"] += D(c.amount_try)
+        cat["total_with_vat_try"] += D(c.total_with_vat_try)
+
+    from app.calculations.money import money
+
+    out = []
+    for cat_key, cat in cats.items():
+        out.append({
+            "cost_category": cat_key,
+            "label_tr": COST_CATEGORIES.get(cat_key, cat_key),
+            "amount_try": str(money(cat["amount_try"])),
+            "total_with_vat_try": str(money(cat["total_with_vat_try"])),
+            "subcategories": [
+                {
+                    "subcategory": sub,
+                    "amount_try": str(money(v["amount_try"])),
+                    "total_with_vat_try": str(money(v["total_with_vat_try"])),
+                }
+                for sub, v in cat["subs"].items()
+            ],
+        })
+    return success({"categories": out})
+
+
+@router.get("/projects/{project_id}/commitments")
+def list_commitments(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    db: Session = Depends(get_db),
+    open_only: bool = Query(False),
+):
+    """CR-023-B: a project's commitments (entry_type=committed) with per-commitment
+    relief progress — how much of each commitment has been invoiced (linked
+    actuals) and how much is still open. ``open_only`` hides fully relieved ones.
+
+    Exact Decimal, summed in Python (dialect-safe). Company-scoped via the project
+    access check.
+    """
+    from app.calculations.money import money
+
+    project = get_company_project(db, project_id, user)
+    rows = db.execute(
+        select(CostEntry).where(
+            CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False)
+        )
+    ).scalars().all()
+
+    # Relief per commitment: Σ ex-VAT of linked actuals + a count of those invoices.
+    relieved: dict = {}
+    relieved_count: dict = {}
+    for c in rows:
+        if c.entry_type == "actual" and c.commitment_id is not None:
+            relieved[c.commitment_id] = relieved.get(c.commitment_id, D(0)) + D(c.amount_try)
+            relieved_count[c.commitment_id] = relieved_count.get(c.commitment_id, 0) + 1
+
+    out = []
+    for c in rows:
+        if c.entry_type != "committed":
+            continue
+        amount = D(c.amount_try)
+        invoiced = relieved.get(c.id, D(0))
+        open_amt = amount - invoiced
+        if open_amt < 0:
+            open_amt = D(0)
+        if open_only and open_amt <= 0:
+            continue
+        pct_relieved = (invoiced / amount * D(100)) if amount > 0 else D(0)
+        out.append({
+            "id": str(c.id),
+            "cost_category": c.cost_category,
+            "label_tr": COST_CATEGORIES.get(c.cost_category, c.cost_category),
+            "supplier_name": c.supplier_name,
+            "description": c.description,
+            "po_number": c.po_number,
+            "expected_date": c.expected_date.isoformat() if c.expected_date else None,
+            "entry_date": c.entry_date.isoformat() if c.entry_date else None,
+            "amount_try": str(money(amount)),
+            "invoiced_try": str(money(invoiced)),
+            "open_try": str(money(open_amt)),
+            "pct_relieved": str(money(pct_relieved)),
+            "invoice_count": relieved_count.get(c.id, 0),
+            "fully_relieved": open_amt <= 0,
+        })
+    # Most open exposure first.
+    out.sort(key=lambda r: D(r["open_try"]), reverse=True)
+    return success({"commitments": out})
+
+
 @router.post("/projects/{project_id}/costs")
 def create_cost(
     project_id: uuid.UUID,
@@ -112,6 +267,8 @@ def create_cost(
 ):
     project = get_company_project(db, project_id, user)  # all roles may add (Section 3.2)
     data = payload.model_dump()
+    # CR-023: a relief link must point to a committed entry in this project/company.
+    _validate_commitment(db, project, data.get("commitment_id"), data["entry_type"])
     vat = vat_amount(data["amount_try"], data["vat_rate"])
     twv = total_with_vat(data["amount_try"], data["vat_rate"])
     cost = CostEntry(
@@ -132,6 +289,13 @@ def create_cost(
     _refresh_payment_status(cost)
     db.add(cost)
     db.flush()
+    # CR-008-F: auto-link to a canonical vendor at create time (was backfill-only).
+    cost.vendor_id = cost.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+        db, user.company_id, cost.supplier_name
+    )
+    # CR-014-B: snapshot the USD value at this row's relevant date (provisional
+    # until paid). Never blocks the save if no rate is available.
+    fx.snapshot_cost_usd(db, cost)
     _bump_custom_category(db, user.company_id, cost.cost_category)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
@@ -140,7 +304,13 @@ def create_cost(
     db.commit()
     db.refresh(cost)
     _notify_margin(db, project)
-    return success(CostEntryOut.model_validate(cost).model_dump(mode="json"))
+    out = CostEntryOut.model_validate(cost).model_dump(mode="json")
+    # Soft-lock (warn, never block): the project is closed out (Tamamlandı). The
+    # entry still saves; the frontend surfaces a warning banner + a "rapor güncel
+    # değil" hint so the director can re-freeze the closeout report.
+    if project.status == "completed":
+        out["closeout_warning"] = "Proje tamamlandı olarak işaretli — bu kayıt sonrası kapanış raporu güncel olmayabilir"
+    return success(out)
 
 
 def _notify_margin(db: Session, project) -> None:
@@ -185,6 +355,11 @@ def update_cost(
 
     old = snapshot(cost)
     changes = payload.model_dump(exclude_unset=True)
+    # CR-023: validate the relief link against the POST-edit entry_type + id.
+    if "commitment_id" in changes or "entry_type" in changes:
+        new_etype = changes.get("entry_type", cost.entry_type)
+        new_commitment = changes.get("commitment_id", cost.commitment_id)
+        _validate_commitment(db, project, new_commitment, new_etype, self_id=cost.id)
     for k, v in changes.items():
         setattr(cost, k, v)
     # Recompute derived VAT fields.
@@ -194,6 +369,8 @@ def update_cost(
     if "date_paid" in changes and cost.date_paid and not cost.amount_paid_try:
         cost.amount_paid_try = cost.total_with_vat_try
     _refresh_payment_status(cost)
+    # CR-014-B: re-snapshot USD — locks at the payment-date rate once paid.
+    fx.snapshot_cost_usd(db, cost)
     db.flush()
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",

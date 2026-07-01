@@ -1,4 +1,5 @@
 import { MiniBarChart } from "@/components/charts";
+import { ExtractionConfidenceBadge } from "@/components/ai/ExtractionConfidenceBadge";
 import { SideDrawer } from "@/components/SideDrawer";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui";
@@ -117,7 +118,11 @@ export function BudgetCategoryDrawer({
                       <span>{formatDate(r.entry_date)} · KDV %{toNumber(r.vat_rate)}</span>
                       <span>Vade: {formatDate(r.payment_due_date)}</span>
                     </div>
-                    <div className="mt-1"><StatusBadge status={r.payment_status} /></div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <StatusBadge status={r.payment_status} />
+                      {/* CR-024: AI-read rows carry a confidence pill (none on manual rows). */}
+                      <ExtractionConfidenceBadge confidence={r.extraction_confidence} />
+                    </div>
                   </div>
                 ))}
                 <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">

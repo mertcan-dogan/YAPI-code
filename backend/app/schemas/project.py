@@ -5,8 +5,95 @@ from decimal import Decimal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from app.constants import PROJECT_STATUSES, PROJECT_TYPES
+from app.constants import (
+    DEAL_STRUCTURE_KEYS,
+    OWNER_SIDES,
+    PROJECT_STATUSES,
+    PROJECT_TYPES,
+    UNIT_TYPE_KEYS,
+)
 from app.schemas.common import ERR_CONTRACT, ERR_RETENTION, ORMModel
+
+ERR_UNIT_TYPE = "Geçersiz daire tipi"
+ERR_UNIT_CUSTOM = "Diğer için açıklama girin"
+ERR_UNIT_COUNT = "Adet en az 1 olmalıdır"
+ERR_UNIT_M2 = "m² 0'dan büyük olmalıdır"
+ERR_OWNER_SIDE = "Geçersiz mülkiyet tarafı"
+ERR_DEAL_STRUCTURE = "Geçersiz anlaşma yapısı"
+
+
+class UnitScheduleIn(BaseModel):
+    """A daire dağılımı row on project create/update (CR-016-A).
+
+    ``id`` targets an existing row on update (CR-016-B upsert); omit it for new
+    rows. An id that doesn't belong to the caller's company is treated as new.
+    """
+
+    id: uuid.UUID | None = None
+    unit_type: str
+    custom_label: str | None = None
+    count: int = 1
+    gross_m2_each: Decimal
+    net_m2_each: Decimal | None = None
+    sale_price_try: Decimal | None = None
+    # CR-053: which side this planned daire belongs to (yuklenici | arsa_sahibi).
+    owner_side: str = "yuklenici"
+    notes: str | None = None
+
+    @field_validator("unit_type")
+    @classmethod
+    def _unit_type(cls, v: str) -> str:
+        if v not in UNIT_TYPE_KEYS:
+            raise ValueError(ERR_UNIT_TYPE)
+        return v
+
+    @field_validator("owner_side")
+    @classmethod
+    def _owner_side(cls, v: str) -> str:
+        if v not in OWNER_SIDES:
+            raise ValueError(ERR_OWNER_SIDE)
+        return v
+
+    @field_validator("count")
+    @classmethod
+    def _count(cls, v: int) -> int:
+        if v is None or v < 1:
+            raise ValueError(ERR_UNIT_COUNT)
+        return v
+
+    @field_validator("gross_m2_each")
+    @classmethod
+    def _gross(cls, v: Decimal) -> Decimal:
+        if v is None or v <= 0:
+            raise ValueError(ERR_UNIT_M2)
+        return v
+
+    @field_validator("net_m2_each", "sale_price_try")
+    @classmethod
+    def _optional_positive(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError(ERR_UNIT_M2)
+        return v
+
+    @model_validator(mode="after")
+    def _custom_label(self):
+        if self.unit_type == "other" and not (self.custom_label or "").strip():
+            raise ValueError(ERR_UNIT_CUSTOM)
+        return self
+
+
+class UnitScheduleOut(ORMModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    company_id: uuid.UUID
+    unit_type: str
+    custom_label: str | None
+    count: int
+    gross_m2_each: Decimal
+    net_m2_each: Decimal | None
+    sale_price_try: Decimal | None
+    owner_side: str
+    notes: str | None
 
 
 class ProjectCreate(BaseModel):
@@ -17,6 +104,8 @@ class ProjectCreate(BaseModel):
     custom_project_type: str | None = None
     contractor_share_pct: Decimal | None = None
     unit_count: int | None = None
+    # CR-053: the per-project deal structure (sell-side). Optional; documents the deal.
+    deal_structure: str | None = None
     client_name: str
     client_contact: str | None = None
     contract_number: str | None = None
@@ -38,6 +127,16 @@ class ProjectCreate(BaseModel):
     target_margin_pct: Decimal | None = None
     project_manager_id: uuid.UUID | None = None
 
+    # CR-016-A: residential details (construction area + daire dağılımı). All
+    # optional — non-residential projects simply omit them. Persistence wired in CR-016-B.
+    construction_gross_m2: Decimal | None = None
+    construction_net_m2: Decimal | None = None
+    units: list[UnitScheduleIn] = []
+
+    # CR-015-A: financing overrides (NULL = inherit the company default).
+    financing_enabled_override: bool | None = None
+    financing_annual_rate_pct_override: Decimal | None = None
+
     @field_validator("project_type")
     @classmethod
     def _type(cls, v: str) -> str:
@@ -51,6 +150,13 @@ class ProjectCreate(BaseModel):
         allowed = {"hakedis", "kat_karsiligi", "yap_sat", "hasilat_paylasimi", "maliyet_kar"}
         if v not in allowed:
             raise ValueError("Geçersiz gelir modeli")
+        return v
+
+    @field_validator("deal_structure")
+    @classmethod
+    def _deal_structure(cls, v):
+        if v is not None and v not in DEAL_STRUCTURE_KEYS:
+            raise ValueError(ERR_DEAL_STRUCTURE)
         return v
 
     @field_validator("contract_value_try")
@@ -101,12 +207,31 @@ class ProjectUpdate(BaseModel):
     target_margin_pct: Decimal | None = None
     completion_pct: Decimal | None = None
     project_manager_id: uuid.UUID | None = None
+    # CR-053: deal structure + the quick contractor-share fallback editable later.
+    deal_structure: str | None = None
+    contractor_share_pct: Decimal | None = None
+
+    # CR-016-A: residential details editable after creation (persistence in CR-016-B).
+    construction_gross_m2: Decimal | None = None
+    construction_net_m2: Decimal | None = None
+    units: list[UnitScheduleIn] | None = None
+
+    # CR-015-A: financing overrides (NULL = inherit the company default).
+    financing_enabled_override: bool | None = None
+    financing_annual_rate_pct_override: Decimal | None = None
 
     @field_validator("status")
     @classmethod
     def _status(cls, v):
         if v is not None and v not in PROJECT_STATUSES:
             raise ValueError("Geçersiz proje durumu")
+        return v
+
+    @field_validator("deal_structure")
+    @classmethod
+    def _deal_structure(cls, v):
+        if v is not None and v not in DEAL_STRUCTURE_KEYS:
+            raise ValueError(ERR_DEAL_STRUCTURE)
         return v
 
     @field_validator("contract_value_try")
@@ -131,6 +256,13 @@ class ProjectOut(ORMModel):
     project_code: str
     project_type: str
     custom_project_type: str | None
+    # CR-031: revenue/billing model drives the Satışlar & Kar/Zarar page's
+    # sell-side vs. hakediş gating (banner + editors). Must be serialized or the
+    # frontend silently defaults every project to "hakedis".
+    revenue_model: str
+    contractor_share_pct: Decimal | None = None
+    # CR-053: the per-project deal structure (sell-side; null on others).
+    deal_structure: str | None = None
     client_name: str
     client_contact: str | None
     contract_number: str | None
@@ -152,3 +284,10 @@ class ProjectOut(ORMModel):
     target_margin_pct: Decimal | None
     completion_pct: Decimal
     project_manager_id: uuid.UUID | None
+    # CR-016-A: residential details (empty units for non-residential projects).
+    construction_gross_m2: Decimal | None = None
+    construction_net_m2: Decimal | None = None
+    units: list[UnitScheduleOut] = []
+    # CR-015-A: financing overrides (NULL = inherit company default).
+    financing_enabled_override: bool | None = None
+    financing_annual_rate_pct_override: Decimal | None = None

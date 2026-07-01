@@ -43,5 +43,12 @@ class Company(TimestampSoftDeleteMixin, Base):
     require_deletion_approval: Mapped[bool] = mapped_column(default=True, server_default="true")
     require_variation_approval: Mapped[bool] = mapped_column(default=True, server_default="true")
 
+    # CR-015-A: financing-cost settings (modeled accrual; opt-in, defaults OFF).
+    # The annual rate is the company's USD borrowing cost; basis is cumulative
+    # (financially correct — accrue on the negative cumulative position) or net.
+    financing_enabled: Mapped[bool] = mapped_column(default=False, server_default="false")
+    financing_annual_rate_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    financing_basis: Mapped[str] = mapped_column(String(12), default="cumulative", server_default="cumulative")
+
     users: Mapped[list["User"]] = relationship(back_populates="company")  # noqa: F821
     projects: Mapped[list["Project"]] = relationship(back_populates="company")  # noqa: F821

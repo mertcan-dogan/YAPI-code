@@ -28,6 +28,10 @@ class Project(TimestampSoftDeleteMixin, Base):
     # Sales-based models (kat karşılığı / yap-sat / hasılat): contractor share + unit count
     contractor_share_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # CR-053: the per-project deal structure (founder's setting). Documents the deal
+    # and drives UI labels/hints/defaults; it does NOT compute the P&L (data-driven,
+    # §0). Nullable — meaningful for sell-side projects. See DEAL_STRUCTURES.
+    deal_structure: Mapped[str | None] = mapped_column(String(40), nullable=True)
     # CR-001-A: free-text type entered when project_type == "other"
     custom_project_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -61,4 +65,25 @@ class Project(TimestampSoftDeleteMixin, Base):
         PGUUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
 
+    # CR-016-A: residential / kentsel dönüşüm construction area (additive, nullable).
+    # Total construction area may exceed the sum of sellable unit areas (common areas).
+    construction_gross_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    construction_net_m2: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    # CR-015-A: per-project financing overrides. NULL = inherit the company default
+    # (see services.financing.effective_financing). Additive; no behavior change off.
+    financing_enabled_override: Mapped[bool | None] = mapped_column(nullable=True)
+    financing_annual_rate_pct_override: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
     company: Mapped["Company"] = relationship(back_populates="projects")  # noqa: F821
+    # CR-016-A: the daire dağılımı / unit schedule (empty for non-residential projects).
+    # View-only + live-rows-only: the schedule is persisted explicitly by the
+    # CR-016-B units service (upsert + soft-delete), not through this collection,
+    # so soft-deleted rows never surface in reads/aggregates.
+    units: Mapped[list["ProjectUnit"]] = relationship(  # noqa: F821
+        "ProjectUnit",
+        primaryjoin="and_(Project.id == ProjectUnit.project_id, "
+        "ProjectUnit.is_deleted == False)",
+        order_by="ProjectUnit.created_at",
+        viewonly=True,
+    )

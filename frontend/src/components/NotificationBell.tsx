@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Bell, Clock, TrendingDown, Wallet, CheckCheck, X } from "lucide-react";
 
 import { apiGet, apiPut } from "@/lib/api";
+import { cachedGet } from "@/lib/requestCache";
 import { cn } from "@/lib/cn";
 
 type Notification = {
@@ -48,9 +49,11 @@ export function NotificationBell() {
   const [items, setItems] = React.useState<Notification[]>([]);
   const [loading, setLoading] = React.useState(false);
 
-  const loadCount = React.useCallback(async () => {
+  // Mount uses the shared cache (deduped if the chrome remounts on navigation);
+  // the 30s poll forces a fresh read so the badge stays current.
+  const loadCount = React.useCallback(async (force = false) => {
     try {
-      const { data } = await apiGet<{ count: number }>("/notifications/unread-count");
+      const { data } = await cachedGet<{ count: number }>("/notifications/unread-count", undefined, { force });
       setCount(data.count);
     } catch {
       /* sessizce yoksay — zil sayacı kritik değil */
@@ -69,8 +72,8 @@ export function NotificationBell() {
 
   // 30 saniyede bir okunmamış sayısını yokla.
   React.useEffect(() => {
-    loadCount();
-    const id = window.setInterval(loadCount, 30000);
+    loadCount(false);
+    const id = window.setInterval(() => loadCount(true), 30000);
     return () => window.clearInterval(id);
   }, [loadCount]);
 

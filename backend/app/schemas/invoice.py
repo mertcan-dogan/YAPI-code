@@ -77,6 +77,8 @@ class ClientInvoiceOut(ORMModel):
     description: str | None
     amount_try: Decimal
     amount_eur: Decimal | None
+    amount_usd: Decimal | None = None
+    fx_rate_usd: Decimal | None = None
     vat_rate: Decimal
     vat_amount_try: Decimal
     total_with_vat_try: Decimal
@@ -89,4 +91,7 @@ class ClientInvoiceOut(ORMModel):
     outstanding_try: Decimal
     document_url: str | None
     notes: str | None
+    # CR-024: AI document-extraction confidence (0..1); NULL for manual rows.
+    # Display / monitoring only — never feeds the financial math.
+    extraction_confidence: float | None = None
     created_at: datetime

@@ -29,6 +29,19 @@ from app.main import app
 from app.models import Base, Company, Project, User
 
 
+@pytest.fixture(autouse=True)
+def _no_fx_network():
+    """CR-014: never let a test hit the live TCMB feed. The FX service's
+    cache-based walk-back over seeded fx_rates still works with live fetch off;
+    tests that exercise the fetch boundary re-enable it explicitly."""
+    from app.config import settings
+
+    original = settings.fx_live_fetch
+    settings.fx_live_fetch = False
+    yield
+    settings.fx_live_fetch = original
+
+
 @pytest.fixture()
 def engine():
     eng = create_engine(

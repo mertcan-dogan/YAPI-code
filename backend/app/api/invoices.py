@@ -13,6 +13,7 @@ from app.deps import CurrentUser, InvoiceCreatorUser
 from app.models.client_invoice import ClientInvoice
 from app.responses import APIError, success
 from app.schemas.invoice import ClientInvoiceCreate, ClientInvoiceOut, ClientInvoiceUpdate
+from app.services import fx
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
@@ -77,13 +78,20 @@ def create_invoice(
         db.rollback()
         # Unique (project_id, invoice_number) violation (Section 8.1)
         raise APIError(422, "VALIDATION_ERROR", "Bu fatura numarası zaten mevcut", field="invoice_number")
+    # CR-014-B: snapshot USD at the relevant date (provisional until received).
+    fx.snapshot_invoice_usd(db, inv)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="client_invoices",
         record_id=inv.id, action="INSERT", new_values=snapshot(inv), ip_address=_ip(request),
     )
     db.commit()
     db.refresh(inv)
-    return success(ClientInvoiceOut.model_validate(inv).model_dump(mode="json"))
+    out = ClientInvoiceOut.model_validate(inv).model_dump(mode="json")
+    # Soft-lock (warn, never block): the project is closed out (Tamamlandı). The
+    # invoice still saves; the frontend surfaces a warning banner.
+    if project.status == "completed":
+        out["closeout_warning"] = "Proje tamamlandı olarak işaretli — bu kayıt sonrası kapanış raporu güncel olmayabilir"
+    return success(out)
 
 
 @router.put("/projects/{project_id}/invoices/{inv_id}")
@@ -126,6 +134,8 @@ def update_invoice(
         inv.payment_status = "disputed"
     else:
         _refresh_invoice_status(inv)
+    # CR-014-B: re-snapshot USD — locks at the receipt-date rate once paid.
+    fx.snapshot_invoice_usd(db, inv)
     db.flush()
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="client_invoices",

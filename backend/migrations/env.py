@@ -12,7 +12,12 @@ from app.models import Base  # registers all models on Base.metadata
 # which SQLAlchemy resolves to the psycopg2 dialect — but we only ship psycopg 3.
 # Normalize to postgresql+psycopg:// (same rule app/db.py applies) so that
 # `alembic upgrade head` works in production instead of crashing on import.
-DB_URL = _normalize_db_url(settings.database_url)
+#
+# CR-040: migrations (ALTER TABLE / CREATE POLICY) need elevated rights. Once the
+# app connects as the NOBYPASSRLS yapi_app role, database_url can no longer run
+# DDL — so prefer admin_database_url (service_role/owner) when set. Blank
+# (single-URL deploys, tests) falls back to database_url, unchanged.
+DB_URL = _normalize_db_url(settings.admin_database_url or settings.database_url)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", DB_URL)

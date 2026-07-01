@@ -7,6 +7,21 @@ ROLE_FINANCE = "finance"
 ROLE_SITE_MANAGER = "site_manager"
 ROLES = [ROLE_DIRECTOR, ROLE_PROJECT_MANAGER, ROLE_FINANCE, ROLE_SITE_MANAGER]
 
+# --- Invite statuses (CR-041 teammate invitation/acceptance) ---
+INVITE_PENDING = "pending"
+INVITE_ACCEPTED = "accepted"
+INVITE_REVOKED = "revoked"
+INVITE_EXPIRED = "expired"
+INVITE_STATUSES = [INVITE_PENDING, INVITE_ACCEPTED, INVITE_REVOKED, INVITE_EXPIRED]
+
+# --- Project closeout stages (Turkish acceptance lifecycle) ---
+# Aktif → Geçici Kabul → Kesin Hesap → Kesin Kabul. ``stage`` on a closeout row
+# is the FURTHEST stage reached. report_data is frozen at Kesin Hesap.
+CLOSEOUT_GECICI_KABUL = "gecici_kabul"
+CLOSEOUT_KESIN_HESAP = "kesin_hesap"
+CLOSEOUT_KESIN_KABUL = "kesin_kabul"
+CLOSEOUT_STAGES = [CLOSEOUT_GECICI_KABUL, CLOSEOUT_KESIN_HESAP, CLOSEOUT_KESIN_KABUL]
+
 # --- Project types (CR-001-A: 26 types grouped by category) ---
 # key (stored in DB) -> (label, category)
 PROJECT_TYPE_DEFS = [
@@ -41,6 +56,22 @@ PROJECT_TYPES = {key: label for key, label, _cat in PROJECT_TYPE_DEFS}
 
 PROJECT_STATUSES = ["active", "completed", "suspended", "cancelled"]
 
+# --- Unit-schedule types (CR-016 daire dağılımı) ---
+# Preset keys for the residential unit schedule; "other" requires a custom_label.
+UNIT_TYPES = {
+    "1+1": "1+1",
+    "2+1": "2+1",
+    "3+1": "3+1",
+    "4+1": "4+1",
+    "ticari": "Ticari",
+    "dukkan": "Dükkan",
+    "ofis": "Ofis",
+    "bodrum": "Bodrum",
+    "depo": "Depo",
+    "other": "Diğer",
+}
+UNIT_TYPE_KEYS = list(UNIT_TYPES.keys())
+
 # --- Cost categories (Section 4.3 / Appendix B) ---
 # Order is the canonical display order in the budget tree.
 COST_CATEGORIES = {
@@ -57,10 +88,138 @@ COST_CATEGORIES = {
     "permits_fees": "İzin ve Harçlar",
     "site_overhead": "Şantiye Genel Giderleri",
     "engineering_design": "Mühendislik ve Tasarım",
+    # CR-053: rent support (kira yardımı) — paid to displaced occupants in kentsel
+    # dönüşüm deals. A normal cost (cost + cash-out), no special engine path; it is
+    # part of the operator-model cost line. App-level addition, no migration.
+    "kira_yardimi": "Kira Yardımı",
     "contingency": "Öngörülemeyen Giderler",
     "other": "Diğer",
 }
 COST_CATEGORY_KEYS = list(COST_CATEGORIES.keys())
+
+# --- Cost subcategory taxonomy (CR-018-A) ---
+# Global preset subcategories under each standard cost category. The single source
+# of truth: maps a COST_CATEGORIES key -> an ordered list of (subkey, Turkish label).
+# Sensible starter set, NOT exhaustive — companies add their own on top (custom
+# subcategories, parent_category on custom_cost_categories). cost_entries.subcategory
+# stays free-text, so any value here, a company custom, or "Diğer" free-text is valid.
+# Keep every key below a valid COST_CATEGORY key (asserted in tests). Empty list =>
+# that category has no presets yet (free-text only).
+_LABOUR_SUBCATEGORIES = [
+    ("kaba_insaat", "Kaba İnşaat"),
+    ("ince_iscilik", "İnce İşçilik"),
+    ("elektrik", "Elektrik"),
+    ("sihhi_tesisat", "Sıhhi Tesisat / Mekanik"),
+    ("boya_badana", "Boya / Badana"),
+    ("kalip", "Kalıp"),
+    ("demir_donati", "Demir / Donatı"),
+    ("siva", "Sıva"),
+    ("seramik_fayans", "Seramik / Fayans"),
+    ("alcipan", "Alçıpan"),
+    ("yalitim", "Yalıtım"),
+    ("cati", "Çatı"),
+    ("dograma", "Doğrama"),
+]
+COST_SUBCATEGORIES: dict[str, list[tuple[str, str]]] = {
+    # Labour — shared trade breakdown for both direct and subcontracted labour.
+    "labour_direct": _LABOUR_SUBCATEGORIES,
+    "labour_sub": _LABOUR_SUBCATEGORIES,
+    # Materials — by material detail relevant to the parent.
+    "material_concrete": [
+        ("hazir_beton", "Hazır Beton"),
+        ("cimento", "Çimento"),
+        ("beton_katki", "Beton Katkı Maddesi"),
+        ("kalip_malzeme", "Kalıp Malzemesi"),
+    ],
+    "material_steel": [
+        ("nervurlu_demir", "Nervürlü İnşaat Demiri"),
+        ("hasir_celik", "Hasır Çelik"),
+        ("celik_profil", "Çelik Profil"),
+        ("baglanti_elemanlari", "Bağlantı Elemanları"),
+    ],
+    "material_pipes": [
+        ("pvc_boru", "PVC Boru"),
+        ("ppr_boru", "PPR Boru"),
+        ("pe_boru", "PE Boru"),
+        ("fitting", "Fitting / Bağlantı"),
+        ("vana_armatur", "Vana / Armatür"),
+    ],
+    "material_aggregate": [
+        ("kum", "Kum"),
+        ("cakil", "Çakıl"),
+        ("micir", "Mıcır"),
+        ("stabilize", "Stabilize / Dolgu"),
+    ],
+    "material_other": [
+        ("tugla_briket", "Tuğla / Briket"),
+        ("yalitim_malzeme", "Yalıtım Malzemesi"),
+        ("alcipan_malzeme", "Alçıpan / Profil"),
+        ("boya_malzeme", "Boya / Vernik"),
+        ("seramik_malzeme", "Seramik / Fayans"),
+        ("cam", "Cam"),
+        ("ahsap", "Ahşap"),
+    ],
+    # Equipment.
+    "equipment_owned": [
+        ("yakit", "Yakıt"),
+        ("bakim_onarim", "Bakım / Onarım"),
+        ("yedek_parca", "Yedek Parça"),
+        ("amortisman", "Amortisman"),
+    ],
+    "equipment_rented": [
+        ("is_makinesi", "İş Makinesi Kiralama"),
+        ("vinc", "Vinç Kiralama"),
+        ("iskele", "İskele / Kalıp Kiralama"),
+        ("jenerator", "Jeneratör"),
+    ],
+    # Subcontractor — by trade package.
+    "subcontractor": [
+        ("kaba_insaat_taseron", "Kaba İnşaat Taşeronu"),
+        ("mekanik_taseron", "Mekanik Tesisat Taşeronu"),
+        ("elektrik_taseron", "Elektrik Taşeronu"),
+        ("cephe_taseron", "Cephe / Mantolama Taşeronu"),
+        ("peyzaj_taseron", "Peyzaj Taşeronu"),
+    ],
+    # Permits & fees.
+    "permits_fees": [
+        ("ruhsat", "İnşaat Ruhsatı"),
+        ("iskan", "İskan / Yapı Kullanma İzni"),
+        ("belediye_harc", "Belediye Harçları"),
+        ("proje_onay", "Proje Onay Bedelleri"),
+    ],
+    # Site overhead.
+    "site_overhead": [
+        ("santiye_kira", "Şantiye Kira"),
+        ("elektrik_su", "Elektrik / Su"),
+        ("guvenlik", "Güvenlik"),
+        ("temizlik", "Temizlik"),
+        ("konaklama", "Personel Konaklama"),
+        ("ulasim", "Ulaşım / Nakliye"),
+    ],
+    # Engineering & design.
+    "engineering_design": [
+        ("mimari_proje", "Mimari Proje"),
+        ("statik_proje", "Statik Proje"),
+        ("mekanik_proje", "Mekanik Proje"),
+        ("elektrik_proje", "Elektrik Proje"),
+        ("zemin_etut", "Zemin Etüdü"),
+        ("danismanlik", "Danışmanlık"),
+    ],
+    # No sensible presets — free-text / company-custom only.
+    "kira_yardimi": [],  # CR-053: rent support — no sub-breakdown
+    "contingency": [],
+    "other": [],
+}
+
+
+def subcategories_for(category_key: str) -> list[tuple[str, str]]:
+    """Ordered preset (subkey, label) subcategories for a cost category.
+
+    Returns [] for an unknown category or one with no presets (free-text only).
+    Company-custom subcategories are merged on top of this at the API layer (CR-018-B).
+    """
+    return COST_SUBCATEGORIES.get(category_key, [])
+
 
 # --- Entry / payment status enums ---
 ENTRY_TYPES = ["actual", "committed", "forecast"]
@@ -68,8 +227,43 @@ COST_PAYMENT_STATUSES = ["unpaid", "paid", "overdue", "partial"]
 INVOICE_PAYMENT_STATUSES = ["unpaid", "partial", "paid", "disputed"]
 INVOICE_TYPES = ["hakedis", "advance", "variation", "final"]
 SUBCONTRACTOR_STATUSES = ["active", "completed", "disputed", "terminated"]
+
+# CR-031-A: which side's unit a sale belongs to (sell-side revenue split).
+OWNER_SIDE_YUKLENICI = "yuklenici"
+OWNER_SIDE_ARSA_SAHIBI = "arsa_sahibi"
+OWNER_SIDES = [OWNER_SIDE_YUKLENICI, OWNER_SIDE_ARSA_SAHIBI]
+
+# CR-031: revenue models whose revenue is sell-side (unit sales + landowner
+# payments), NOT hakediş invoices (§0.2 — revenue is revenue-model-aware and
+# never summed across both sources).
+SELL_SIDE_REVENUE_MODELS = {"kat_karsiligi", "yap_sat", "hasilat_paylasimi"}
+# Landowner ledger is only meaningful for share models (kat karşılığı / hasılat).
+LANDOWNER_REVENUE_MODELS = {"kat_karsiligi", "hasilat_paylasimi"}
+
+# CR-053: the per-project deal structure (the founder's setting). Documents the
+# arrangement and drives UI labels/hints/defaults — it does NOT compute the P&L
+# (correctness is DATA-DRIVEN per §0, so a mis-set value can't corrupt the numbers).
+# Nullable on a project; meaningful for sell-side projects.
+DEAL_STRUCTURE_ARSA_KARSILIGI = "arsa_karsiligi_daire"   # land for units (daire)
+DEAL_STRUCTURE_KENTSEL_DONUSUM = "kentsel_donusum"        # urban renewal + rent support
+DEAL_STRUCTURE_NAKIT_KATKI = "nakit_katki"                # cash participation
+DEAL_STRUCTURE_YAP_SAT = "yap_sat_kendi_arsa"             # contractor owns the land
+DEAL_STRUCTURE_DIGER = "diger"
+DEAL_STRUCTURES = {
+    DEAL_STRUCTURE_ARSA_KARSILIGI: "Arsa Karşılığı (Daire)",
+    DEAL_STRUCTURE_KENTSEL_DONUSUM: "Kentsel Dönüşüm",
+    DEAL_STRUCTURE_NAKIT_KATKI: "Nakit Katkılı",
+    DEAL_STRUCTURE_YAP_SAT: "Yap-Sat (Kendi Arsası)",
+    DEAL_STRUCTURE_DIGER: "Diğer",
+}
+DEAL_STRUCTURE_KEYS = list(DEAL_STRUCTURES.keys())
+
 OWNERSHIP_TYPES = ["owned", "rented"]
 RATE_UNITS = ["day", "month"]
+
+# CR-019-A: milestone status enum (SCHEDULE lane only — never billing/money).
+MILESTONE_STATUSES = ["pending", "in_progress", "done"]
+MILESTONE_STATUS_DONE = "done"
 
 # --- AI alert enums (Section 2.3 ai_alerts) ---
 ALERT_TYPES = [
@@ -94,4 +288,17 @@ AUDITED_TABLES = {
     "client_invoices",
     "subcontractors",
     "budget_line_items",
+    # CR-008-H/I: vendor merges & legacy relinks change financial groupings.
+    "vendors",
+    # Equipment photos: photo add/remove.
+    "equipment_log",
+    # CR-024-A: AI answer feedback (👍/👎) — append-only trust signal.
+    "ai_feedback",
+    # CR-031: sell-side revenue lane (unit sales + landowner payments).
+    "unit_sales",
+    "landowner_payments",
+    # CR-012: automation enable/disable/config changes are audited.
+    "automations",
+    # Project closeout lifecycle (Geçici/Kesin Kabul, freeze, reopen) is audited.
+    "project_closeouts",
 }

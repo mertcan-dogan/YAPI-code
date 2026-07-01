@@ -1,5 +1,7 @@
 """Settings router — company & user management, director only (Section 11)."""
+import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import logging
 import httpx
@@ -8,14 +10,19 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings as app_settings
-from app.constants import ROLE_DIRECTOR
+from app.constants import INVITE_ACCEPTED, INVITE_PENDING, INVITE_REVOKED, ROLE_DIRECTOR
 from app.db import get_db
 from app.deps import CurrentUser, DirectorUser
 from app.models.company import Company
+from app.models.invite import Invite
 from app.models.user import User
 from app.responses import APIError, success
+from app.schemas.invite import InviteCreate, InviteOut
 from app.schemas.user import CompanyOut, CompanyUpdate, UserInvite, UserOut, UserUpdate
-from app.services.email import send_user_invitation
+from app.services.email_service import email_service
+
+# CR-041: how long a teammate invitation stays valid (matches the email copy).
+INVITE_TTL_DAYS = 7
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -133,21 +140,105 @@ def list_users(user: DirectorUser, db: Session = Depends(get_db)):
     return success([UserOut.model_validate(u).model_dump(mode="json") for u in rows])
 
 
+def _create_company_invite(db: Session, inviter: User, email: str, role: str) -> dict:
+    """CR-041: persist a tokenized invite for ``email``/``role`` into the inviter's
+    company and send the accept-link email. Shared by POST /invites and the legacy
+    POST /users alias. Runs on the request (RLS-scoped) session — all reads/writes
+    are naturally confined to the inviter's company.
+
+    Idempotent on a live pending invite: re-sends the existing token instead of
+    creating a duplicate. Rejects an email that is already an active member here.
+    """
+    email = email.strip().lower()
+    existing = db.execute(
+        select(User).where(
+            User.email == email,
+            User.company_id == inviter.company_id,
+            User.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise APIError(422, "VALIDATION_ERROR", "Bu e-posta zaten kayıtlı", field="email")
+
+    company = db.get(Company, inviter.company_id)
+    # Re-use a still-valid pending invite (re-send rather than pile up duplicates).
+    pending = db.execute(
+        select(Invite).where(
+            Invite.company_id == inviter.company_id,
+            Invite.email == email,
+            Invite.status == INVITE_PENDING,
+            Invite.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if pending is not None:
+        email_service.send_user_invitation_email(email, company.name, pending.token)
+        return InviteOut.model_validate(pending).model_dump(mode="json")
+
+    invite = Invite(
+        company_id=inviter.company_id,
+        email=email,
+        role=role,
+        token=secrets.token_urlsafe(32),
+        status=INVITE_PENDING,
+        invited_by=inviter.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS),
+    )
+    db.add(invite)
+    db.commit()
+    db.refresh(invite)
+    # The Supabase auth user is created out-of-band when the invitee follows the
+    # /accept-invite?token=… link; the email carries that link (7-day validity).
+    email_service.send_user_invitation_email(email, company.name, invite.token)
+    return InviteOut.model_validate(invite).model_dump(mode="json")
+
+
+@router.get("/invites")
+def list_invites(user: DirectorUser, db: Session = Depends(get_db)):
+    """Pending/recent invites for the director's company (newest first)."""
+    rows = db.execute(
+        select(Invite)
+        .where(Invite.company_id == user.company_id, Invite.is_deleted.is_(False))
+        .order_by(Invite.created_at.desc())
+    ).scalars().all()
+    return success([InviteOut.model_validate(i).model_dump(mode="json") for i in rows])
+
+
+@router.post("/invites")
+def create_invite(payload: InviteCreate, user: DirectorUser, db: Session = Depends(get_db)):
+    """Davet et — bir e-posta + rol için tokenlı davet oluşturur ve e-posta gönderir."""
+    return success(_create_company_invite(db, user, payload.email, payload.role))
+
+
+@router.delete("/invites/{invite_id}")
+def revoke_invite(invite_id: uuid.UUID, user: DirectorUser, db: Session = Depends(get_db)):
+    """Bekleyen bir daveti iptal et. Kabul edilmiş davetler iptal edilemez."""
+    invite = db.execute(
+        select(Invite).where(
+            Invite.id == invite_id,
+            Invite.company_id == user.company_id,
+            Invite.is_deleted.is_(False),
+        )
+    ).scalar_one_or_none()
+    if invite is None:
+        raise APIError(404, "NOT_FOUND", "Davet bulunamadı")
+    if invite.status == INVITE_ACCEPTED:
+        raise APIError(422, "VALIDATION_ERROR", "Kabul edilmiş davet iptal edilemez")
+    invite.status = INVITE_REVOKED
+    db.commit()
+    return success({"id": str(invite.id), "status": invite.status})
+
+
 @router.post("/users")
 def invite_user(
     payload: UserInvite,
     user: DirectorUser,
     db: Session = Depends(get_db),
 ):
-    existing = db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none()
-    if existing is not None:
-        raise APIError(422, "VALIDATION_ERROR", "Bu e-posta zaten kayıtlı", field="email")
-    company = db.get(Company, user.company_id)
-    # The Supabase auth user is created out-of-band via the invite email link.
-    send_user_invitation(payload.email, payload.full_name, company.name)
-    return success(
-        {"email": payload.email, "message": f"{payload.email} adresine davet gönderildi"}
-    )
+    """Deprecated alias for POST /settings/invites — kept until the frontend
+    migrates off it. Now creates a real tokenized invite (no more dead /signup
+    email). ``full_name`` is accepted for backward compatibility but unused; the
+    invitee supplies their name at accept time."""
+    return success(_create_company_invite(db, user, payload.email, payload.role))
 
 
 @router.put("/users/{user_id}")

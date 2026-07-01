@@ -14,10 +14,21 @@ from app.config import settings
 logger = logging.getLogger("yapi.ai")
 
 AI_UNAVAILABLE_MESSAGE = "AI şu an kullanılamıyor"
+# Distinct from an outage: the API answered but its output couldn't be parsed
+# (truncated/JSON malformed/empty extraction) — usually a too-large or oddly
+# shaped file, NOT a missing key. Surfaced to the user as a real reason.
+AI_RESPONSE_MESSAGE = (
+    "AI dosyayı işleyemedi — yanıt beklenen biçimde değildi. Dosya çok büyük veya "
+    "düzensiz olabilir; standart içe aktarmayı ya da şablonu deneyin."
+)
 
 
 class AIUnavailable(Exception):
-    pass
+    """The model is unreachable: missing key, SDK missing, or a transport error."""
+
+
+class AIResponseError(Exception):
+    """The model answered but the response could not be parsed/used."""
 
 
 def _client():
@@ -40,8 +51,10 @@ def _decimal_default(o: Any):
     return str(o)
 
 
-def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
-    """Single-shot prompt expecting a JSON response. Raises AIUnavailable on failure."""
+def _call_raw_text(prompt: str, max_tokens: int = 1024) -> str:
+    """Run a prompt and return the model's raw text. Raises AIUnavailable ONLY for
+    a true outage (missing key / SDK / transport error) — JSON parsing is the
+    caller's job, so a parse failure is never masked as 'AI unavailable'."""
     client = _client()
     try:
         msg = client.messages.create(
@@ -49,28 +62,74 @@ def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
-        return _extract_json(text)
+        return "".join(block.text for block in msg.content if getattr(block, "type", "") == "text")
     except AIUnavailable:
         raise
-    except Exception as exc:  # network, TLS, rate limit, etc.
+    except Exception as exc:  # network, TLS, rate limit, auth, etc.
         # Log the exception type + message so SSL/cert, auth, and rate-limit
-        # failures are distinguishable in the logs (the user only ever sees the
-        # generic AI_UNAVAILABLE message).
+        # failures are distinguishable in the logs.
         logger.warning("Claude API call failed: %s: %s", type(exc).__name__, exc)
         raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
 
 
+def _call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
+    """Single-shot prompt expecting JSON. A transport failure raises AIUnavailable;
+    a JSON parse failure is also folded into AIUnavailable here for the legacy
+    callers (alerts/narrative) that only handle that. The import path uses
+    _call_raw_text directly so it can tell the two apart (CR-015-fix)."""
+    text = _call_raw_text(prompt, max_tokens=max_tokens)
+    try:
+        return _extract_json(text)
+    except Exception as exc:
+        logger.warning("Claude JSON parse failed: %s: %s", type(exc).__name__, exc)
+        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE) from exc
+
+
 def _extract_json(text: str):
+    """Pull the first complete JSON object/array out of a model response.
+
+    Balances braces/brackets (string-aware) so nested JSON is extracted intact and
+    a truncated response is detected rather than silently mis-parsed. Raises
+    ValueError on no-JSON / incomplete-JSON; callers decide how to surface it.
+    """
     text = text.strip()
     if text.startswith("```"):
-        text = text.split("```", 2)[1]
-        if text.startswith("json"):
+        # Strip a leading ```json fence (and the trailing fence if present).
+        text = text.split("```", 2)[1] if text.count("```") >= 2 else text.lstrip("`")
+        if text.lower().startswith("json"):
             text = text[4:]
+        text = text.strip()
     start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
     if start == -1:
-        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
-    return json.loads(text[start:].rsplit("}", 1)[0] + "}" if text[start] == "{" else text[start:])
+        raise ValueError("Yanıtta JSON bulunamadı")
+    open_ch = text[start]
+    close_ch = "}" if open_ch == "{" else "]"
+    depth = 0
+    in_str = False
+    esc = False
+    end = -1
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == open_ch:
+            depth += 1
+        elif c == close_ch:
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end == -1:
+        raise ValueError("JSON tamamlanmamış — yanıt kesilmiş olabilir")
+    return json.loads(text[start:end])
 
 
 # --- Alert Engine (Section 5.2) ---
@@ -301,21 +360,20 @@ def analyze_excel_import(excel_text: str) -> dict:
     Retries JSON parsing up to 2 times; raises AIUnavailable on failure.
     """
     prompt = build_import_prompt(excel_text)
-    last_err: Exception | None = None
-    for _ in range(2):  # retry JSON parsing up to 2 times
-        try:
-            result = _call_json(prompt, max_tokens=4000)
-            if isinstance(result, dict):
-                # Ensure all expected keys exist.
-                for key in ("maliyet_girisleri", "faturalar", "alt_yukleniciler", "ekipman", "tanimsiz"):
-                    result.setdefault(key, [])
-                return result
-        except AIUnavailable as exc:
-            raise
-        except Exception as exc:  # JSON parse error -> retry
-            last_err = exc
-    logger.warning("AI import JSON parse failed: %s", last_err)
-    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+    # Transport/outage -> AIUnavailable (propagates). Parse/format -> AIResponseError
+    # so the endpoint surfaces a REAL reason instead of "AI unavailable" (CR-015-fix).
+    text = _call_raw_text(prompt, max_tokens=8000)
+    try:
+        result = _extract_json(text)
+    except Exception as exc:
+        logger.warning("AI import JSON parse failed: %s: %s", type(exc).__name__, exc)
+        raise AIResponseError(AI_RESPONSE_MESSAGE) from exc
+    if not isinstance(result, dict):
+        logger.warning("AI import returned non-object JSON: %s", type(result).__name__)
+        raise AIResponseError(AI_RESPONSE_MESSAGE)
+    for key in ("maliyet_girisleri", "faturalar", "alt_yukleniciler", "ekipman", "tanimsiz"):
+        result.setdefault(key, [])
+    return result
 
 
 def extract_invoice(pdf_bytes: bytes) -> dict:
@@ -415,7 +473,9 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
 
     Returns a dict with: supplier_name, invoice_number, invoice_date, due_date,
     currency, subtotal, vat_amount, vat_rate, total, line_items[], confidence,
-    suggested_project_id, suggested_cost_category, reasoning.
+    suggested_project_id, suggested_cost_category, suggested_destination
+    (cost|equipment|income — the user confirms it), suggested_equipment_name,
+    reasoning.
     """
     import base64
 
@@ -438,15 +498,18 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
         '"vat_rate": 20, "total": 0.00, '
         '"line_items": [{"description": "...", "quantity": 0, "unit_price": 0.00, "amount": 0.00}], '
         '"confidence": 0.0, "suggested_project_id": "<id|null>", '
-        '"suggested_cost_category": "<anahtar>", "reasoning": "..."}'
+        '"suggested_cost_category": "<anahtar>", '
+        '"suggested_destination": "cost|equipment|income", '
+        '"suggested_equipment_name": "<...|null>", "reasoning": "..."}'
     )
     prompt = (
-        "Bu bir tedarikçi/malzeme faturasının görüntüsü veya PDF'idir (genellikle Türkçe). "
-        "İki görevi yap:\n"
+        "Bu bir inşaat belgesinin (genellikle Türkçe) görüntüsü veya PDF'idir — bir tedarikçi/malzeme "
+        "faturası, bir ekipman kira/satın alma belgesi ya da işverene kesilen bir hakediş/satış faturası "
+        "olabilir. İki görevi yap:\n"
         "1) Fatura alanlarını ve TÜM satır kalemlerini eksiksiz çıkar.\n"
-        "2) Bu faturanın HANGİ projeye ve HANGİ maliyet kategorisine ait olduğunu, sana verilen "
-        "BAĞLAM'ı (tedarikçi geçmişi ve daha önce onaylanmış sınıflandırmalar, aktif proje listesi "
-        "ve her projenin bütçe kategorileri, kategori açıklamaları) kullanarak öner.\n\n"
+        "2) Bu belgenin HANGİ projeye, HANGİ maliyet kategorisine ve HANGİ HEDEF kayda ait olduğunu, "
+        "sana verilen BAĞLAM'ı (tedarikçi geçmişi ve daha önce onaylanmış sınıflandırmalar, aktif proje "
+        "listesi ve her projenin bütçe kategorileri, kategori açıklamaları) kullanarak öner.\n\n"
         "SADECE şu JSON nesnesini döndür:\n" + schema + "\n\n"
         "Kurallar:\n"
         "- subtotal KDV hariç matrah, vat_amount KDV tutarı, total KDV dahil genel toplam "
@@ -458,6 +521,13 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
         "due_date = invoice_date + o gün sayısı olarak hesapla. Hiç bilgi yoksa null.\n"
         "- line_items faturadaki her satır kalemini içersin (yoksa boş dizi).\n"
         f"- suggested_cost_category şu anahtarlardan biri olmalı: {categories}.\n"
+        "- suggested_destination belgenin TÜRÜNE göre tam olarak şu üçünden biri olsun: "
+        "'cost' (tedarikçi/malzeme/taşeron gideri faturası → Gider), "
+        "'equipment' (iş makinesi/ekipman kiralama veya satın alma belgesi → Ekipman), "
+        "'income' (işverene/müşteriye kesilen hakediş veya satış faturası → Gelir). "
+        "Emin değilsen 'cost' döndür.\n"
+        "- suggested_equipment_name yalnızca destination 'equipment' ise ekipmanın adını içersin "
+        "(örn. 'Ekskavatör', 'Vinç'); aksi halde null.\n"
         "- suggested_project_id BAĞLAM'daki projelerden birinin id'si olmalı; uygun proje yoksa null.\n"
         "- reasoning Türkçe olmalı ve seçimini AÇIKLA: tedarikçinin geçmiş kullanımına, satır "
         "kalemlerine, projelerin bütçe kategorilerine ve kategori açıklamalarına atıfta bulun.\n"
@@ -482,4 +552,84 @@ def analyze_document_smart(data: bytes, content_type: str, context: dict) -> dic
         except Exception as exc:  # JSON parse / API error -> retry
             last_err = exc
     logger.warning("Smart document extraction failed: %s", last_err)
+    raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+
+def analyze_and_classify(data: bytes, content_type: str, context: dict) -> dict:
+    """CR-012 Template A: classify a document's TYPE and route it to a destination.
+
+    Builds on the smart-capture extraction but adds a routing decision so the
+    auto-file automation can propose WHERE the document belongs. v1 routes a
+    realistic subset:
+
+    - ``supplier_invoice`` (tedarikçi/malzeme faturası)  -> ``cost`` (Gider)
+    - ``client_invoice``   (kestiğimiz hakediş/müşteri faturası) -> ``client_invoice``
+    - anything else / uncertain -> ``destination=None`` (caller falls back to the
+      manual review preview; no approval is auto-created).
+
+    Returns ``{doc_type, destination, confidence, project_guess, fields}`` where
+    ``fields`` is shaped for the chosen destination. Never writes to the DB.
+    """
+    import base64
+
+    from app.constants import COST_CATEGORY_KEYS
+
+    client = _client()
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    if content_type == "application/pdf":
+        source_block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}}
+    elif content_type in ("image/jpeg", "image/png"):
+        source_block = {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": b64}}
+    else:
+        raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)
+
+    ctx = json.dumps(context, ensure_ascii=False, default=_decimal_default)
+    categories = ", ".join(COST_CATEGORY_KEYS)
+    schema = (
+        '{"doc_type": "supplier_invoice|client_invoice|other", '
+        '"destination": "cost|client_invoice|null", "confidence": 0.0, '
+        '"project_guess": "<id|null>", '
+        '"fields": {"supplier_name": "...", "invoice_number": "...", '
+        '"invoice_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD", '
+        '"amount_try": 0.00, "vat_rate": 20, "retention_amount_try": 0.00, '
+        '"cost_category": "<anahtar>", "description": "..."}}'
+    )
+    prompt = (
+        "Bu bir belgenin görüntüsü veya PDF'idir (genellikle Türkçe). İki görevi yap:\n"
+        "1) Belgenin TÜRÜNÜ belirle:\n"
+        "   - 'supplier_invoice': bir tedarikçiden/maliyetten gelen ALIŞ faturası (gider).\n"
+        "   - 'client_invoice': işverene/müşteriye KESİLEN hakediş veya satış faturası (gelir).\n"
+        "   - 'other': fatura olmayan veya belirsiz belge.\n"
+        "2) Alanları çıkar ve aşağıdaki hedefe yönlendir:\n"
+        "   - supplier_invoice -> destination='cost'\n"
+        "   - client_invoice  -> destination='client_invoice'\n"
+        "   - other/belirsiz   -> destination=null\n\n"
+        "SADECE şu JSON nesnesini döndür:\n" + schema + "\n\n"
+        "Kurallar:\n"
+        "- amount_try KDV HARİÇ matrah tutarıdır (sayı, ondalık ayırıcı nokta). vat_rate yüzde (örn. 20).\n"
+        "- invoice_date ve due_date MUTLAKA YYYY-MM-DD biçiminde olmalı; bilinmiyorsa null.\n"
+        f"- cost_category yalnızca destination='cost' için ve şu anahtarlardan biri olmalı: {categories}.\n"
+        "- retention_amount_try yalnızca destination='client_invoice' için anlamlıdır (hakediş kesintisi); yoksa 0.\n"
+        "- project_guess BAĞLAM'daki projelerden birinin id'si olmalı; uygun proje yoksa null.\n"
+        "- confidence 0 ile 1 arası genel güven skorudur; tür VE alanlardan ne kadar emin olduğunu yansıtsın.\n"
+        "- JSON dışında hiçbir şey yazma.\n\n"
+        "BAĞLAM:\n" + ctx
+    )
+    last_err: Exception | None = None
+    for _ in range(2):
+        try:
+            msg = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=1500,
+                messages=[{"role": "user", "content": [source_block, {"type": "text", "text": prompt}]}],
+            )
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            result = _extract_json(text)
+            if isinstance(result, dict):
+                return result
+        except AIUnavailable:
+            raise
+        except Exception as exc:  # JSON parse / API error -> retry
+            last_err = exc
+    logger.warning("Document classify failed: %s", last_err)
     raise AIUnavailable(AI_UNAVAILABLE_MESSAGE)

@@ -1,5 +1,7 @@
+import { PriorityBriefingDrawer } from "@/components/dashboard/PriorityBriefingDrawer";
+import { type BriefingItem } from "@/components/dashboard/InsightItem";
 import { cn } from "@/lib/cn";
-import { AlarmClock, CalendarRange, Filter as FilterIcon, ScanLine, X } from "lucide-react";
+import { AlarmClock, CalendarRange, Filter as FilterIcon, ListChecks, ScanLine, X } from "lucide-react";
 import { useState } from "react";
 
 /** Dashboard filter state (wired into the data fetch in Phase 6). */
@@ -43,6 +45,9 @@ export function DashboardToolbar({
   overdueCount = 0,
   onOverdueClick,
   onAddDocument,
+  briefing = [],
+  briefingState = "loading",
+  onRefreshBriefing,
 }: {
   firstName?: string;
   filters: DashboardFilters;
@@ -50,8 +55,12 @@ export function DashboardToolbar({
   overdueCount?: number;
   onOverdueClick?: () => void;
   onAddDocument?: () => void;
+  briefing?: BriefingItem[];
+  briefingState?: "loading" | "ready" | "error";
+  onRefreshBriefing?: () => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
+  const [briefingOpen, setBriefingOpen] = useState(false);
   const activeCount = filters.rag.length + (filters.range !== "all" ? 1 : 0);
 
   const toggleRag = (key: string) => {
@@ -87,6 +96,16 @@ export function DashboardToolbar({
           >
             <AlarmClock className="h-3.5 w-3.5" />
             <span className="tabular text-xs font-bold leading-none">{overdueCount}</span>
+          </button>
+        )}
+
+        {/* Priority briefing — opens the AI "Öncelikli İşler" list in a drawer */}
+        {onRefreshBriefing && (
+          <button
+            onClick={() => setBriefingOpen(true)}
+            className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary transition-colors hover:border-brand"
+          >
+            <ListChecks className="h-4 w-4" /> Öncelikli İşler
           </button>
         )}
 
@@ -147,6 +166,16 @@ export function DashboardToolbar({
             </>
           )}
       </div>
+
+      {onRefreshBriefing && (
+        <PriorityBriefingDrawer
+          open={briefingOpen}
+          onClose={() => setBriefingOpen(false)}
+          briefing={briefing}
+          briefingState={briefingState}
+          onRefresh={onRefreshBriefing}
+        />
+      )}
     </div>
   );
 }

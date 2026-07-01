@@ -1,4 +1,5 @@
 """Projects router: CRUD, project dashboard, budget, company dashboard (Section 2.5, 4.1-4.3)."""
+import logging
 import uuid
 from datetime import date, timedelta
 
@@ -21,10 +22,15 @@ from app.responses import APIError, success
 from app.schemas.budget import BudgetForecastUpdate, BudgetLineOut
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services import financials as fin_service
+from app.services import financing as financing_service
+from app.services import milestones as milestones_service
+from app.services import sales as sales_service
+from app.services import units as units_service
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 
 router = APIRouter(tags=["projects"])
+logger = logging.getLogger("yapi.dashboard")
 
 
 def _client_ip(request: Request) -> str | None:
@@ -49,6 +55,9 @@ def _list_visible_projects(db: Session, user: CurrentUser, only_active: bool = F
 @router.get("/projects")
 def list_projects(user: CurrentUser, db: Session = Depends(get_db)):
     projects = _list_visible_projects(db, user)
+    # Perf: batch-load every project's cost/invoice/budget rows in 3 queries (not
+    # 3×N) — project_financials below then reads them from the per-session cache.
+    fin_service.prime_project_inputs(db, projects)
     out = []
     for p in projects:
         f = fin_service.project_financials(db, p)
@@ -62,6 +71,7 @@ def _summary(f: dict) -> dict:
     """Compact KPI summary for list/dashboard rows."""
     keys = [
         "contract_value_try", "revised_budget_try", "total_committed_try",
+        "total_open_committed_try", "total_committed_exposure_try",
         "total_actual_try", "total_actual_with_vat_try", "remaining_budget_try",
         "forecast_final_cost_try", "current_profit_try", "margin_pct",
         "total_invoiced_try", "total_collected_try", "total_outstanding_try",
@@ -79,9 +89,11 @@ def create_project(
     user: DirectorUser,
     db: Session = Depends(get_db),
 ):
+    # The `units` schedule is persisted separately (CR-016-B upsert + unit_count
+    # derivation), so it is excluded from the column mapping here.
     project = Project(
         company_id=user.company_id,
-        **payload.model_dump(),
+        **payload.model_dump(exclude={"units"}),
     )
     db.add(project)
     db.flush()
@@ -89,6 +101,9 @@ def create_project(
     for cat in COST_CATEGORY_KEYS:
         db.add(BudgetLineItem(project_id=project.id, company_id=user.company_id, cost_category=cat))
     db.flush()
+    # CR-016-B: persist the daire dağılımı and derive unit_count from it.
+    if payload.units:
+        units_service.sync_schedule(db, project, payload.units, user.company_id)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="projects",
         record_id=project.id, action="INSERT", new_values=snapshot(project),
@@ -117,10 +132,12 @@ def update_project(
     # Only directors may edit project settings; PMs may update completion_pct only.
     from app.constants import ROLE_DIRECTOR
 
-    changes = payload.model_dump(exclude_unset=True)
+    # `units` is upserted separately (CR-016-B); the column mapping excludes it.
+    changes = payload.model_dump(exclude_unset=True, exclude={"units"})
     if user.role != ROLE_DIRECTOR:
         allowed = {"completion_pct"}
-        if set(changes) - allowed:
+        # The unit schedule is a project setting → directors only.
+        if (set(changes) - allowed) or payload.units is not None:
             raise APIError(403, "FORBIDDEN", "Proje ayarlarını yalnızca yönetici düzenleyebilir")
 
     old = snapshot(project)
@@ -128,6 +145,10 @@ def update_project(
         setattr(project, k, v)
     project.last_modified_by = user.id if hasattr(project, "last_modified_by") else None
     db.flush()
+    # CR-016-B: when the units array is provided (even empty), upsert the schedule
+    # and re-derive unit_count. When omitted (None), the schedule is left untouched.
+    if payload.units is not None:
+        units_service.sync_schedule(db, project, payload.units, user.company_id)
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="projects",
         record_id=project.id, action="UPDATE", old_values=old, new_values=snapshot(project),
@@ -138,22 +159,111 @@ def update_project(
     return success(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
+def _safe_section(degraded: list[str], name: str, fn, default=None):
+    """Compute one dashboard sub-section, degrading to ``default`` on ANY failure.
+
+    The project dashboard aggregates ~10 independent computations. Historically a
+    single failing one (e.g. an exotic data row) raised and 500'd the WHOLE page,
+    leaving the frontend in a perpetual skeleton (the silent-load-failure class
+    fixed for Bütçe). Each section is now isolated: a failure logs with a full
+    traceback, records the section name in ``degraded`` so the UI can flag it, and
+    returns the default — the rest of the dashboard still renders. TRY figures are
+    never altered; only the failing section becomes null.
+    """
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 — one bad section must never blank the page
+        logger.exception("dashboard section %r failed", name)
+        degraded.append(name)
+        return default
+
+
 @router.get("/projects/{project_id}/dashboard")
 def project_dashboard(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(get_db)):
     project = get_company_project(db, project_id, user)
-    f = fin_service.project_financials(db, project)
-    cashflow = fin_service.project_cashflow(db, project)
-    fac = fin_service.forecast_at_completion(db, project)  # CR-003-F
-    bridge = fin_service.margin_bridge(db, project)  # CR-003-G
+    degraded: list[str] = []
+
     return success(
         {
-            "project": ProjectOut.model_validate(project).model_dump(mode="json"),
-            "financials": _jsonify(f),
-            "cashflow": _jsonify_list(cashflow),
-            "forecast_at_completion": fac,
-            "margin_bridge": bridge,
+            "project": _safe_section(
+                degraded, "project",
+                lambda: ProjectOut.model_validate(project).model_dump(mode="json"),
+                default={"id": str(project.id), "name": project.name},
+            ),
+            "financials": _safe_section(
+                degraded, "financials", lambda: _jsonify(fin_service.project_financials(db, project))
+            ),
+            "cashflow": _safe_section(
+                degraded, "cashflow", lambda: _jsonify_list(fin_service.project_cashflow(db, project)),
+                default=[],
+            ),
+            "forecast_at_completion": _safe_section(
+                degraded, "forecast_at_completion", lambda: fin_service.forecast_at_completion(db, project)
+            ),  # CR-003-F
+            "margin_bridge": _safe_section(
+                degraded, "margin_bridge", lambda: fin_service.margin_bridge(db, project)
+            ),  # CR-003-G
+            # CR-014-C: USD totals = SUM of per-row amount_usd snapshots (§0.2),
+            # with a count of rows missing a snapshot. TRY figures unchanged.
+            "usd": _safe_section(
+                degraded, "usd", lambda: fin_service.project_usd_totals(db, project)
+            ),
+            # CR-016-B: computed (not stored) residential aggregates over the
+            # live unit schedule — feeds CR-017 per-m² benchmarks.
+            "residential": _safe_section(
+                degraded, "residential", lambda: _jsonify(units_service.schedule_aggregates(project.units))
+            ),
+            # CR-015-B: modeled financing cost as a SEPARATE forecast overlay
+            # (never an actual cost). Zeroed/empty when the effective toggle is off.
+            "financing": _safe_section(
+                degraded, "financing", lambda: financing_service.compute_financing_cost(db, project)
+            ),
+            # CR-019-B: SCHEDULE-lane milestones block (weighted progress, next
+            # deadline, overdue count, per-stage). Display + informs Proje
+            # Sağlığı's "% Tamamlandı" ONLY — never feeds any money figure (§0.2).
+            "milestones": _safe_section(
+                degraded, "milestones",
+                lambda: milestones_service.compute_schedule_block(db, project.id, project.company_id),
+            ),
+            # CR-031-C: revenue-model-aware Project P&L (Kar/Zarar) + m² analizi +
+            # kur-etkisi. Revenue is sell-side (sales+landowner) OR hakediş per
+            # revenue_model — NEVER both (§0.2). Cost is read-only; financing stays
+            # a separable overlay (net excl/incl both present).
+            "pnl": _safe_section(
+                degraded, "pnl", lambda: sales_service.project_pnl(db, project)
+            ),
+            # CR-031-D: IRR (XIRR, TRY & USD) / ROI / süre + yearly cash-flow feed.
+            # Dated series over the same lanes; degenerate series → null IRR.
+            "investment_return": _safe_section(
+                degraded, "investment_return", lambda: sales_service.investment_return(db, project)
+            ),
+            # Which sections (if any) failed to compute — the UI flags these rather
+            # than the whole page failing. Empty list = everything rendered.
+            "degraded_sections": degraded,
         }
     )
+
+
+@router.get("/projects/{project_id}/period-summary")
+def project_period_summary(
+    project_id: uuid.UUID,
+    user: CurrentUser,
+    from_date: str,
+    to_date: str,
+    db: Session = Depends(get_db),
+):
+    """Activity totals (cost incurred / invoiced / collected + USD) for a date
+    range — the dashboard's "Dönem Özeti". Headline KPIs stay full-project; only
+    this responds to the range. Company-scoped via get_company_project."""
+    project = get_company_project(db, project_id, user)
+    try:
+        start = date.fromisoformat(from_date)
+        end = date.fromisoformat(to_date)
+    except (ValueError, TypeError):
+        raise APIError(422, "INVALID_DATE", "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
+    if start > end:
+        raise APIError(422, "INVALID_RANGE", "Başlangıç tarihi bitiş tarihinden sonra olamaz")
+    return success(fin_service.period_summary(db, project, start, end))
 
 
 @router.post("/projects/{project_id}/ai-narrative")
@@ -201,23 +311,31 @@ def get_budget(project_id: uuid.UUID, user: CurrentUser, db: Session = Depends(g
     cats = f["categories"]
     rows = []
     tot_revised = tot_committed = tot_invoiced = tot_paid = D(0)
+    tot_open_committed = tot_exposure = tot_remaining = D(0)
     for c in cats:
         row = _jsonify(c)
         row["label_tr"] = COST_CATEGORIES.get(c["cost_category"], c["cost_category"])
         rows.append(row)
         tot_revised += c["revised_budget_try"]
         tot_committed += c["committed_try"]
+        tot_open_committed += c["open_committed_try"]
+        tot_exposure += c["exposure_try"]
         tot_invoiced += c["invoiced_try"]
         tot_paid += c["paid_try"]
+        tot_remaining += c["remaining_try"]
     return success(
         {
             "categories": rows,
             "totals": {
                 "revised_budget_try": str(money(tot_revised)),
+                # Legacy gross committed kept; CR-023 surfaces açık taahhüt + exposure.
                 "committed_try": str(money(tot_committed)),
+                "open_committed_try": str(money(tot_open_committed)),
+                "exposure_try": str(money(tot_exposure)),
                 "invoiced_try": str(money(tot_invoiced)),
                 "paid_try": str(money(tot_paid)),
-                "remaining_try": str(money(tot_revised - tot_committed)),
+                # Remaining nets actual + open committed (no double-count, CR-023).
+                "remaining_try": str(money(tot_remaining)),
                 "forecast_final_cost_try": str(f["forecast_final_cost_try"]),
             },
         }
@@ -451,6 +569,8 @@ def company_dashboard(
 
     # Compute financials once per project and apply the RAG filter here so every
     # downstream panel (KPIs, charts, tables) reflects the same filtered set.
+    # Perf: batch-load all visible projects' inputs in 3 queries (kills the N+1).
+    fin_service.prime_project_inputs(db, visible)
     pairs = []
     for p in visible:
         f = fin_service.project_financials(db, p)
@@ -470,6 +590,8 @@ def company_dashboard(
     total_net_cash = D(0)
     total_revised_budget = D(0)
     total_committed = D(0)
+    total_open_committed = D(0)  # CR-023: portfolio açık taahhüt
+    total_exposure = D(0)        # CR-023: actual + open committed
     total_actual = D(0)
     mf_rows = []
     mf_target_num = D(0)
@@ -487,6 +609,8 @@ def company_dashboard(
         total_net_cash += f["net_cash_position_try"]
         total_revised_budget += f["revised_budget_try"]
         total_committed += f["total_committed_try"]
+        total_open_committed += f["total_open_committed_try"]
+        total_exposure += f["total_committed_exposure_try"]
         total_actual += f["total_actual_try"]
         if f["target_margin_pct"] is not None:
             mf_rows.append({
@@ -515,11 +639,14 @@ def company_dashboard(
             }
         )
         # Per-project actual vs forecast vs contract (Portföy Performansı chart).
+        # CR-023.1: include open committed so the chart's Taahhüt series is real
+        # (matches the KPI headline = açık taahhüt).
         portfolio_performance.append(
             {
                 "project": p.name,
                 "contract_try": str(f["contract_value_try"]),
                 "actual_try": str(f["total_actual_try"]),
+                "committed_try": str(f["total_open_committed_try"]),
                 "forecast_final_try": str(f["forecast_final_cost_try"]),
             }
         )
@@ -584,13 +711,22 @@ def company_dashboard(
                 "total_receivables_try": str(money(total_outstanding)),
                 "net_cash_position_try": str(money(total_net_cash)),
             },
+            # CR-014-C: portfolio USD totals = SUM of per-row amount_usd snapshots
+            # over the same filtered project set (§0.2), each with a missing-snapshot
+            # count. NOT total_try ÷ today's rate. TRY figures unchanged.
+            "usd": fin_service.usd_aggregates(db, project_ids=[p.id for p in projects]),
             "ar_aging": ar_aging,
             "margin_fade": margin_fade,
             "cash_forecast": cash_forecast,
             "portfolio_budget": {
                 "contract_try": str(money(total_contract)),
                 "revised_budget_try": str(money(total_revised_budget)),
-                "committed_try": str(money(total_committed)),
+                # CR-023: the committed lane is now OPEN committed (relief-aware).
+                # Legacy gross + exposure are kept alongside for tooltips/detail.
+                "committed_try": str(money(total_open_committed)),
+                "committed_gross_try": str(money(total_committed)),
+                "open_committed_try": str(money(total_open_committed)),
+                "committed_exposure_try": str(money(total_exposure)),
                 "actual_try": str(money(total_actual)),
                 "forecast_final_cost_try": str(money(total_forecast_cost)),
             },

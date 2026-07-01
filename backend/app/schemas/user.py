@@ -68,6 +68,10 @@ class CompanyOut(ORMModel):
     require_subcontractor_approval: bool
     require_deletion_approval: bool
     require_variation_approval: bool
+    # CR-015-A: financing-cost settings (modeled accrual; defaults OFF).
+    financing_enabled: bool
+    financing_annual_rate_pct: float | None
+    financing_basis: str
 
 
 class CompanyUpdate(BaseModel):
@@ -87,3 +91,14 @@ class CompanyUpdate(BaseModel):
     require_subcontractor_approval: bool | None = None
     require_deletion_approval: bool | None = None
     require_variation_approval: bool | None = None
+    # CR-015-A: financing-cost settings.
+    financing_enabled: bool | None = None
+    financing_annual_rate_pct: float | None = None
+    financing_basis: str | None = None
+
+    @field_validator("financing_basis")
+    @classmethod
+    def _basis(cls, v):
+        if v is not None and v not in ("cumulative", "net"):
+            raise ValueError("Geçersiz finansman bazı")
+        return v

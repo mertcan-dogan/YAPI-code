@@ -57,6 +57,7 @@ export function ImportPreview({
   const [selectedSheet, setSelectedSheet] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [skippedCount, setSkippedCount] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Step 1: list sheets; if only one, go straight to preview.
@@ -93,7 +94,10 @@ export function ImportPreview({
         const editable = data.filter((r: any) => !r.skipped).map((r: any) => ({ ...r.data, vat_rate: r.data.vat_rate ?? "20" }));
         setRows(editable);
         setSkippedCount(meta.skipped ?? 0);
-        if (meta.header_detected === false) {
+        // CR-015-fix: surface the backend's honest reason instead of a silent empty preview.
+        setNotice(meta.message ?? null);
+        if (meta.message) toast.error(meta.message);
+        else if (meta.header_detected === false) {
           toast.info("Başlık satırı tespit edilemedi. Lütfen verileri kontrol edin.");
         }
         setPhase("preview");
@@ -173,6 +177,12 @@ export function ImportPreview({
           </div>
 
           <div className="flex-1 overflow-auto p-6">
+            {/* CR-015-fix: explain WHY nothing is importable rather than show a blank list. */}
+            {notice && computed.length === 0 && (
+              <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-text-primary">
+                {notice}
+              </div>
+            )}
             <div className="space-y-2">
               {computed.map((r, i) => (
                 <div key={i} className={cn("rounded-md border bg-surface p-3", r._errors.length ? "border-l-4 border-l-danger" : "border-l-4 border-l-success")}>

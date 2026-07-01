@@ -3,6 +3,8 @@ from app.models.base import Base
 from app.models.company import Company
 from app.models.user import User
 from app.models.project import Project
+from app.models.project_unit import ProjectUnit
+from app.models.project_milestone import ProjectMilestone
 from app.models.cost_entry import CostEntry
 from app.models.client_invoice import ClientInvoice
 from app.models.subcontractor import Subcontractor
@@ -16,12 +18,28 @@ from app.models.budget_template import CustomBudgetTemplate
 from app.models.approval_request import ApprovalRequest
 from app.models.notification import Notification
 from app.models.kpi_snapshot import KPISnapshot
+from app.models.ai_conversation import AIConversation
+from app.models.ai_query_log import AIQueryLog
+from app.models.ai_feedback import AIFeedback
+from app.models.vendor import Vendor, VendorAlias
+from app.models.workspace_item import WorkspaceItem
+from app.models.fx_rate import FxRate
+from app.models.unit_sale import UnitSale
+from app.models.landowner_payment import LandownerPayment
+from app.models.automation import Automation, AutomationRun
+from app.models.invite import Invite
+from app.models.closeout import ProjectCloseout
+from app.models.report import Report
+from app.models.dashboard import Dashboard
+from app.models.skill import Skill, SkillRun
 
 __all__ = [
     "Base",
     "Company",
     "User",
     "Project",
+    "ProjectUnit",
+    "ProjectMilestone",
     "CostEntry",
     "ClientInvoice",
     "Subcontractor",
@@ -35,4 +53,21 @@ __all__ = [
     "ApprovalRequest",
     "Notification",
     "KPISnapshot",
+    "AIConversation",
+    "AIQueryLog",
+    "AIFeedback",
+    "Vendor",
+    "VendorAlias",
+    "WorkspaceItem",
+    "FxRate",
+    "UnitSale",
+    "LandownerPayment",
+    "Automation",
+    "AutomationRun",
+    "Invite",
+    "ProjectCloseout",
+    "Report",
+    "Dashboard",
+    "Skill",
+    "SkillRun",
 ]

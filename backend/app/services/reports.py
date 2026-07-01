@@ -19,7 +19,13 @@ from app.constants import COST_CATEGORIES
 from app.models.company import Company
 from app.models.project import Project
 from app.services.financials import project_financials
-from app.utils.format import format_currency_tr, format_date_tr, format_datetime_tr, format_pct_tr
+from app.utils.format import (
+    format_currency_tr,
+    format_date_tr,
+    format_datetime_tr,
+    format_number_tr,
+    format_pct_tr,
+)
 
 # CR-005-A: Türkçe karakterleri (ş, ğ, ı, İ, ü, ö, ç) destekleyen Unicode fontlar.
 # ReportLab'ın varsayılan Helvetica/Times fontları Latin-1 ile sınırlı olduğundan
@@ -73,17 +79,47 @@ AI_DISCLAIMER = (
     "Önemli finansal kararlar almadan önce lütfen doğrulayın."
 )
 
-# The seven management-pack sections (CR-003-K). Kept as data so the structure is
-# verifiable without rendering a PDF.
+# CR-036: the eleven management-pack sections (the new "Aylık Yönetim Raporu").
+# Kept as data so the structure is verifiable without rendering a PDF. A section
+# is rendered ONLY when its data exists (honesty rule §0); otherwise omitted.
 SECTION_TITLES = [
-    "1. Yönetici Özeti",
-    "2. Proje Finansal KPI'ları",
-    "3. Marj Hareketi",
-    "4. Nakit Akışı ve Tahsilat",
-    "5. Bütçe Kategori Detayı",
-    "6. Alt Yüklenici ve Tedarikçi Riski",
-    "7. Eylem Listesi",
+    "1. Kapak",
+    "2. Yönetici Özeti",
+    "3. Finansal Performans",
+    "4. Taahhüt & Maliyet Maruziyeti",
+    "5. Kur & Döviz",
+    "6. Kritik Projeler",
+    "7. Nakit & İşletme Sermayesi",
+    "8. Tedarikçi & Taşeron",
+    "9. Satış, m² & Getiri",
+    "10. Veri Güvence & Anomali",
+    "11. Risk & Aksiyon Planı",
 ]
+
+# CR-036 Heneka palette as PLAIN hex strings (mirrors report_theme). Defined here
+# so build_management_pack_data can colour KPI tuples WITHOUT importing
+# report_theme (which pulls in ReportLab) — keeping the data layer import-light.
+H_NAVY = "#183047"
+H_PETROL = "#0E625B"
+H_GOLD = "#B9852A"
+H_MUT = "#65726F"
+H_RED = "#B94D45"
+H_AMBER = "#C98E24"
+H_GREEN = "#27815F"
+
+# CR-036 §10: assurance finding-type → Turkish label (for the anomaly chart/table).
+_ALERT_TYPE_LABELS = {
+    "duplicate_cost": "Mükerrer maliyet",
+    "duplicate_invoice": "Mükerrer hakediş",
+    "cost_outlier": "Olağandışı maliyet",
+    "kdv_mismatch": "KDV uyumsuzluğu",
+    "hakedis_over_contract": "Hakediş > sözleşme",
+    "missing_fx": "Eksik kur kaydı",
+    "unlinked_vendor": "Bağlanmamış maliyet",
+    "nonpositive_amount": "Sıfır/negatif tutar",
+}
+_SEVERITY_LABELS = {"high": "Yüksek", "medium": "Orta", "low": "Düşük"}
+_SEVERITY_RAG = {"high": "r", "medium": "a", "low": "g"}
 
 
 # ---------------------------------------------------------------------------
@@ -102,9 +138,33 @@ def build_project_report_data(db: Session, project: Project, company: Company) -
             "variance": format_currency_tr(c["variance_try"]),
             "status": c["status"],
             "status_label": STATUS_LABELS.get(c["status"], ""),
+            # CR-037: raw numeric mirrors for the category budget chart. Additive —
+            # the formatted strings above are untouched (frozen-snapshot equality
+            # tests stay green); an OLD snapshot simply lacks these and omits the chart.
+            "revised_num": float(c["revised_budget_try"] or 0),
+            "invoiced_num": float(c["invoiced_try"] or 0),
+            "forecast_num": float(c["forecast_final"] or 0),
         }
         for c in f["categories"]
     ]
+    # CR-031-C: revenue-model-aware Satışlar & Kar/Zarar summary, surfaced in the
+    # report data. Revenue is sell-side (sales+landowner) OR hakediş per
+    # revenue_model — never both (§0.2). Read-only over cost.
+    from app.services import sales as sales_service
+
+    p = sales_service.project_pnl(db, project)
+    kur = p["fx_effect"]
+    sales_pnl = {
+        "revenue_source": p["revenue_source"],
+        "revenue": format_currency_tr(p["revenue_try"]),
+        "cost": format_currency_tr(p["cost_try"]),
+        "financing": format_currency_tr(p["financing_try"]),
+        "net_excl_financing": format_currency_tr(p["net_excl_financing_try"]),
+        "net_incl_financing": format_currency_tr(p["net_incl_financing_try"]),
+        "margin_pct": format_pct_tr(p["margin_pct"]) if p["margin_pct"] is not None else "—",
+        "fx_effect": format_currency_tr(kur["fx_effect_try"]) if kur["fx_effect_try"] is not None else "—",
+    }
+
     return {
         "company_name": company.name,
         "logo_url": company.logo_url,
@@ -124,6 +184,7 @@ def build_project_report_data(db: Session, project: Project, company: Company) -
         "total_outstanding": format_currency_tr(f["total_outstanding_try"]),
         "total_retention": format_currency_tr(f["total_retention_try"]),
         "net_cash": format_currency_tr(f["net_cash_position_try"]),
+        "sales_pnl": sales_pnl,
     }
 
 
@@ -135,179 +196,219 @@ def render_project_report(db: Session, project: Project, company: Company) -> by
 # Monthly Management Pack (CR-003-K) — 7 pages
 # ---------------------------------------------------------------------------
 def build_management_pack_data(db: Session, company: Company, period_label: str) -> dict:
-    """Gather the management-pack data (no ReportLab import; unit-testable).
+    """Gather the CR-036 "Aylık Yönetim Raporu" data (no ReportLab/matplotlib
+    import; unit-testable). Produces numeric, render-agnostic keys for all 11
+    sections (§2). Reuses the portfolio rollup, ``cover_kpis`` and the existing
+    helpers (_active_projects, _company_overdue_payments, _subcontractor_commitments).
 
-    CR-006-A: every section now carries real, project-specific data — margin
-    movement per project (§3), an aggregated budget table (§5), subcontractor /
-    overdue-payment risk (§6) and a dynamically-built action list (§7). The
-    cover-page KPIs and the existing chart datasets are produced here too so the
-    renderer stays a pure formatting layer.
+    HONESTY (§0): every section carries enough data for the render to decide OMIT
+    (empty list / has_sell_side False / has_fx False / no active projects). No
+    fabricated confidence/coverage; no EVM/EBITDA/HSE/13-week-treasury numbers.
     """
     from datetime import date
 
+    from app.constants import PROJECT_TYPES, SELL_SIDE_REVENUE_MODELS
     from app.services import ai as ai_service
+    from app.services import sales as sales_service
     from app.services.financials import forecast_at_completion, project_cashflow
 
     projects = _active_projects(db, company)
+    project_lookup = {p.id: p.name for p in projects}
 
     today = date.today()
-    rows = []
-    margin_movement = []              # §3 — per-project category movement
-    collection_rows = []              # §4 — per-project collection / aging
-    portfolio = {"contract": D(0), "actual": D(0), "collected": D(0),
-                 "invoiced": D(0), "outstanding": D(0)}
-    # CR-005-A chart accumulators.
-    margin_chart = []                 # Grafik 1 — per-project target vs forecast margin
-    cat_totals: dict[str, dict] = {}  # §5 + Grafik 2 — budget usage by category
-    cash_in: dict[str, object] = {}   # Grafik 3 — monthly income (last 6 months)
-    cash_out: dict[str, object] = {}  # Grafik 3 — monthly expense (last 6 months)
     anchor = _parse_period_anchor(period_label)
+    rows = []                         # §6 critical-project rows
+    # Portfolio rollup (real, summed — no EBITDA / net-debt).
+    P = {k: D(0) for k in (
+        "contract", "revised_budget", "actual", "actual_with_vat", "open_committed",
+        "exposure", "forecast", "invoiced", "collected", "outstanding", "net_cash",
+        "revenue", "cost", "net_excl", "net_incl", "fx_effect")}
+    cat_totals: dict[str, dict] = {}  # per-category rollup (commitment + margin bridge)
+    cash_in: dict[str, object] = {}   # monthly income (trailing months)
+    cash_out: dict[str, object] = {}  # monthly expense (trailing months)
     worst_rag = "green"
+    has_sell_side = any(p.revenue_model in SELL_SIDE_REVENUE_MODELS for p in projects)
+
     for p in projects:
         f = project_financials(db, p)
         fac = forecast_at_completion(db, p)
-        target_margin = float(p.target_margin_pct) if p.target_margin_pct is not None else 0.0
+        pnl = sales_service.project_pnl(db, p)
         forecast_margin = float(fac["forecast_final_margin_pct"])
-        completion = float(f["completion_pct"])
+        target_margin = float(p.target_margin_pct) if p.target_margin_pct is not None else 0.0
+        outstanding_high = D(f["total_outstanding_try"]) > D(f["contract_value_try"]) * D("0.20")
         rows.append({
             "name": p.name,
             "client": p.client_name,
+            "project_type": PROJECT_TYPES.get(p.project_type, p.custom_project_type or "—"),
             "contract": format_currency_tr(f["contract_value_try"]),
+            "budget": format_currency_tr(f["revised_budget_try"]),
             "actual": format_currency_tr(f["total_actual_with_vat_try"]),
             "completion": format_pct_tr(f["completion_pct"]),
             "target_margin": format_pct_tr(target_margin),
             "margin": format_pct_tr(fac["forecast_final_margin_pct"]),
             "margin_value": round(forecast_margin, 1),
             "outstanding": format_currency_tr(f["total_outstanding_try"]),
-            "outstanding_high": D(f["total_outstanding_try"]) > D(f["contract_value_try"]) * D("0.20"),
+            "outstanding_high": outstanding_high,
+            "commercial_note": f.get("rag_reason_tr") or "—",
             "rag": f["rag_status"],
         })
         worst_rag = _worse_rag(worst_rag, f["rag_status"])
-        margin_chart.append({
-            "name": p.name,
-            "target_pct": round(target_margin, 1),
-            "forecast_pct": round(forecast_margin, 1),
-        })
-        # §3 — margin movement: per-category variance, top 5 by |variance|.
-        cats = [c for c in f["categories"] if D(c["revised_budget_try"]) > 0 or D(c["invoiced_try"]) > 0]
-        cats_sorted = sorted(cats, key=lambda c: abs(D(c["variance_try"])), reverse=True)
-        movement_cats = [{
-            "label": COST_CATEGORIES.get(c["cost_category"], c["cost_category"]),
-            "original": format_currency_tr(c["original_budget_try"]),
-            "revised": format_currency_tr(c["revised_budget_try"]),
-            "invoiced": format_currency_tr(c["invoiced_try"]),
-            "variance": format_currency_tr(c["variance_try"]),
-            "pct_spent": format_pct_tr(c["pct_spent"]),
-            "status": c["status"],
-        } for c in cats_sorted[:5]]
-        # Dynamic driver text — the 2 categories with the largest positive overrun.
-        overruns = sorted(
-            (c for c in cats if D(c["variance_try"]) > 0),
-            key=lambda c: D(c["variance_try"]), reverse=True,
-        )[:2]
-        if overruns:
-            drivers = ", ".join(COST_CATEGORIES.get(c["cost_category"], c["cost_category"]) for c in overruns)
-            driver_text = f"Marj düşüşünün başlıca nedenleri: {drivers}."
-        else:
-            driver_text = "Bu projede bütçe aşımı kaynaklı marj düşüşü tespit edilmemiştir."
-        margin_movement.append({
-            "name": p.name,
-            "final_margin": format_pct_tr(fac["forecast_final_margin_pct"]),
-            "final_margin_rag": _margin_rag(forecast_margin),
-            "categories": movement_cats,
-            "driver_text": driver_text,
-        })
-        # §4 — per-project collection / aging.
-        collection_rows.append({
-            "name": p.name,
-            "invoiced": format_currency_tr(f["total_invoiced_try"]),
-            "collected": format_currency_tr(f["total_collected_try"]),
-            "outstanding": format_currency_tr(f["total_outstanding_try"]),
-            "overdue_days": f["max_overdue_days"],
-            "overdue": f["max_overdue_days"] >= 30,
-        })
-        # §5 + Grafik 2 — aggregate revised/committed/invoiced per cost category.
+
+        # Per-category rollup (CR-023 committed/open/exposure + variance for §3/§4).
         for c in f["categories"]:
             key = c["cost_category"]
-            t = cat_totals.setdefault(key, {"revised": D(0), "committed": D(0), "invoiced": D(0)})
+            t = cat_totals.setdefault(key, {
+                "revised": D(0), "open_committed": D(0), "invoiced": D(0),
+                "exposure": D(0), "variance": D(0)})
             t["revised"] += D(c["revised_budget_try"])
-            t["committed"] += D(c["committed_try"])
+            t["open_committed"] += D(c["open_committed_try"])
             t["invoiced"] += D(c["invoiced_try"])
-        # Cash flow: aggregate effective monthly in/out over the trailing 6 months.
+            t["exposure"] += D(c["exposure_try"])
+            t["variance"] += D(c["variance_try"])
+
+        # Trailing monthly cashflow (effective in/out for past + current months).
         for m in project_cashflow(db, p, today=anchor):
             if not (m["is_past"] or m["is_current"]):
                 continue
             cash_in[m["month"]] = D(cash_in.get(m["month"], D(0))) + D(m["actual_in_try"])
             cash_out[m["month"]] = D(cash_out.get(m["month"], D(0))) + D(m["actual_out_try"])
-        portfolio["contract"] += D(f["contract_value_try"])
-        portfolio["actual"] += D(f["total_actual_with_vat_try"])
-        portfolio["collected"] += D(f["total_collected_try"])
-        portfolio["invoiced"] += D(f["total_invoiced_try"])
-        portfolio["outstanding"] += D(f["total_outstanding_try"])
 
-    # §5 — budget summary table over every category that has activity (sorted by % spent).
-    budget_summary = []
-    budget_chart = []
-    for key, t in cat_totals.items():
-        revised = t["revised"]
-        committed = t["committed"]
-        invoiced = t["invoiced"]
-        if revised <= 0 and invoiced <= 0:
-            continue
-        spent_pct = float(invoiced / revised * 100) if revised > 0 else 0.0
-        budget_summary.append({
-            "label": COST_CATEGORIES.get(key, key),
-            "revised": format_currency_tr(revised),
-            "committed": format_currency_tr(committed),
-            "invoiced": format_currency_tr(invoiced),
-            "remaining": format_currency_tr(revised - committed),
-            "pct_spent": format_pct_tr(spent_pct),
-            "pct_value": round(spent_pct, 1),
-            "revised_d": revised,
-        })
-        if revised > 0:
-            budget_chart.append({"label": COST_CATEGORIES.get(key, key), "spent_pct": round(spent_pct, 1)})
-    budget_summary.sort(key=lambda x: x["pct_value"], reverse=True)
-    budget_chart.sort(key=lambda x: x["spent_pct"], reverse=True)
-    budget_chart = budget_chart[:8]
-    budget_total = {
-        "revised": format_currency_tr(sum((D(b["revised_d"]) for b in budget_summary), D(0))),
-    }
+        P["contract"] += D(f["contract_value_try"])
+        P["revised_budget"] += D(f["revised_budget_try"])
+        P["actual"] += D(f["total_actual_try"])
+        P["actual_with_vat"] += D(f["total_actual_with_vat_try"])
+        P["open_committed"] += D(f["total_open_committed_try"])
+        P["exposure"] += D(f["total_committed_exposure_try"])
+        P["forecast"] += D(fac["forecast_final_cost_try"])
+        P["invoiced"] += D(f["total_invoiced_try"])
+        P["collected"] += D(f["total_collected_try"])
+        P["outstanding"] += D(f["total_outstanding_try"])
+        P["net_cash"] += D(f["net_cash_position_try"])
+        P["revenue"] += D(pnl["revenue_try"])
+        P["cost"] += D(pnl["cost_try"])
+        P["net_excl"] += D(pnl["net_excl_financing_try"])
+        P["net_incl"] += D(pnl["net_incl_financing_try"])
+        kur = (pnl.get("fx_effect") or {}).get("fx_effect_try")
+        if kur is not None:
+            P["fx_effect"] += D(kur)
 
-    # §6 — subcontractor & supplier risk.
-    overdue_payments = _company_overdue_payments(db, company, today)
-    subcontractor_commitments = _subcontractor_commitments(db, company)
+    rows.sort(key=lambda r: _RAG_ORDER.get(r["rag"], 0), reverse=True)
 
-    # Grafik 3 — last 6 months of income vs expense, chronological.
-    cash_months = sorted(set(cash_in) | set(cash_out))[-6:]
-    cashflow_chart = [
-        {
-            "month": mk,
-            "income": float(cash_in.get(mk, D(0))),
-            "expense": float(cash_out.get(mk, D(0))),
-        }
-        for mk in cash_months
+    collected_pct = _safe_pct_str(P["collected"], P["invoiced"])
+    margin_excl_pct = _safe_pct_str(P["net_excl"], P["revenue"])
+    margin_incl_pct = _safe_pct_str(P["net_incl"], P["revenue"])
+
+    # ---- §2 Yönetici Özeti — executive KPI cards (6) -----------------------
+    exec_kpis = [
+        ("GELİR", format_currency_tr(P["revenue"]), "Dönem geliri", H_MUT, H_PETROL),
+        ("MALİYET", format_currency_tr(P["cost"]), "Gerçekleşen + tahmini", H_MUT, H_PETROL),
+        ("NET KÂR (FİN. HARİÇ)", format_currency_tr(P["net_excl"]),
+         f"Marj {margin_excl_pct}", _good_bad(P["net_excl"] >= 0), H_PETROL),
+        ("MALİYET MARUZİYETİ", format_currency_tr(P["exposure"]),
+         "Gerçekleşen + açık taahhüt", H_AMBER, H_GOLD),
+        ("NAKİT POZİSYONU", format_currency_tr(P["net_cash"]),
+         "Tahsilat − ödeme", _good_bad(P["net_cash"] >= 0), H_PETROL),
+        ("BEKLEYEN TAHSİLAT", format_currency_tr(P["outstanding"]),
+         f"{collected_pct} tahsil edildi", H_AMBER, H_GOLD),
     ]
+
+    # ---- §10 Veri Güvence (READ-ONLY — collect_findings, never scan_company) -
+    assurance = _assurance_section(db, company, today)
+    high_findings = assurance.pop("high_findings")
+
+    # ---- §2 decisions + early warning (rules + high-severity findings) ------
+    overdue_payments = _company_overdue_payments(db, company, today)
+    decisions = _build_decisions(rows, overdue_payments, cat_totals, high_findings, project_lookup)
+    early_warning = _early_warning(high_findings, decisions, overdue_payments)
+
+    # ---- §3 Finansal Performans -------------------------------------------
+    fin_kpis = [
+        ("GELİR", format_currency_tr(P["revenue"]), "Dönem geliri", H_MUT, H_PETROL),
+        ("MALİYET", format_currency_tr(P["cost"]), "Tahmini final maliyet", H_MUT, H_PETROL),
+        ("NET KÂR (FİN. HARİÇ)", format_currency_tr(P["net_excl"]),
+         f"Marj {margin_excl_pct}", _good_bad(P["net_excl"] >= 0), H_PETROL),
+        ("NET KÂR (FİN. DAHİL)", format_currency_tr(P["net_incl"]),
+         f"Marj {margin_incl_pct}", _good_bad(P["net_incl"] >= 0), H_PETROL),
+    ]
+    # Monthly trend (trailing months) for the combo chart (bar=gelir, line=net).
+    months = sorted(set(cash_in) | set(cash_out))[-6:]
+    monthly_trend = [{
+        "month": mk,
+        "label": _month_label_tr(mk),
+        "income": float(cash_in.get(mk, D(0))),
+        "expense": float(cash_out.get(mk, D(0))),
+        "net": float(D(cash_in.get(mk, D(0))) - D(cash_out.get(mk, D(0)))),
+    } for mk in months]
+    margin_bridge = _margin_bridge(cat_totals, P)
+
+    # ---- §4 Taahhüt & Maliyet Maruziyeti ----------------------------------
+    commitment_kpis = [
+        ("GERÇEKLEŞEN MALİYET", format_currency_tr(P["actual"]),
+         f"Bütçenin {_safe_pct_str(P['actual'], P['revised_budget'])}'i", H_MUT, H_PETROL),
+        ("AÇIK TAAHHÜT", format_currency_tr(P["open_committed"]),
+         "Faturalanmamış sipariş", H_AMBER, H_GOLD),
+        ("MALİYET MARUZİYETİ", format_currency_tr(P["exposure"]),
+         "Gerçekleşen + açık", H_AMBER, H_GOLD),
+        ("TAHMİNİ FİNAL", format_currency_tr(P["forecast"]),
+         f"Bütçe {format_currency_tr(P['revised_budget'])}",
+         _good_bad(P["forecast"] <= P["revised_budget"]), H_GOLD),
+    ]
+    commitment_categories, commitment_chart = _commitment_categories(cat_totals)
+
+    # ---- §5 Kur & Döviz (omitted by render when has_fx False) --------------
+    fx = _fx_section(db, company, projects, P["fx_effect"])
+
+    # ---- §7 Nakit & İşletme Sermayesi --------------------------------------
+    # AR aging — replicate app/api/projects.py:901 _ar_aging EXACTLY (same buckets
+    # + outstanding-weighted DSO, over the active project ids).
+    ar_aging = _ar_aging_for_company(db, list(project_lookup.keys()), today)
+    dso = ar_aging["dso_days"]
+    cash_kpis = [
+        ("NAKİT POZİSYONU", format_currency_tr(P["net_cash"]),
+         "Tahsilat − ödeme", _good_bad(P["net_cash"] >= 0), H_PETROL),
+        ("TAHSİL EDİLEN", format_currency_tr(P["collected"]),
+         f"{collected_pct} tahsilat", H_GREEN, H_PETROL),
+        ("BEKLEYEN TAHSİLAT", format_currency_tr(P["outstanding"]),
+         "Açık alacak", H_AMBER, H_GOLD),
+        ("DSO", f"{dso} gün" if dso is not None else "—",
+         "Ort. tahsilat süresi", H_MUT, H_PETROL),
+    ]
+
+    # ---- §8 Tedarikçi & Taşeron -------------------------------------------
+    vendor = _vendor_spend(db, company)
+    subcontractor_commitments = _subcontractor_commitments(db, company)
+    open_sub_balance = sum((D(s["revised_d"]) - D(_strip_money(s["paid"]))
+                            for s in subcontractor_commitments), D(0))
+    vendor_kpis = [
+        ("AKTİF TEDARİKÇİ", str(vendor["active_count"]), "Harcama yapılan", H_MUT, H_PETROL),
+        ("İLK 5 YOĞUNLAŞMA", format_pct_tr(vendor["concentration_pct"]),
+         "Toplam harcamanın", H_AMBER, H_GOLD),
+        ("AKTİF TAŞERON", str(len(subcontractor_commitments)), "Sözleşmeli", H_MUT, H_PETROL),
+        ("AÇIK TAŞERON BAKİYE", format_currency_tr(open_sub_balance),
+         "Kalan hakediş", H_AMBER, H_GOLD),
+    ]
+
+    # ---- §9 Satış, m² & Getiri (omitted by render unless has_sell_side) -----
+    sell_side = _sell_side_section(db, projects) if has_sell_side else None
+
+    # ---- §11 Risk & Aksiyon Planı -----------------------------------------
+    risk_register, action_plan = _risk_and_actions(decisions)
 
     ai_summary = ai_service.management_summary({
         "sirket": company.name,
         "donem": period_label,
         "proje_sayisi": len(projects),
-        "toplam_sozlesme": str(portfolio["contract"]),
-        "toplam_bekleyen_tahsilat": str(portfolio["outstanding"]),
+        "toplam_sozlesme": str(P["contract"]),
+        "toplam_gelir": str(P["revenue"]),
+        "toplam_maliyet": str(P["cost"]),
+        "net_kar": str(P["net_excl"]),
+        "toplam_bekleyen_tahsilat": str(P["outstanding"]),
     })
-    ai_actions = ai_service.management_actions({"projeler": [r["name"] for r in rows]})
 
-    # §7 — dynamic, project-specific action list (no generic advice).
-    action_items = _build_action_items(
-        rows, margin_movement, overdue_payments, budget_summary, ai_actions, period_label
-    )
-
-    # Cover-page KPIs (real portfolio data).
     cover_kpis = {
         "active_projects": str(len(projects)),
-        "total_contract": format_currency_tr(portfolio["contract"]),
-        "total_outstanding": format_currency_tr(portfolio["outstanding"]),
+        "total_contract": format_currency_tr(P["contract"]),
+        "total_outstanding": format_currency_tr(P["outstanding"]),
         "risk_level": _RISK_LABELS[worst_rag],
         "risk_rag": worst_rag,
     }
@@ -317,30 +418,46 @@ def build_management_pack_data(db: Session, company: Company, period_label: str)
         "logo_url": company.logo_url,
         "period": period_label,
         "generated_at": format_datetime_tr(datetime.now(timezone.utc)),
-        "ai_summary": ai_summary,
-        "ai_actions": ai_actions,
-        "rows": rows,
+        "is_sample": False,
         "section_titles": list(SECTION_TITLES),
-        "total_contract": format_currency_tr(portfolio["contract"]),
-        "total_invoiced": format_currency_tr(portfolio["invoiced"]),
-        "total_collected": format_currency_tr(portfolio["collected"]),
-        "total_outstanding": format_currency_tr(portfolio["outstanding"]),
-        "collected_pct": format_pct_tr(
-            float(portfolio["collected"] / portfolio["invoiced"] * 100) if portfolio["invoiced"] > 0 else 0
-        ),
-        # CR-006-A section datasets.
         "cover_kpis": cover_kpis,
-        "margin_movement": margin_movement,
-        "collection_rows": collection_rows,
-        "budget_summary": budget_summary,
-        "budget_total": budget_total,
-        "overdue_payments": overdue_payments,
+        # §2
+        "ai_summary": ai_summary,
+        "exec_kpis": exec_kpis,
+        "decisions": decisions,
+        "early_warning": early_warning,
+        # §3
+        "fin_kpis": fin_kpis,
+        "monthly_trend": monthly_trend,
+        "margin_bridge": margin_bridge,
+        # §4
+        "commitment_kpis": commitment_kpis,
+        "commitment_categories": commitment_categories,
+        "commitment_chart": commitment_chart,
+        # §5
+        "has_fx": fx["has_fx"],
+        "fx_kpis": fx["fx_kpis"],
+        "fx_split": fx["fx_split"],
+        "fx_note": fx["fx_note"],
+        # §6
+        "rows": rows,
+        # §7
+        "cash_kpis": cash_kpis,
+        "ar_aging": ar_aging,
+        # §8
+        "vendor_spend": vendor["top"],
+        "vendor_concentration": {
+            "first5_pct": vendor["concentration_pct"], "active_count": vendor["active_count"]},
+        "vendor_kpis": vendor_kpis,
         "subcontractor_commitments": subcontractor_commitments,
-        "action_items": action_items,
-        # CR-005-A chart datasets (numeric, render-agnostic).
-        "margin_chart": margin_chart,
-        "budget_chart": budget_chart,
-        "cashflow_chart": cashflow_chart,
+        # §9
+        "has_sell_side": bool(sell_side),
+        "sell_side": sell_side,
+        # §10
+        "assurance": assurance,
+        # §11
+        "risk_register": risk_register,
+        "action_plan": action_plan,
     }
 
 
@@ -360,6 +477,492 @@ def _margin_rag(pct: float) -> str:
     if pct <= 10:
         return "amber"
     return "green"
+
+
+# ---------------------------------------------------------------------------
+# CR-036 data-layer helpers (NO ReportLab/matplotlib — render-agnostic numbers).
+# ---------------------------------------------------------------------------
+def _safe_pct_str(numerator, denominator) -> str:
+    """Formatted ``numerator/denominator*100`` Turkish %, or '—' when undefined."""
+    den = D(denominator)
+    if den == 0:
+        return "—"
+    return format_pct_tr(float(D(numerator) / den * 100))
+
+
+def _good_bad(is_good: bool) -> str:
+    """Context colour for a KPI: green when good, red otherwise."""
+    return H_GREEN if is_good else H_RED
+
+
+def _strip_money(formatted: str):
+    """Parse a Turkish currency string ('1.234,56 ₺') back to a Decimal."""
+    s = str(formatted or "").replace("₺", "").replace("$", "").strip()
+    s = s.replace(".", "").replace(",", ".")
+    try:
+        return D(s)
+    except Exception:  # noqa: BLE001
+        return D(0)
+
+
+def _build_decisions(rows, overdue_payments, cat_totals, high_findings, project_lookup) -> list[dict]:
+    """§2 "Karar Gerektiren Konular": restructure the action rules (overdue /
+    budget-overrun / large-outstanding / low-margin) PLUS high-severity assurance
+    findings into decision dicts {konu, gerekce, sahip, beklenen_etki, oncelik_rag}."""
+    decisions: list[dict] = []
+
+    # Rule 1 — overdue payables.
+    for o in overdue_payments[:3]:
+        decisions.append({
+            "konu": f"{o['supplier']} — vadesi geçmiş ödeme",
+            "gerekce": f"{o['amount']}, {o['days']} gün gecikti",
+            "sahip": "Finans",
+            "beklenen_etki": "Tedarikçi ilişkisi ve gecikme riski ↓",
+            "oncelik_rag": "r" if o["severe"] else "a",
+        })
+
+    # Rule 2 — budget overruns (exposure > revised budget per category).
+    overruns = sorted(
+        ((COST_CATEGORIES.get(k, k), t) for k, t in cat_totals.items()
+         if D(t["revised"]) > 0 and D(t["variance"]) > 0),
+        key=lambda kt: D(kt[1]["variance"]), reverse=True)
+    for label, t in overruns[:2]:
+        decisions.append({
+            "konu": f"{label} — bütçe aşımı",
+            "gerekce": f"Maruziyet revize bütçeyi {format_currency_tr(t['variance'])} aşıyor",
+            "sahip": "Proje Müdürü",
+            "beklenen_etki": "Maliyet kontrolü ve marj koruması",
+            "oncelik_rag": "r",
+        })
+
+    # Rule 3 — large outstanding receivables.
+    for r in rows:
+        if r["outstanding_high"]:
+            decisions.append({
+                "konu": f"{r['name']} — yüksek bekleyen tahsilat",
+                "gerekce": f"{r['outstanding']} tahsilat bekliyor",
+                "sahip": "Ticari",
+                "beklenen_etki": "Nakit girişini hızlandırma",
+                "oncelik_rag": "a",
+            })
+
+    # Rule 4 — low forecast margin.
+    for r in rows:
+        if r["margin_value"] < 10:
+            decisions.append({
+                "konu": f"{r['name']} — düşük marj",
+                "gerekce": f"Tahmini final marj {r['margin']}",
+                "sahip": "Proje Müdürü",
+                "beklenen_etki": "Maliyet kontrolü gerekli",
+                "oncelik_rag": "r" if r["margin_value"] < 5 else "a",
+            })
+
+    # Rule 5 — high-severity assurance findings (review, not accusation).
+    for fnd in high_findings[:3]:
+        pname = project_lookup.get(fnd.get("project_id"), "")
+        decisions.append({
+            "konu": fnd["title_tr"] + (f" — {pname}" if pname else ""),
+            "gerekce": fnd["body_tr"],
+            "sahip": "Finans / Güvence",
+            "beklenen_etki": fnd.get("recommended_action") or "İnceleme önerilir",
+            "oncelik_rag": "r",
+        })
+
+    if not decisions:
+        decisions.append({
+            "konu": "Acil karar gerektiren konu yok",
+            "gerekce": "Bu dönemde kritik finansal risk tespit edilmedi",
+            "sahip": "—",
+            "beklenen_etki": "—",
+            "oncelik_rag": "g",
+        })
+    return decisions[:8]
+
+
+def _early_warning(high_findings, decisions, overdue_payments) -> dict:
+    """§2 AI Erken Uyarı panel. text = top assurance finding or top decision; the
+    footer carries ONLY honest tokens — 'İnsan onayı gerekir' plus an 'Eylemsizlik
+    riski' phrase when derivable. NO fabricated Güven %/Veri kapsama % (§0)."""
+    if high_findings:
+        f = high_findings[0]
+        text = f.get("reasoning") or f.get("body_tr") or f.get("title_tr")
+    elif decisions and decisions[0]["oncelik_rag"] != "g":
+        d = decisions[0]
+        text = f"En yüksek öncelikli konu: {d['konu']}. {d['gerekce']}."
+    else:
+        text = "Bu dönem için acil bir erken uyarı bulgusu tespit edilmemiştir."
+
+    tokens = ["İnsan onayı gerekir"]
+    if overdue_payments:
+        tokens.append(f"Eylemsizlik riski: {overdue_payments[0]['days']} gün geciken ödeme")
+    elif high_findings:
+        tokens.append("Eylemsizlik riski: incelenmeyen yüksek öncelikli bulgu")
+    return {"text": text, "footer": "   ·   ".join(tokens)}
+
+
+def _margin_bridge(cat_totals, P) -> dict:
+    """§3 Marj Köprüsü from REAL per-category variances only (no narrative rows).
+    Opening = bütçe marjı (sözleşme − revize bütçe); rows = top categories by
+    |Σ variance|; closing = tahmini final marj (sözleşme − tahmini final maliyet)."""
+    opening_pct = _safe_pct_str(P["contract"] - P["revised_budget"], P["contract"])
+    closing_pct = _safe_pct_str(P["contract"] - P["forecast"], P["contract"])
+    ranked = sorted(
+        ((COST_CATEGORIES.get(k, k), t) for k, t in cat_totals.items()
+         if D(t["variance"]) != 0),
+        key=lambda kt: abs(D(kt[1]["variance"])), reverse=True)
+    rows = []
+    for label, t in ranked[:6]:
+        var = D(t["variance"])
+        rows.append({
+            "kalem": label,
+            "etki": format_currency_tr(-var),  # over budget => negative margin impact
+            "not": "Bütçe aşımı" if var > 0 else "Tasarruf",
+        })
+    return {
+        "opening_pct": opening_pct,
+        "closing_pct": closing_pct,
+        "rows": rows,
+    }
+
+
+def _commitment_categories(cat_totals) -> tuple[list[dict], list[dict]]:
+    """§4 category detail table + stacked-bar dataset (gerçekleşen vs açık taahhüt),
+    aggregated across projects. Sorted by % usage descending."""
+    table: list[dict] = []
+    for key, t in cat_totals.items():
+        revised, invoiced, open_c = D(t["revised"]), D(t["invoiced"]), D(t["open_committed"])
+        if revised <= 0 and invoiced <= 0 and open_c <= 0:
+            continue
+        pct_value = float(invoiced / revised * 100) if revised > 0 else 0.0
+        durum = "r" if pct_value > 100 else ("a" if pct_value >= 85 else "g")
+        table.append({
+            "label": COST_CATEGORIES.get(key, key),
+            "revised": revised, "invoiced": invoiced, "open_committed": open_c,
+            "remaining": revised - D(t["exposure"]),
+            "pct_value": round(pct_value, 1),
+            "durum_rag": durum,
+        })
+    table.sort(key=lambda x: x["pct_value"], reverse=True)
+    chart = [{"label": _short(r["label"], 14),
+              "actual": float(r["invoiced"]), "open": float(r["open_committed"])}
+             for r in table[:8]]
+    return table, chart
+
+
+def _fx_cost_aggregates(db: Session, company: Company) -> dict:
+    """Company-scoped cost FX aggregates (mirror financials.py scope): Σ amount_try,
+    Σ amount_try over rows WITH a USD snapshot, Σ amount_usd. Excludes soft-deleted /
+    pending-approval / forecast rows."""
+    from sqlalchemy import case, func, select
+
+    from app.models.cost_entry import CostEntry
+
+    total_try, fx_try, usd = db.execute(
+        select(
+            func.coalesce(func.sum(CostEntry.amount_try), 0),
+            func.coalesce(func.sum(
+                case((CostEntry.amount_usd.is_not(None), CostEntry.amount_try), else_=0)), 0),
+            func.coalesce(func.sum(CostEntry.amount_usd), 0),
+        ).where(
+            CostEntry.company_id == company.id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+            CostEntry.entry_type != "forecast",
+        )
+    ).one()
+    return {"total_try": D(total_try), "fx_try": D(fx_try), "usd": D(usd)}
+
+
+def _fx_section(db: Session, company: Company, projects, fx_effect_total) -> dict:
+    """§5 Kur & Döviz. ``has_fx`` is False (render omits the section) when no cost
+    is tracked in USD. ``fx_sensitive_pct`` = share of cost (TRY value) that carries
+    a USD snapshot; ``avg_rate`` = Σ TRY ÷ Σ USD over those rows. No fabricated
+    numbers — the Yönetim Notu is a static management template."""
+    from app.services import fx as fx_service
+
+    agg = _fx_cost_aggregates(db, company)
+    usd = agg["usd"]
+    has_fx = usd > 0
+    fx_sensitive_pct = float(agg["fx_try"] / agg["total_try"] * 100) if agg["total_try"] > 0 else 0.0
+    fx_sensitive_pct = max(0.0, min(100.0, fx_sensitive_pct))
+    avg_rate = float(agg["fx_try"] / usd) if usd > 0 else None
+    today_rate = fx_service.latest_rate(db)
+
+    fx_kpis = [
+        ("DÖVİZE DUYARLI MALİYET", format_pct_tr(fx_sensitive_pct),
+         "USD karşılığı izlenen", H_AMBER, H_GOLD),
+        ("KUR ETKİSİ", format_currency_tr(fx_effect_total),
+         "Maliyete yansıyan", _good_bad(fx_effect_total <= 0), H_GOLD),
+        ("USD MALİYET", f"${format_number_tr(usd, 0)}", "Snapshot kurdan", H_MUT, H_PETROL),
+        ("ORT. ALIM KURU", f"{format_number_tr(avg_rate, 2)} ₺/$" if avg_rate else "—",
+         "Dönem ağırlıklı", H_MUT, H_PETROL),
+    ]
+    fx_note = (
+        "Döviz maruziyeti, USD karşılığı izlenen maliyet kalemlerine dayanır. Kur "
+        "hareketleri brüt marjı doğrudan etkiler. İthal ekipman ve dövizli "
+        "sözleşmelerde vadeli kur koruması ve sözleşmelerde kur eskalasyon maddesi "
+        "değerlendirilmesi önerilir."
+    )
+    return {
+        "has_fx": has_fx,
+        "fx_kpis": fx_kpis,
+        "fx_split": {"try_pct": round(100.0 - fx_sensitive_pct, 1),
+                     "fx_sensitive_pct": round(fx_sensitive_pct, 1)},
+        "fx_note": fx_note,
+        "today_rate": str(today_rate) if today_rate is not None else None,
+    }
+
+
+def _ar_aging_for_company(db: Session, project_ids, today) -> dict:
+    """§7 AR aging — REPLICATES app/api/projects.py:901 ``_ar_aging`` exactly: same
+    buckets (not_due / d1_30 / d31_60 / d60_plus) and the same outstanding-weighted
+    DSO over the active project ids. (Kept here rather than imported from the API
+    layer; due_date/invoice_date None-guards added so a report never crashes.)"""
+    from sqlalchemy import select
+
+    from app.calculations.money import money
+    from app.models.client_invoice import ClientInvoice
+
+    zero = {"not_due_try": "0", "d1_30_try": "0", "d31_60_try": "0",
+            "d60_plus_try": "0", "total_outstanding_try": "0", "dso_days": None}
+    if not project_ids:
+        return zero
+    invs = db.execute(
+        select(ClientInvoice).where(
+            ClientInvoice.project_id.in_(project_ids),
+            ClientInvoice.is_deleted.is_(False),
+        )
+    ).scalars().all()
+    b = {"not_due": D(0), "d1_30": D(0), "d31_60": D(0), "d60_plus": D(0)}
+    total = D(0)
+    weighted_age = D(0)
+    for i in invs:
+        out = D(i.outstanding_try)
+        if out <= 0:
+            continue
+        total += out
+        if i.due_date is not None:
+            overdue = (today - i.due_date).days
+            if overdue <= 0:
+                b["not_due"] += out
+            elif overdue <= 30:
+                b["d1_30"] += out
+            elif overdue <= 60:
+                b["d31_60"] += out
+            else:
+                b["d60_plus"] += out
+        else:
+            b["not_due"] += out
+        if i.invoice_date is not None:
+            weighted_age += out * D((today - i.invoice_date).days)
+    dso = int(round(float(weighted_age / total))) if total > 0 else None
+    return {
+        "not_due_try": str(money(b["not_due"])),
+        "d1_30_try": str(money(b["d1_30"])),
+        "d31_60_try": str(money(b["d31_60"])),
+        "d60_plus_try": str(money(b["d60_plus"])),
+        "total_outstanding_try": str(money(total)),
+        "dso_days": dso,
+    }
+
+
+def _vendor_spend(db: Session, company: Company, top_n: int = 8) -> dict:
+    """§8 vendor spend — NEW aggregation grouping cost entries by ``vendor_id``
+    (company-scoped; is_deleted=False AND pending_approval=False AND entry_type !=
+    'forecast', mirroring financials.py). vendor_id IS NULL is EXCLUDED from the
+    ranking. Returns top-N + first-5 concentration % over total vendor spend."""
+    from sqlalchemy import func, select
+
+    from app.models.cost_entry import CostEntry
+    from app.models.vendor import Vendor
+
+    grouped = db.execute(
+        select(CostEntry.vendor_id, func.coalesce(func.sum(CostEntry.total_with_vat_try), 0))
+        .where(
+            CostEntry.company_id == company.id,
+            CostEntry.is_deleted.is_(False),
+            CostEntry.pending_approval.is_(False),
+            CostEntry.entry_type != "forecast",
+            CostEntry.vendor_id.is_not(None),
+        )
+        .group_by(CostEntry.vendor_id)
+    ).all()
+    names = {v.id: (v.canonical_name or "Bilinmeyen Tedarikçi")
+             for v in db.execute(
+                 select(Vendor).where(Vendor.company_id == company.id)).scalars().all()}
+    spend = [{"name": names.get(vid, "Bilinmeyen Tedarikçi"),
+              "amount": format_currency_tr(D(amt)), "amount_d": D(amt)}
+             for vid, amt in grouped]
+    spend.sort(key=lambda x: x["amount_d"], reverse=True)
+    total = sum((s["amount_d"] for s in spend), D(0))
+    first5 = sum((s["amount_d"] for s in spend[:5]), D(0))
+    concentration = round(float(first5 / total * 100), 1) if total > 0 else 0.0
+    return {"top": spend[:top_n], "active_count": len(spend),
+            "concentration_pct": concentration}
+
+
+def _assurance_section(db: Session, company: Company, today) -> dict:
+    """§10 Veri Güvence & Anomali — READ-ONLY: uses ``collect_findings`` +
+    ``scanned_counts`` (what POST /ai/assurance/scan reads), NEVER ``scan_company``
+    (which writes AIAlert rows). Groups findings by type and surfaces high-severity
+    priority findings. ``high_findings`` is returned for §2/§11 reuse and popped by
+    the caller before the dict is serialised into the report payload."""
+    from app.services import assurance
+
+    counts = assurance.scanned_counts(db, company.id)
+    findings = assurance.collect_findings(db, company.id, today)
+    scanned_total = counts["cost_entries"] + counts["client_invoices"]
+
+    by_type: dict[str, int] = {}
+    for f in findings:
+        by_type[f["alert_type"]] = by_type.get(f["alert_type"], 0) + 1
+    found_by_type = [
+        {"type": t, "label": _ALERT_TYPE_LABELS.get(t, t),
+         "count": n, "rag": ("r" if t in ("duplicate_cost", "duplicate_invoice",
+                                           "hakedis_over_contract") else "a")}
+        for t, n in sorted(by_type.items(), key=lambda x: -x[1])
+    ]
+    high = [f for f in findings if f["severity"] == "high"]
+    priority = [{
+        "bulgu": f["title_tr"],
+        "tur": _ALERT_TYPE_LABELS.get(f["alert_type"], f["alert_type"]),
+        "oneri": f.get("recommended_action") or "—",
+        "durum_label": _SEVERITY_LABELS.get(f["severity"], f["severity"]),
+        "durum_rag": _SEVERITY_RAG.get(f["severity"], "a"),
+    } for f in (high or findings)[:8]]
+
+    return {
+        "scanned_total": scanned_total,
+        "total_found": len(findings),
+        "high_count": len(high),
+        "found_by_type": found_by_type,
+        "priority_findings": priority,
+        "high_findings": high,
+    }
+
+
+def _sell_side_section(db: Session, projects) -> dict | None:
+    """§9 Satış, m² & Getiri — ONLY for sell-side projects (revenue_model ∈
+    SELL_SIDE_REVENUE_MODELS). Aggregates unit-sales P&L, per-m² economics and
+    daire-tipi P&L from sales.unit_sales_pnl / project_pnl / investment_return.
+    All str(Decimal) values converted; None guarded. Returns None when no sales."""
+    from app.constants import SELL_SIDE_REVENUE_MODELS, UNIT_TYPES
+    from app.services import sales as sales_service
+
+    ss = [p for p in projects if p.revenue_model in SELL_SIDE_REVENUE_MODELS]
+    if not ss:
+        return None
+
+    total_sold = 0
+    total_units = 0
+    sum_sales = D(0)
+    sum_m2 = D(0)
+    sum_profit = D(0)
+    sum_cost = D(0)
+    m2_economics: list[dict] = []
+    unit_type_agg: dict[str, dict] = {}
+
+    for p in ss:
+        usp = sales_service.unit_sales_pnl(db, p)
+        totals = usp["totals"]
+        pnl = sales_service.project_pnl(db, p)
+        total_sold += int(totals["count"])
+        if p.unit_count:
+            total_units += int(p.unit_count)
+        sum_sales += D(totals["sale_price_try"])
+        sum_m2 += D(totals["total_m2"])
+        sum_profit += D(totals["pnl_try"])
+        sum_cost += D(totals["cost_try"])
+
+        m2a = pnl.get("m2_analysis") or {}
+        cost_per_m2 = (m2a.get("per_net_m2") or {}).get("try") or (m2a.get("per_gross_m2") or {}).get("try")
+        rev_per_m2 = totals.get("avg_price_per_m2_try")
+        if cost_per_m2 is not None and rev_per_m2 is not None:
+            cpm, rpm = float(cost_per_m2), float(rev_per_m2)
+            m2_economics.append({
+                "project": _short(p.name, 16),
+                "cost_per_m2": cpm, "revenue_per_m2": rpm, "profit_per_m2": rpm - cpm})
+
+        for a in usp["allocations"]:
+            ut = a.get("unit_type") or "other"
+            agg = unit_type_agg.setdefault(ut, {"count": 0, "sales": D(0), "cost": D(0), "pnl": D(0)})
+            agg["count"] += 1
+            agg["sales"] += D(a.get("sale_price_try") or 0)
+            if a.get("unit_cost_try") is not None:
+                agg["cost"] += D(a["unit_cost_try"])
+            if a.get("pnl_try") is not None:
+                agg["pnl"] += D(a["pnl_try"])
+
+    roi = float(sum_profit / sum_cost * 100) if sum_cost > 0 else None
+    avg_price_m2 = (sum_sales / sum_m2) if sum_m2 > 0 else None
+    margin_pct = float(sum_profit / sum_sales * 100) if sum_sales > 0 else None
+
+    # IRR is not additive across projects — show it only for a single sell-side
+    # project (honest), else "—".
+    irr = None
+    if len(ss) == 1:
+        irr = sales_service.investment_return(db, ss[0]).get("irr_try_pct")
+    irr_str = f"%{format_number_tr(D(irr), 1)}" if irr is not None else "—"
+    roi_str = format_pct_tr(roi) if roi is not None else "—"
+
+    sales_kpis = [
+        ("SATILAN / TOPLAM", f"{total_sold} / {total_units}" if total_units else str(total_sold),
+         (f"{round(total_sold / total_units * 100)}% satış" if total_units else "Birim"), H_GREEN, H_PETROL),
+        ("ORT. SATIŞ ₺/m²", format_currency_tr(avg_price_m2) if avg_price_m2 is not None else "—",
+         "Satılan birimler", H_MUT, H_PETROL),
+        ("BRÜT KÂR (SATIŞ)", format_currency_tr(sum_profit),
+         f"Marj {format_pct_tr(margin_pct)}" if margin_pct is not None else "—",
+         _good_bad(sum_profit >= 0), H_PETROL),
+        ("IRR / ROI", f"{irr_str} / {roi_str}", "Yıllık / kümülatif",
+         _good_bad((roi or 0) >= 0), H_PETROL),
+    ]
+
+    unit_type_pnl = []
+    for ut, agg in sorted(unit_type_agg.items(), key=lambda x: -x[1]["sales"]):
+        if agg["count"] == 0:
+            continue
+        avg_price = agg["sales"] / agg["count"]
+        ut_margin = float(agg["pnl"] / agg["sales"] * 100) if agg["sales"] > 0 else None
+        unit_type_pnl.append({
+            "tip": UNIT_TYPES.get(ut, ut),
+            "satilan": str(agg["count"]),
+            "ort_fiyat": format_currency_tr(avg_price),
+            "maliyet": format_currency_tr(agg["cost"]),
+            "brut_kar": format_currency_tr(agg["pnl"]),
+            "marj": format_pct_tr(ut_margin) if ut_margin is not None else "—",
+        })
+
+    return {
+        "sales_kpis": sales_kpis,
+        "m2_economics": m2_economics,
+        "unit_type_pnl": unit_type_pnl,
+    }
+
+
+def _risk_and_actions(decisions) -> tuple[list[dict], list[dict]]:
+    """§11 risk register + action plan synthesised from the §2 decisions (which
+    already fold in overdue payments and high-severity findings)."""
+    risk_register = []
+    action_plan = []
+    for d in decisions:
+        if d["oncelik_rag"] == "g":
+            continue
+        risk_register.append({
+            "risk": d["konu"],
+            "duzey_label": _SEVERITY_LABELS["high"] if d["oncelik_rag"] == "r" else _SEVERITY_LABELS["medium"],
+            "duzey_rag": d["oncelik_rag"],
+            "etki": d["gerekce"],
+            "azaltma": d["beklenen_etki"],
+            "sahip": d["sahip"],
+        })
+        action_plan.append({
+            "aksiyon": d["konu"],
+            "sahip": d["sahip"],
+            "beklenen_etki": d["beklenen_etki"],
+            "durum_label": "Açık" if d["oncelik_rag"] == "r" else "İzle",
+            "durum_rag": d["oncelik_rag"],
+        })
+    return risk_register[:6], action_plan[:6]
 
 
 def _active_projects(db: Session, company: Company):
@@ -458,56 +1061,6 @@ def _subcontractor_commitments(db: Session, company: Company) -> list[dict]:
         })
     items.sort(key=lambda x: D(x["revised_d"]), reverse=True)
     return items[:5]
-
-
-def _build_action_items(rows, margin_movement, overdue_payments, budget_summary,
-                        ai_actions, period_label) -> list[str]:
-    """§7: build a prioritised, project-specific action list from real data.
-
-    Rules (in priority order): overdue payments, budget overruns, large
-    outstanding receivables, low margin, then up to 2 AI-derived actions. Generic
-    advice is never added — when no concrete rule fires we emit the explicit
-    "no urgent risk" line.
-    """
-    items: list[str] = []
-
-    # Rule 1 — overdue payments.
-    for o in overdue_payments[:3]:
-        items.append(f"ACİL: {o['supplier']}'a {o['amount']} vadesi geçmiş ödeme — {o['days']} gün gecikti.")
-
-    # Rule 2 — budget overruns (> %100 spent).
-    for b in budget_summary:
-        if b["pct_value"] > 100:
-            items.append(
-                f"{b['label']} kategorisi bütçeyi {format_pct_tr(b['pct_value'] - 100)} aştı — "
-                f"Revize Bütçe: {b['revised']}."
-            )
-
-    # Rule 3 — outstanding receivable > %15 of contract.
-    for r in rows:
-        if r["outstanding_high"]:
-            items.append(
-                f"{r['name']}: {r['outstanding']} tahsilat bekliyor — müşteri ile acil görüşme yapın."
-            )
-
-    # Rule 4 — forecast margin < %10.
-    for r in rows:
-        if r["margin_value"] < 10:
-            items.append(
-                f"{r['name']}: Kar marjı {r['margin']} seviyesine düştü — maliyet kontrolü gerekli."
-            )
-
-    concrete = len(items)
-
-    # Rule 5 — up to 2 AI-derived actions, but only as a supplement to real findings.
-    if concrete:
-        for line in _strip_action_lines(ai_actions)[:2]:
-            items.append(line)
-
-    items = items[:10]
-    if not concrete:
-        return ["Bu dönemde acil eylem gerektiren finansal risk tespit edilmemiştir."]
-    return items
 
 
 def _strip_action_lines(text) -> list[str]:
@@ -625,6 +1178,34 @@ def _styles():
     return s
 
 
+_LOGO_MAX_BYTES = 5_000_000  # cap a remote logo download (memory-pressure guard)
+
+
+def _logo_host_is_safe(logo_url: str) -> bool:
+    """SSRF guard for the company-controlled logo URL: allow only http/https to a
+    PUBLIC host. Reject if the host resolves to any private / loopback / link-local
+    / reserved / multicast / unspecified address (e.g. 169.254.169.254 cloud
+    metadata, 127.0.0.1, 10./172.16./192.168.). The logo is fetched server-side, so
+    an internal URL must never be reachable. Fail-closed on any parse/DNS error."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        u = urlparse(logo_url)
+        if u.scheme not in ("http", "https") or not u.hostname:
+            return False
+        port = u.port or (443 if u.scheme == "https" else 80)
+        for *_, sockaddr in socket.getaddrinfo(u.hostname, port, proto=socket.IPPROTO_TCP):
+            ip = ipaddress.ip_address(sockaddr[0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                return False
+        return True
+    except Exception:  # noqa: BLE001 — any resolution failure → block the fetch
+        return False
+
+
 def _logo_flowable(logo_url, max_h=44.0, max_w=120.0):
     """Return a ReportLab Image for the logo, or None if it cannot be loaded.
 
@@ -645,8 +1226,12 @@ def _logo_flowable(logo_url, max_h=44.0, max_w=120.0):
         if isinstance(logo_url, str) and logo_url.lower().startswith(("http://", "https://")):
             import httpx
 
+            if not _logo_host_is_safe(logo_url):
+                return None
             resp = httpx.get(logo_url, timeout=5)
             resp.raise_for_status()
+            if len(resp.content) > _LOGO_MAX_BYTES:
+                return None
             source = io.BytesIO(resp.content)
 
         reader = ImageReader(source)
@@ -778,65 +1363,192 @@ def _render_story(story, generated_at, footer_note=None) -> bytes:
     return buf.getvalue()
 
 
-def _project_report_pdf(d: dict) -> bytes:
+def _project_page_furniture(company_name, generated_at):
+    """``onFirstPage``/``onLaterPages`` painter for the single-project report: light
+    BG, a slim running header (eyebrow left, company right) and a footer (generated-by
+    left, page number right). Modelled on ``_mgmt_page_furniture`` minus the period."""
+    def paint(c, doc):
+        from reportlab.lib.colors import HexColor
+        from reportlab.lib.pagesizes import A4
+
+        from app.services.report_theme import (
+            BG, FNT, HAIR, MUT, register_lato_fonts, LATO_REGULAR, LATO_SEMIBOLD,
+        )
+
+        register_lato_fonts()
+        Wd, H = A4
+        M = 40
+        c.saveState()
+        c.setFillColor(HexColor(BG)); c.rect(0, 0, Wd, H, fill=1, stroke=0)
+        c.setFillColor(HexColor(MUT)); c.setFont(LATO_SEMIBOLD, 7)
+        c.drawString(M, H - 30, "PROJE RAPORU")
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 8)
+        c.drawRightString(Wd - M, H - 30, str(company_name or ""))
+        c.setStrokeColor(HexColor(HAIR)); c.setLineWidth(0.6)
+        c.line(M, H - 38, Wd - M, H - 38); c.line(M, 40, Wd - M, 40)
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 7.5)
+        c.drawString(M, 28, f"Yapı tarafından {generated_at} tarihinde oluşturuldu")
+        c.drawRightString(Wd - M, 28, f"Sayfa {doc.page}")
+        c.restoreState()
+
+    return paint
+
+
+def _project_report_pdf(d: dict, closeout_ctx: dict | None = None) -> bytes:
+    """CR-037 — single-project status report on the report_theme/report_charts toolkit
+    (a single-project cut of the Aylık Yönetim Raporu look). Rendered DEFENSIVELY:
+    every section is guarded on key presence so a FROZEN closeout snapshot (built by an
+    OLDER ``build_project_report_data`` shape) still renders — a missing key omits its
+    section, never KeyErrors. ``closeout_ctx`` (optional) adds the closeout stage +
+    'donduruldu' stamp for the Proje Sonu Raporu. Charts are PNGs in a
+    ``tempfile.mkdtemp()`` cleaned up after ``doc.build()``."""
+    import shutil
+    import tempfile
+    from io import BytesIO
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-    s = _styles()
-    story = [
-        _header_table(s, d["logo_url"], d["company_name"], d["report_title"], d["report_date"]),
-        Spacer(1, 10),
-        Paragraph(f"{d['project_name']} — {d['client_name']}", s["h2"]),
-    ]
+    from app.services import report_charts as ch
+    from app.services.report_theme import (
+        MUT, NAVY,
+        LATO_BOLD, LATO_MEDIUM,
+        chartcard, dtable, kpirow, pill, register_lato_fonts, s as TS, sect,
+    )
 
-    # KPI strip as a 4-column table.
-    def kpi(label, value):
-        return [Paragraph(label, s["kpi_label"]), Paragraph(value, s["kpi_value"])]
+    register_lato_fonts()
+    ch.setup_matplotlib_fonts()
+    tmpdir = tempfile.mkdtemp(prefix="yapi_proj_")
 
-    kpi_row = [
-        kpi("Sözleşme Değeri", d["contract_value"]),
-        kpi("Gerçekleşen Maliyet", d["total_actual"]),
-        kpi("Final Tahmin", d["forecast_final"]),
-        kpi("Kar Marjı", d["margin_pct"]),
-    ]
-    from reportlab.lib import colors
-    from reportlab.platypus import Table, TableStyle
+    CW = 15.6 * cm          # chart image width
+    CHh = 5.2 * cm          # chart image height
+    RAG_KEY = {"red": "r", "amber": "a", "green": "g"}  # status → toolkit pill key
 
-    kt = Table([kpi_row], colWidths=[4.375 * cm] * 4)
-    kt.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    story += [kt, Spacer(1, 6)]
+    company_name = d.get("company_name") or "Yapı"
+    project_name = d.get("project_name") or ""
+    client_name = d.get("client_name") or ""
+    report_title = d.get("report_title") or "Proje Durum Raporu"
+    report_date = d.get("report_date") or ""
+    generated_at = d.get("generated_at") or format_datetime_tr(datetime.now(timezone.utc))
 
-    # Budget vs actual by category.
-    story.append(Paragraph("Bütçe & Gerçekleşen (Kategori Bazında)", s["h2"]))
-    rows = [["Kategori", "Revize Bütçe", "Faturalanan", "Final Tahmin", "Sapma", "Durum"]]
-    rags = []
-    for c in d["categories"]:
-        rows.append([c["label"], c["revised"], c["invoiced"], c["forecast"], c["variance"], c["status_label"]])
-        rags.append(c["status"])
-    story.append(_data_table(
-        rows, col_widths=[5 * cm, 2.7 * cm, 2.7 * cm, 2.7 * cm, 2.4 * cm, 2.1 * cm],
-        num_cols=(1, 2, 3, 4), rag_col=5, rag_values=rags,
-    ))
+    try:
+        story: list = []
 
-    # Income & collection summary.
-    story.append(Paragraph("Gelir & Tahsilat Özeti", s["h2"]))
-    summary = [
-        ["İşverene Faturalanan", d["total_invoiced"]],
-        ["Tahsil Edilen", d["total_collected"]],
-        ["Bekleyen Tahsilat", d["total_outstanding"]],
-        ["Hakediş Kesintisi", d["total_retention"]],
-        ["Net Nakit Pozisyonu", d["net_cash"]],
-    ]
-    story.append(_data_table(summary, col_widths=[12 * cm, 5.6 * cm], num_cols=(1,), header=False))
+        # ---- Header band (logo + brand eyebrow + title + project/client + stamp) ----
+        logo = _logo_flowable(d.get("logo_url"), max_h=38.0, max_w=120.0)
+        if logo:
+            logo_row = Table([[logo]], colWidths=[17.6 * cm])
+            logo_row.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]))
+            story.append(logo_row)
+        # sect()/chartcard() do NOT escape their title args (CR-036 H1) → escape here.
+        story += sect(escape(_tr_upper(company_name)), escape(report_title))
+        proj_line = escape(f"{project_name} — {client_name}") if client_name else escape(project_name)
+        if proj_line:
+            story.append(Paragraph(proj_line, TS("h2", LATO_BOLD, 13, NAVY, leading=16)))
+        meta_bits: list = []
+        if report_date:
+            meta_bits.append(escape(str(report_date)))
+        if closeout_ctx:
+            stage = closeout_ctx.get("stage_label")
+            frozen_at = closeout_ctx.get("frozen_at_label")
+            stamp = f"{frozen_at} tarihinde donduruldu" if frozen_at else "donduruldu"
+            meta_bits.append(escape(" · ".join(x for x in [stage, stamp] if x)))
+        if meta_bits:
+            story.append(Spacer(1, 2))
+            story.append(Paragraph("  ·  ".join(meta_bits), TS("meta", LATO_MEDIUM, 8.5, MUT)))
+        rag = d.get("rag_status")
+        if rag in RAG_KEY:
+            story.append(Spacer(1, 5))
+            story.append(pill(STATUS_LABELS.get(rag, ""), RAG_KEY[rag]))
+        story.append(Spacer(1, 12))
 
-    return _render_story(story, d["generated_at"])
+        # ---- KPI row (omit any card whose value is absent; skip row if all absent) ----
+        kpi_items = [
+            (lbl, str(d[key])) for lbl, key in (
+                ("Sözleşme Değeri", "contract_value"),
+                ("Gerçekleşen Maliyet", "total_actual"),
+                ("Final Tahmin", "forecast_final"),
+                ("Kar Marjı", "margin_pct"),
+            ) if d.get(key) is not None
+        ]
+        if kpi_items:
+            story += [kpirow(kpi_items, colw=4.07), Spacer(1, 14)]
+
+        # ---- Bütçe & Kategori (table always; chart only when numeric mirrors exist) ----
+        cats = d.get("categories") or []
+        if cats:
+            story += sect("MALİYET", "Bütçe & Kategori")
+            header = ["Kategori", "Revize Bütçe", "Faturalanan", "Tahmini Final", "Sapma", "Durum"]
+            rows = [
+                [c.get("label", ""), c.get("revised", ""), c.get("invoiced", ""),
+                 c.get("forecast", ""), c.get("variance", ""),
+                 (c.get("status_label") or "—", RAG_KEY.get(c.get("status"), "a"))]
+                for c in cats
+            ]
+            story += [
+                dtable(header, rows,
+                       [4.2 * cm, 2.7 * cm, 2.6 * cm, 2.6 * cm, 2.4 * cm, 2.1 * cm],
+                       aligns=[0, 2, 2, 2, 2, 1]),
+                Spacer(1, 10),
+            ]
+            if all(all(k in c for k in ("revised_num", "invoiced_num", "forecast_num")) for c in cats):
+                labels = [_short(c.get("label", ""), 14) for c in cats]
+                series = [
+                    ("Revize Bütçe", [float(c["revised_num"]) for c in cats]),
+                    ("Faturalanan", [float(c["invoiced_num"]) for c in cats]),
+                    ("Tahmini Final", [float(c["forecast_num"]) for c in cats]),
+                ]
+                img = ch.chart_grouped_bar(labels, series, tmpdir)
+                story += [chartcard("Kategori Bütçe Dağılımı", img, CW, CHh), Spacer(1, 12)]
+
+        # ---- Gelir & Kâr/Zarar (sales_pnl) — omitted on snapshots predating CR-031 ----
+        pnl = d.get("sales_pnl") or {}
+        pnl_rows = [
+            [lbl, str(pnl[key])] for lbl, key in (
+                ("Gelir", "revenue"),
+                ("Maliyet", "cost"),
+                ("Finansman Maliyeti", "financing"),
+                ("Net (Finansman Hariç)", "net_excl_financing"),
+                ("Net (Finansman Dahil)", "net_incl_financing"),
+                ("Kâr Marjı", "margin_pct"),
+                ("Kur Etkisi", "fx_effect"),
+            ) if pnl.get(key) is not None
+        ]
+        if pnl_rows:
+            story += sect("KÂRLILIK", "Gelir & Kâr / Zarar")
+            story += [dtable(["Kalem", "Tutar"], pnl_rows, [12.0 * cm, 5.6 * cm], aligns=[0, 2]), Spacer(1, 12)]
+
+        # ---- Gelir & Tahsilat ----
+        collection_rows = [
+            [lbl, str(d[key])] for lbl, key in (
+                ("İşverene Faturalanan", "total_invoiced"),
+                ("Tahsil Edilen", "total_collected"),
+                ("Bekleyen Tahsilat", "total_outstanding"),
+                ("Hakediş Kesintisi", "total_retention"),
+                ("Net Nakit Pozisyonu", "net_cash"),
+            ) if d.get(key) is not None
+        ]
+        if collection_rows:
+            story += sect("NAKİT", "Gelir & Tahsilat")
+            story += [dtable(["Kalem", "Tutar"], collection_rows, [12.0 * cm, 5.6 * cm], aligns=[0, 2])]
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4,
+            topMargin=1.7 * cm, bottomMargin=1.6 * cm, leftMargin=1.4 * cm, rightMargin=1.4 * cm,
+            title="Yapı Proje Raporu",
+        )
+        paint = _project_page_furniture(company_name, generated_at)
+        doc.build(story, onFirstPage=paint, onLaterPages=paint)
+        return buf.getvalue()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 _TR_MONTHS_SHORT = [
@@ -852,162 +1564,6 @@ def _month_label_tr(month_key: str) -> str:
         return f"{_TR_MONTHS_SHORT[int(m)]} {y[2:]}"
     except (ValueError, IndexError):
         return month_key
-
-
-def _bar_color_for_margin(pct):
-    """CR-005-A Grafik 1: < %10 kırmızı, %10–%20 amber, > %20 yeşil."""
-    if pct < 10:
-        return RAG_COLORS["red"]
-    if pct <= 20:
-        return RAG_COLORS["amber"]
-    return RAG_COLORS["green"]
-
-
-def _bar_color_for_usage(pct):
-    """CR-005-A Grafik 2: %85 üzeri amber, %100 üzeri kırmızı, altı mavi."""
-    if pct > 100:
-        return RAG_COLORS["red"]
-    if pct >= 85:
-        return RAG_COLORS["amber"]
-    return "#3B82F6"
-
-
-def _grouped_bar_chart(title, categories, series, colors_per_series=None, color_fn=None,
-                       value_suffix="", width=400, height=200, value_min=0):
-    """Build a Platypus-embeddable grouped vertical bar chart Drawing.
-
-    ``series`` is a list of (label, [values]) tuples. When ``color_fn`` is given it
-    colours each bar of the first series by value (single-series charts); otherwise
-    ``colors_per_series`` colours each whole series. Returns a list of flowables
-    (title + drawing) so callers can splice it straight into the story.
-    """
-    from reportlab.graphics.charts.barcharts import VerticalBarChart
-    from reportlab.graphics.charts.legends import Legend
-    from reportlab.graphics.shapes import Drawing, String
-    from reportlab.lib import colors as rl_colors
-    from reportlab.platypus import Paragraph
-
-    register_turkish_fonts()
-    s = _styles()
-    flowables = [Paragraph(title, s["h2"])]
-
-    if not categories or not series or not any(vals for _, vals in series):
-        # Empty-state — never render a blank axis box.
-        flowables.append(Paragraph("Veri yok — bu dönem için grafik oluşturulamadı.", s["body"]))
-        return flowables
-
-    drawing = Drawing(width, height)
-    chart = VerticalBarChart()
-    chart.x = 35
-    chart.y = 30
-    chart.width = width - 60
-    chart.height = height - 55
-    chart.data = [vals for _, vals in series]
-    chart.categoryAxis.categoryNames = categories
-    chart.categoryAxis.labels.fontName = FONT_NORMAL
-    chart.categoryAxis.labels.fontSize = 7
-    chart.categoryAxis.labels.angle = 20
-    chart.categoryAxis.labels.dy = -4
-    chart.valueAxis.labels.fontName = FONT_NORMAL
-    chart.valueAxis.labels.fontSize = 7
-    if value_min is not None:
-        chart.valueAxis.valueMin = value_min
-    chart.barLabels.fontName = FONT_NORMAL
-    chart.barLabels.fontSize = 6
-    chart.barLabelFormat = (lambda v: f"{format_pct_tr(v)}") if value_suffix == "%" else None
-    chart.barLabels.nudge = 6
-
-    if color_fn is not None:
-        # Single series, per-bar colouring.
-        vals = series[0][1]
-        for i, v in enumerate(vals):
-            chart.bars[(0, i)].fillColor = rl_colors.HexColor(color_fn(v))
-    else:
-        palette = colors_per_series or ["#1B2B4B", "#3B82F6", ACCENT]
-        for si in range(len(series)):
-            chart.bars[si].fillColor = rl_colors.HexColor(palette[si % len(palette)])
-
-    drawing.add(chart)
-
-    # Legend for multi-series charts.
-    if color_fn is None and len(series) > 1:
-        legend = Legend()
-        legend.x = 35
-        legend.y = height - 8
-        legend.dx = 8
-        legend.dy = 8
-        legend.fontName = FONT_NORMAL
-        legend.fontSize = 7
-        legend.alignment = "right"
-        legend.columnMaximum = 1
-        legend.deltax = 90
-        palette = colors_per_series or ["#1B2B4B", "#3B82F6", ACCENT]
-        legend.colorNamePairs = [
-            (rl_colors.HexColor(palette[i % len(palette)]), lbl) for i, (lbl, _) in enumerate(series)
-        ]
-        drawing.add(legend)
-
-    flowables.append(drawing)
-    return flowables
-
-
-def _cover_page(s, d) -> list:
-    """CR-006-A: professional cover page — navy band, period, company, KPI strip."""
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
-
-    kpis = d.get("cover_kpis") or {}
-    logo = _logo_flowable(d.get("logo_url"))
-    brand = logo if logo else Paragraph("YAPI", s["band_brand"])
-    # Top navy band: brand left, document title right.
-    band = Table(
-        [[brand, Paragraph("AYLIK YÖNETİM PAKETİ", s["band_title"])]],
-        colWidths=[8.5 * cm, 9 * cm], rowHeights=[1.9 * cm],
-    )
-    band.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(NAVY)),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (0, 0), 14),
-        ("RIGHTPADDING", (-1, 0), (-1, 0), 14),
-    ]))
-
-    # KPI strip — 4 boxes with coloured top borders.
-    def kpi_box(label, value, color):
-        inner = Table([[Paragraph(label, s["cover_kpi_label"])],
-                       [Paragraph(value, s["cover_kpi_value"])]], colWidths=[4.1 * cm])
-        inner.setStyle(TableStyle([
-            ("LINEABOVE", (0, 0), (-1, 0), 3, colors.HexColor(color)),
-            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]))
-        return inner
-
-    strip = Table([[
-        kpi_box("Aktif Projeler", kpis.get("active_projects", "0"), "#3B82F6"),
-        kpi_box("Toplam Sözleşme", kpis.get("total_contract", ""), NAVY),
-        kpi_box("Bekleyen Tahsilat", kpis.get("total_outstanding", ""), ACCENT),
-        kpi_box("Bu Ay Risk", kpis.get("risk_level", ""), RAG_COLORS.get(kpis.get("risk_rag", "green"), "#10B981")),
-    ]], colWidths=[4.375 * cm] * 4)
-    strip.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
-                               ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
-
-    return [
-        band,
-        Spacer(1, 64),
-        Paragraph(d["period"], s["cover_period"]),
-        Spacer(1, 6),
-        Paragraph(d["company_name"], s["cover_company"]),
-        Spacer(1, 4),
-        Paragraph(f"Yapı tarafından {d['generated_at']} tarihinde oluşturuldu", s["cover_meta"]),
-        Spacer(1, 56),
-        strip,
-        Spacer(1, 40),
-        Paragraph(AI_DISCLAIMER, s["disclaimer"]),
-    ]
 
 
 def _format_ai_md(text) -> str:
@@ -1027,202 +1583,467 @@ def _format_ai_md(text) -> str:
     return "<br/>".join(out_lines)
 
 
+def _logo_image_reader(logo_url):
+    """Return (ImageReader, width_pt, height_pt) for the cover logo, or None.
+
+    Mirrors ``_logo_flowable`` (remote logos fetched in-memory with a short
+    timeout) but yields a canvas-drawable ImageReader. Never raises — a logo is
+    optional and must never break the report.
+    """
+    if not logo_url:
+        return None
+    try:
+        import io
+
+        from reportlab.lib.utils import ImageReader
+
+        source = logo_url
+        if isinstance(logo_url, str) and logo_url.lower().startswith(("http://", "https://")):
+            import httpx
+
+            if not _logo_host_is_safe(logo_url):
+                return None
+            resp = httpx.get(logo_url, timeout=5)
+            resp.raise_for_status()
+            if len(resp.content) > _LOGO_MAX_BYTES:
+                return None
+            source = io.BytesIO(resp.content)
+        reader = ImageReader(source)
+        iw, ih = reader.getSize()
+        ratio = (iw / ih) if ih else 1.0
+        h = 34.0
+        w = h * ratio
+        if w > 150.0:
+            w = 150.0
+            h = (w / ratio) if ratio else 34.0
+        return reader, w, h
+    except Exception:  # noqa: BLE001 — logo is optional, never fail the report
+        return None
+
+
+def _tr_upper(text: str) -> str:
+    """Turkish-aware uppercase: lowercase 'i' → dotted 'İ' (and 'ı' → 'I') before
+    upper(), so a company name like 'Şirket' renders 'ŞİRKET' on the cover, not the
+    Latin-mangled 'ŞIRKET'."""
+    return (text or "").replace("ı", "I").replace("i", "İ").upper()
+
+
+def _mgmt_cover_canvas(d):
+    """``onFirstPage`` painter: full-bleed NAVY cover with the gold top rule,
+    brand/logo, big title, period and a 4-KPI band (ported from the reference
+    ``cover()`` 145-164). Real data — the ÖRNEK chip shows ONLY if d['is_sample'].
+    """
+    def paint(c, doc):
+        from reportlab.lib.colors import HexColor, white
+        from reportlab.lib.pagesizes import A4
+
+        from app.services.report_theme import (
+            GOLD, NAVY, register_lato_fonts,
+            LATO_BLACK, LATO_BOLD, LATO_MEDIUM, LATO_REGULAR, LATO_SEMIBOLD,
+        )
+
+        register_lato_fonts()
+        Wd, H = A4
+        M = 48
+        brand = (d.get("company_name") or "YAPI").strip()
+        kp = d.get("cover_kpis") or {}
+
+        c.setFillColor(HexColor(NAVY)); c.rect(0, 0, Wd, H, fill=1, stroke=0)
+        c.setFillColor(HexColor(GOLD)); c.rect(0, H - 4, Wd, 4, fill=1, stroke=0)
+
+        c.setFillColor(HexColor(GOLD)); c.setFont(LATO_SEMIBOLD, 9)
+        c.drawString(M, H - 78, f"AYLIK YÖNETİM RAPORLAMA  ·  {_tr_upper(brand)}")
+        logo = _logo_image_reader(d.get("logo_url"))
+        if logo:
+            reader, lw, lh = logo
+            try:
+                c.drawImage(reader, Wd - M - lw, H - 88, width=lw, height=lh, mask="auto")
+            except Exception:  # noqa: BLE001
+                pass
+
+        c.setFillColor(white); c.setFont(LATO_BLACK, 38)
+        c.drawString(M, H - 300, "Aylık Yönetim Raporu")
+        c.setFillColor(HexColor("#C9D6D1")); c.setFont(LATO_REGULAR, 16)
+        c.drawString(M, H - 330, brand)
+        c.setFillColor(HexColor(GOLD)); c.rect(M, H - 350, 64, 3, fill=1, stroke=0)
+        c.setFillColor(white); c.setFont(LATO_BOLD, 14)
+        c.drawString(M, H - 378, str(d.get("period", "")))
+
+        if d.get("is_sample"):
+            c.setFillColor(HexColor("#2A4257")); c.roundRect(M, H - 410, 168, 17, 4, fill=1, stroke=0)
+            c.setFillColor(HexColor("#D9B36B")); c.setFont(LATO_BOLD, 7.5)
+            c.drawString(M + 8, H - 405, "ÖRNEK — KURGUSAL VERİ")
+
+        band = [
+            ("AKTİF PROJE", kp.get("active_projects", "0"), ""),
+            ("TOPLAM SÖZLEŞME", kp.get("total_contract", "—"), ""),
+            ("BEKLEYEN TAHSİLAT", kp.get("total_outstanding", "—"), ""),
+            ("PORTFÖY RİSKİ", kp.get("risk_level", "—"), ""),
+        ]
+        bY = 118
+        colW = (Wd - 2 * M) / 4
+        for i, (lab, val, ctx) in enumerate(band):
+            x = M + i * colW
+            if i > 0:
+                c.setStrokeColor(HexColor("#2C4358")); c.setLineWidth(0.8)
+                c.line(x - 14, bY - 4, x - 14, bY + 62)
+            c.setFillColor(HexColor("#8FA0A8")); c.setFont(LATO_SEMIBOLD, 7)
+            c.drawString(x, bY + 50, lab)
+            c.setFillColor(white); c.setFont(LATO_BOLD, 12)
+            c.drawString(x, bY + 26, str(val))
+            if ctx:
+                c.setFillColor(HexColor("#9FB0B0")); c.setFont(LATO_MEDIUM, 7.5)
+                c.drawString(x, bY + 8, ctx)
+
+        c.setStrokeColor(HexColor("#2C4358")); c.setLineWidth(0.6); c.line(M, 74, Wd - M, 74)
+        c.setFillColor(HexColor("#7E8E94")); c.setFont(LATO_REGULAR, 7.5)
+        c.drawString(M, 60, "GİZLİ  ·  Yönetim kullanımı içindir")
+        c.drawRightString(Wd - M, 60, "Sayfa 1")
+
+    return paint
+
+
+def _mgmt_page_furniture(d, generated_at):
+    """``onLaterPages`` painter: light BG, running header (eyebrow left, company ·
+    period right), hairlines and footer (generated-by left, page number right).
+    Ported from the reference ``later()`` 165-172 — no 'ÖRNEK VERİ' token."""
+    def paint(c, doc):
+        from reportlab.lib.colors import HexColor
+        from reportlab.lib.pagesizes import A4
+
+        from app.services.report_theme import (
+            BG, FNT, HAIR, MUT, register_lato_fonts, LATO_REGULAR, LATO_SEMIBOLD,
+        )
+
+        register_lato_fonts()
+        Wd, H = A4
+        M = 48
+        c.saveState()
+        c.setFillColor(HexColor(BG)); c.rect(0, 0, Wd, H, fill=1, stroke=0)
+        c.setFillColor(HexColor(MUT)); c.setFont(LATO_SEMIBOLD, 7)
+        c.drawString(M, H - 36, "AYLIK YÖNETİM RAPORU")
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 8)
+        c.drawRightString(Wd - M, H - 36, f"{d.get('company_name', '')}  ·  {d.get('period', '')}")
+        c.setStrokeColor(HexColor(HAIR)); c.setLineWidth(0.6)
+        c.line(M, H - 44, Wd - M, H - 44); c.line(M, 46, Wd - M, 46)
+        c.setFillColor(HexColor(FNT)); c.setFont(LATO_REGULAR, 7.5)
+        c.drawString(M, 34, f"Yapı tarafından {generated_at} tarihinde oluşturuldu")
+        c.drawRightString(Wd - M, 34, f"Sayfa {doc.page}")
+        c.restoreState()
+
+    return paint
+
+
 def _management_pack_pdf(d: dict) -> bytes:
+    """CR-036 render of the "Aylık Yönetim Raporu" using the report_theme/
+    report_charts toolkit. Each section is rendered ONLY when its data exists
+    (honesty rule §0); §5 omitted when has_fx is False, §9 when has_sell_side is
+    False. Charts are PNGs in a tempfile.mkdtemp() cleaned up after doc.build()."""
+    import shutil
+    import tempfile
+    from io import BytesIO
+
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
-    from reportlab.platypus import Paragraph, PageBreak, Spacer
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
-    s = _styles()
-    titles = d.get("section_titles") or SECTION_TITLES
-    header = _header_table(s, d["logo_url"], d["company_name"], "Aylık Yönetim Paketi", d["period"])
-
-    # Page 1 — cover page (CR-006-A).
-    story = _cover_page(s, d)
-    story.append(PageBreak())
-
-    # Page 2 — executive summary (AI), formatted in three colour-coded blocks.
-    story += [header, Spacer(1, 8), Paragraph(titles[0], s["h2"]),
-              Paragraph(_format_ai_md(d["ai_summary"]), s["ai"]),
-              Paragraph(AI_DISCLAIMER, s["disclaimer"]), PageBreak()]
-
-    # Page 3 — project financial KPIs with colour-coded margin cells.
-    story.append(Paragraph(titles[1], s["h2"]))
-    rows = [["Proje", "İşveren", "Sözleşme", "Gerçekleşen", "% İlerleme",
-             "Hedef Marj", "Marj", "Bekleyen", "Durum"]]
-    rags = []
-    margin_cells = []
-    outstanding_cells = []
-    for i, r in enumerate(d["rows"]):
-        rows.append([r["name"], r["client"], r["contract"], r["actual"], r["completion"],
-                     r["target_margin"], r["margin"], r["outstanding"], "●"])
-        rags.append(r["rag"])
-        margin_cells.append((6, i, _margin_rag(r["margin_value"])))
-        if r["outstanding_high"]:
-            outstanding_cells.append((7, i, "amber"))
-    story.append(_data_table(
-        rows,
-        col_widths=[2.9 * cm, 2.1 * cm, 2.3 * cm, 2.3 * cm, 1.7 * cm, 1.7 * cm, 1.6 * cm, 2.3 * cm, 1.0 * cm],
-        num_cols=(2, 3, 4, 5, 6, 7), rag_col=8, rag_values=rags,
-        bg_cells=margin_cells + outstanding_cells,
-    ))
-    # Row-below totals.
-    story.append(Spacer(1, 4))
-    story.append(_data_table(
-        [["TOPLAM", d["total_contract"], d["total_collected"], d["total_outstanding"]]],
-        col_widths=[6 * cm, 4 * cm, 4 * cm, 3.6 * cm], num_cols=(1, 2, 3), header=False,
-        row_bg=[(0, "gray")],
-    ))
-    # CR-005-A Grafik 1 — Proje bazında hedef vs gerçekleşen kar marjı.
-    mc = d.get("margin_chart") or []
-    story.append(Spacer(1, 10))
-    story += _grouped_bar_chart(
-        "Proje Bazında Kar Marjı — Hedef vs Gerçekleşen (%)",
-        [_short(m["name"]) for m in mc],
-        [
-            ("Hedef Marj", [m["target_pct"] for m in mc]),
-            ("Gerçekleşen Marj", [m["forecast_pct"] for m in mc]),
-        ],
-        colors_per_series=["#9CA3AF", "#3B82F6"],
-        value_suffix="%", value_min=None, width=500, height=220,
+    from app.services import report_charts as ch
+    from app.services.report_theme import (
+        AMBER, GREEN, INK, MUT, NAVY, PETROL, RED, GOLD,
+        LATO_BOLD, LATO_REGULAR, aipanel, chartcard, dtable, kpirow,
+        register_lato_fonts, s as TS, sect,
     )
-    story.append(PageBreak())
 
-    # Page 4 — margin movement (real per-project category tables).
-    story.append(Paragraph(titles[2], s["h2"]))
-    mm = d.get("margin_movement") or []
-    if not mm:
-        story.append(Paragraph("Bu dönemde aktif proje bulunmamaktadır.", s["body"]))
-    for proj in mm:
-        story.append(Spacer(1, 8))
-        story.append(Paragraph(
-            f"{proj['name']} — Tahmini Final Marj: <b>{proj['final_margin']}</b>", s["h3"]))
-        if proj["categories"]:
-            crows = [["Kategori", "Orijinal Bütçe", "Revize Bütçe", "Faturalanan", "Sapma", "% Harcanan"]]
-            cell_bg = []
-            for i, c in enumerate(proj["categories"]):
-                crows.append([c["label"], c["original"], c["revised"], c["invoiced"], c["variance"], c["pct_spent"]])
-                cell_bg.append((4, i, c["status"]))
-            story.append(_data_table(
-                crows, col_widths=[4.2 * cm, 2.9 * cm, 2.9 * cm, 2.9 * cm, 2.4 * cm, 2.1 * cm],
-                num_cols=(1, 2, 3, 4, 5), bg_cells=cell_bg,
-            ))
+    register_lato_fonts()
+    ch.setup_matplotlib_fonts()
+    tmpdir = tempfile.mkdtemp(prefix="yapi_mgmt_")
+
+    CW = 15.6 * cm          # chart image width
+    CH = 4.9 * cm           # chart image height (full)
+    CHs = 4.45 * cm         # chart image height (short / hbar)
+    RAG_HEX = {"r": RED, "a": AMBER, "g": GREEN}
+    SEV_PILL = {"r": "Yüksek", "a": "Orta", "g": "Düşük"}
+    DURUM_PILL = {"r": "Risk", "a": "İzle", "g": "İyi"}
+    RAG_KEY = {"green": "g", "amber": "a", "red": "r"}
+
+    def h3(text):
+        return Paragraph(text, TS("h3", LATO_BOLD, 10, NAVY, spaceBefore=2))
+
+    def body(text):
+        return Paragraph(text, TS("body", LATO_REGULAR, 9, INK, leading=13))
+
+    def calm(msg="Bu dönem için veri bulunmamaktadır."):
+        return Paragraph(msg, TS("calm", LATO_REGULAR, 9, MUT))
+
+    def fc(v):
+        return format_currency_tr(v)
+
+    try:
+        story = [Spacer(1, 2), PageBreak()]
+
+        # ---- §2 Yönetici Özeti --------------------------------------------
+        story += sect("KARAR ODAKLI ÖZET", "Yönetici Özeti")
+        ek = d.get("exec_kpis") or []
+        if ek:
+            story += [kpirow(ek[:3], colw=5.4), Spacer(1, 8)]
+            if ek[3:]:
+                story += [kpirow(ek[3:6], colw=5.4), Spacer(1, 10)]
+        story += [h3("Yönetim Görüşü"), Spacer(1, 3),
+                  body(_format_ai_md(d.get("ai_summary"))), Spacer(1, 10)]
+        ew = d.get("early_warning") or {}
+        if ew.get("text"):
+            story += [aipanel(ew["text"], ew.get("footer", "İnsan onayı gerekir")), Spacer(1, 12)]
+        story += [h3("Karar Gerektiren Konular"), Spacer(1, 4)]
+        drows = [[x["konu"], x["gerekce"], x["sahip"], x["beklenen_etki"],
+                  (SEV_PILL[x["oncelik_rag"]], x["oncelik_rag"])]
+                 for x in (d.get("decisions") or [])]
+        story.append(dtable(
+            ["Konu", "Gerekçe", "Sahip", "Beklenen Etki", "Öncelik"], drows,
+            [4.3 * cm, 4.6 * cm, 2.6 * cm, 4.2 * cm, 1.7 * cm], aligns=[0, 0, 0, 0, 1]))
+        story.append(PageBreak())
+
+        # ---- §3 Finansal Performans ---------------------------------------
+        story += sect("FİNANSAL PERFORMANS", "Gelir, Maliyet ve Marj")
+        fk = d.get("fin_kpis") or []
+        if fk:
+            story += [kpirow(fk), Spacer(1, 12)]
+        mt = d.get("monthly_trend") or []
+        # Omit the chart entirely when there is no real movement to plot (e.g. a
+        # company with no in-window cashflow) — never a "veri yok" placeholder card.
+        if mt and any((m["income"] or m["net"]) for m in mt):
+            img = ch.chart_combo(
+                [m["label"] for m in mt], [m["income"] for m in mt], [m["net"] for m in mt],
+                tmpdir, bar_label="Gelir", line_label="Net Nakit")
+            story += [chartcard("Aylık Gelir ve Net Nakit Akışı", img, CW, CH), Spacer(1, 12)]
+        mb = d.get("margin_bridge") or {}
+        story += [h3("Marj Köprüsü (kategori sapmalarından)"), Spacer(1, 4)]
+        mb_rows = [["Bütçe Marjı (açılış)", mb.get("opening_pct", "—"), "Sözleşme − revize bütçe"]]
+        for r in mb.get("rows", []):
+            mb_rows.append([r["kalem"], r["etki"], r["not"]])
+        story.append(dtable(
+            ["Kalem", "Etki (₺) / Marj", "Not"], mb_rows,
+            [6.5 * cm, 4.5 * cm, 6.4 * cm], aligns=[0, 2, 0],
+            totals=["Tahmini Final Marj", mb.get("closing_pct", "—"), "Sözleşme − tahmini final"]))
+        story.append(PageBreak())
+
+        # ---- §4 Taahhüt & Maliyet Maruziyeti ------------------------------
+        story += sect("MALİYET YAPISI", "Taahhüt & Maliyet Maruziyeti")
+        ck = d.get("commitment_kpis") or []
+        if ck:
+            story += [kpirow(ck), Spacer(1, 12)]
+        cc = d.get("commitment_chart") or []
+        if cc:
+            img = ch.chart_stacked_bar(
+                [x["label"] for x in cc], [x["actual"] for x in cc], [x["open"] for x in cc],
+                tmpdir, base_label="Gerçekleşen", top_label="Açık Taahhüt")
+            story += [chartcard("Kategori Bazında Gerçekleşen vs Açık Taahhüt", img, CW, CH),
+                      Spacer(1, 12)]
+        cats = d.get("commitment_categories") or []
+        story += [h3("Kategori Bütçe Detayı"), Spacer(1, 4)]
+        if cats:
+            crows = []
+            t_rev = t_open = t_inv = t_rem = D(0)
+            for c in cats:
+                t_rev += D(c["revised"]); t_open += D(c["open_committed"])
+                t_inv += D(c["invoiced"]); t_rem += D(c["remaining"])
+                crows.append([
+                    _short(c["label"], 22), fc(c["revised"]), fc(c["open_committed"]),
+                    fc(c["invoiced"]), fc(c["remaining"]), format_pct_tr(c["pct_value"]),
+                    (DURUM_PILL[c["durum_rag"]], c["durum_rag"])])
+            totals = ["Toplam", fc(t_rev), fc(t_open), fc(t_inv), fc(t_rem),
+                      _safe_pct_str(t_inv, t_rev), ""]
+            story.append(dtable(
+                ["Kategori", "Revize", "Açık Taahhüt", "Faturalanan", "Kalan", "% Kul.", "Durum"],
+                crows, [3.5 * cm, 2.5 * cm, 2.5 * cm, 2.5 * cm, 2.3 * cm, 1.6 * cm, 2.5 * cm],
+                aligns=[0, 2, 2, 2, 2, 2, 1], totals=totals))
         else:
-            story.append(Paragraph("Bu proje için kategori hareketi bulunmamaktadır.", s["body"]))
-        story.append(Paragraph(proj["driver_text"], s["note"]))
-    story.append(PageBreak())
+            story.append(calm())
+        story.append(PageBreak())
 
-    # Page 5 — cash flow & collection.
-    story.append(Paragraph(titles[3], s["h2"]))
-    cash = [
-        ["Toplam Sözleşme Değeri", d["total_contract"]],
-        [f"Toplam Tahsil Edilen ({d.get('collected_pct', '')})", d["total_collected"]],
-        ["Toplam Bekleyen Tahsilat", d["total_outstanding"]],
-    ]
-    story.append(_data_table(cash, col_widths=[12 * cm, 5.6 * cm], num_cols=(1,), header=False))
-    # CR-005-A Grafik 3 — son 6 ay gelir vs gider.
-    cf = d.get("cashflow_chart") or []
-    story.append(Spacer(1, 10))
-    story += _grouped_bar_chart(
-        "Son 6 Ay Nakit Akışı — Gelir vs Gider (₺)",
-        [_month_label_tr(m["month"]) for m in cf],
-        [
-            ("Gelir", [m["income"] for m in cf]),
-            ("Gider", [m["expense"] for m in cf]),
-        ],
-        colors_per_series=[RAG_COLORS["green"], RAG_COLORS["red"]],
-        width=500, height=200,
-    )
-    # Per-project collection / aging table.
-    cr = d.get("collection_rows") or []
-    if cr:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Proje Bazında Tahsilat", s["h3"]))
-        crows = [["Proje", "Faturalanan", "Tahsil Edilen", "Bekleyen", "Gecikmiş Gün"]]
-        row_bg = []
-        for i, c in enumerate(cr):
-            crows.append([c["name"], c["invoiced"], c["collected"], c["outstanding"], str(c["overdue_days"])])
-            if c["overdue"]:
-                row_bg.append((i, "red"))
-        story.append(_data_table(
-            crows, col_widths=[4.5 * cm, 3.3 * cm, 3.3 * cm, 3.3 * cm, 3 * cm],
-            num_cols=(1, 2, 3, 4), row_bg=row_bg,
-        ))
-    story.append(PageBreak())
+        # ---- §5 Kur & Döviz (omitted entirely when has_fx is False) --------
+        if d.get("has_fx"):
+            story += sect("KUR & DÖVİZ", "Döviz Maruziyeti ve Kur Etkisi")
+            fxk = d.get("fx_kpis") or []
+            if fxk:
+                story += [kpirow(fxk), Spacer(1, 12)]
+            split = d.get("fx_split") or {}
+            img = ch.chart_donut(
+                ["₺ bazlı", "Dövize duyarlı"],
+                [split.get("try_pct", 0), split.get("fx_sensitive_pct", 0)],
+                tmpdir, colors=[PETROL, GOLD],
+                center_top=f"%{format_number_tr(split.get('fx_sensitive_pct', 0), 0)}",
+                center_sub="Dövize duyarlı")
+            story += [chartcard("Maliyet Para Birimi Dağılımı", img, 9.0 * cm, 5.4 * cm),
+                      Spacer(1, 8)]
+            story += [h3("Yönetim Notu"), Spacer(1, 3), body(d.get("fx_note", "")), PageBreak()]
 
-    # Page 6 — budget category detail (real aggregated table).
-    story.append(Paragraph(titles[4], s["h2"]))
-    # CR-005-A Grafik 2 — en pahalı 8 kategori için bütçe kullanımı (% harcanan).
-    bc = d.get("budget_chart") or []
-    story += _grouped_bar_chart(
-        "Bütçe Kullanımı — En Yüksek 8 Kategori (% Harcanan)",
-        [_short(b["label"]) for b in bc],
-        [("% Harcanan", [b["spent_pct"] for b in bc])],
-        color_fn=_bar_color_for_usage,
-        value_suffix="%", width=500, height=200,
-    )
-    bs = d.get("budget_summary") or []
-    story.append(Spacer(1, 10))
-    if bs:
-        brows = [["Kategori", "Revize Bütçe", "Taahhüt", "Faturalanan", "Kalan", "% Harcanan"]]
-        row_bg = []
-        for i, b in enumerate(bs):
-            brows.append([b["label"], b["revised"], b["committed"], b["invoiced"], b["remaining"], b["pct_spent"]])
-            if b["pct_value"] > 100:
-                row_bg.append((i, "red"))
-            elif b["pct_value"] >= 85:
-                row_bg.append((i, "amber"))
-        brows.append(["TOPLAM", d.get("budget_total", {}).get("revised", ""), "", "", "", ""])
-        story.append(_data_table(
-            brows, col_widths=[4.2 * cm, 2.9 * cm, 2.7 * cm, 2.9 * cm, 2.7 * cm, 2 * cm],
-            num_cols=(1, 2, 3, 4, 5), row_bg=row_bg + [(len(bs), "gray")],
-        ))
-    else:
-        story.append(Paragraph("Bu dönemde bütçe verisi girilmiş kategori bulunmamaktadır.", s["body"]))
-    story.append(PageBreak())
+        # ---- §6 Kritik Projeler -------------------------------------------
+        story += sect("OPERASYON", "Kritik Projeler")
+        rows = d.get("rows") or []
+        if rows:
+            prows = []
+            for r in rows:
+                rag = RAG_KEY.get(r["rag"], "g")
+                prows.append([
+                    _short(r["name"], 22), _short(r["project_type"], 16), r["budget"],
+                    r["completion"], r["margin"], r["outstanding"],
+                    _short(r["commercial_note"], 28), (DURUM_PILL[rag], rag)])
+            story.append(dtable(
+                ["Proje", "Tip", "Bütçe", "İlerleme", "Marj", "Bekleyen", "Ticari Konu", "Durum"],
+                prows, [3.0 * cm, 2.2 * cm, 2.3 * cm, 1.5 * cm, 1.4 * cm, 2.3 * cm, 3.0 * cm, 1.7 * cm],
+                aligns=[0, 0, 2, 2, 2, 2, 0, 1]))
+        else:
+            story.append(calm("Bu dönem için aktif proje bulunmamaktadır."))
+        story.append(PageBreak())
 
-    # Page 7 — subcontractor & supplier risk (real data).
-    story.append(Paragraph(titles[5], s["h2"]))
-    op = d.get("overdue_payments") or []
-    sc = d.get("subcontractor_commitments") or []
-    if op:
-        story.append(Paragraph("Vadesi Geçmiş Ödemeler", s["h3"]))
-        orows = [["Tedarikçi", "Proje", "Tutar", "Vade Tarihi", "Gecikme Günü"]]
-        row_bg = []
-        for i, o in enumerate(op):
-            orows.append([o["supplier"], o["project"], o["amount"], o["due_date"], str(o["days"])])
-            if o["severe"]:
-                row_bg.append((i, "red"))
-        story.append(_data_table(
-            orows, col_widths=[4.2 * cm, 3.6 * cm, 3 * cm, 3 * cm, 2.6 * cm],
-            num_cols=(2, 4), row_bg=row_bg,
-        ))
-        story.append(Spacer(1, 10))
-    if sc:
-        story.append(Paragraph("En Büyük 5 Alt Yüklenici Taahhüdü", s["h3"]))
-        srows = [["Alt Yüklenici", "Kapsam", "Sözleşme", "Ödenen", "Kalan", "% Tamamlandı"]]
-        for sub in sc:
-            srows.append([sub["name"], _short(sub["scope"], 24), sub["contract"], sub["paid"],
-                          sub["remaining"], sub["pct_done"]])
-        story.append(_data_table(
-            srows, col_widths=[3.4 * cm, 3.6 * cm, 2.8 * cm, 2.6 * cm, 2.6 * cm, 2.4 * cm],
-            num_cols=(2, 3, 4, 5),
-        ))
-    if not op and not sc:
-        story.append(Paragraph("Bu dönemde aktif alt yüklenici bulunmamaktadır.", s["body"]))
-    story.append(PageBreak())
+        # ---- §7 Nakit & İşletme Sermayesi ---------------------------------
+        story += sect("NAKİT", "Nakit & İşletme Sermayesi")
+        cak = d.get("cash_kpis") or []
+        if cak:
+            story += [kpirow(cak), Spacer(1, 12)]
+        ar = d.get("ar_aging") or {}
+        ar_vals = [float(ar.get("not_due_try", 0)), float(ar.get("d1_30_try", 0)),
+                   float(ar.get("d31_60_try", 0)), float(ar.get("d60_plus_try", 0))]
+        img = ch.chart_grouped_bar(
+            ["Vadesi gelmemiş", "1-30 gün", "31-60 gün", "60+ gün"],
+            [("Bekleyen ₺", ar_vals)], tmpdir,
+            colors=[GREEN, PETROL, AMBER, RED], value_labels=True)
+        story += [chartcard("Alacak Yaşlandırma (₺)", img, CW, CHs), Spacer(1, 10)]
+        if mt:
+            img2 = ch.chart_line([m["label"] for m in mt], [m["net"] for m in mt],
+                                  tmpdir, color=NAVY, fill=True)
+            story += [chartcard("Aylık Net Nakit Akışı (₺)", img2, CW, CHs), Spacer(1, 10)]
+        story += [h3("Alacak Yaşlandırma Özeti"), Spacer(1, 4)]
+        story.append(dtable(
+            ["Vade Aralığı", "Bekleyen Tutar"],
+            [["Vadesi gelmemiş", fc(ar.get("not_due_try", 0))],
+             ["1-30 gün gecikmiş", fc(ar.get("d1_30_try", 0))],
+             ["31-60 gün gecikmiş", fc(ar.get("d31_60_try", 0))],
+             ["60+ gün gecikmiş", fc(ar.get("d60_plus_try", 0))]],
+            [10.0 * cm, 7.4 * cm], aligns=[0, 2],
+            totals=["Toplam Bekleyen", fc(ar.get("total_outstanding_try", 0))]))
+        story.append(PageBreak())
 
-    # Page 8 — action list (dynamic, project-specific).
-    story.append(Paragraph(titles[6], s["h2"]))
-    items = d.get("action_items") or []
-    if items and len(items) == 1 and items[0].startswith("Bu dönemde acil"):
-        story.append(Paragraph(items[0], s["body"]))
-    else:
-        from xml.sax.saxutils import escape
+        # ---- §8 Tedarikçi & Taşeron ---------------------------------------
+        story += sect("TEDARİK", "Tedarikçi & Taşeron")
+        vk = d.get("vendor_kpis") or []
+        if vk:
+            story += [kpirow(vk), Spacer(1, 12)]
+        vs = d.get("vendor_spend") or []
+        if vs:
+            img = ch.chart_hbar(
+                [_short(v["name"], 22) for v in vs], [float(v["amount_d"]) for v in vs],
+                tmpdir, value_fmt="₺{:,.0f}")
+            story += [chartcard("En Çok Harcanan Tedarikçiler (₺)", img, CW, CHs), Spacer(1, 12)]
+        sc = d.get("subcontractor_commitments") or []
+        if sc:
+            story += [h3("Taşeron Pozisyonu"), Spacer(1, 4)]
+            srows = [[_short(s["name"], 20), _short(s["scope"], 22), s["contract"],
+                      s["paid"], s["remaining"], s["pct_done"]] for s in sc]
+            story.append(dtable(
+                ["Alt Yüklenici", "Kapsam", "Sözleşme", "Ödenen", "Kalan", "% Tamam"],
+                srows, [3.4 * cm, 3.6 * cm, 2.8 * cm, 2.6 * cm, 2.6 * cm, 2.4 * cm],
+                aligns=[0, 0, 2, 2, 2, 2]))
+        if not vs and not sc:
+            story.append(calm("Bu dönem için tedarikçi/taşeron verisi bulunmamaktadır."))
+        story.append(PageBreak())
 
-        numbered = "<br/>".join(f"<b>{i}.</b> {escape(it)}" for i, it in enumerate(items, 1))
-        story.append(Paragraph(numbered, s["ai"]))
-    story.append(Paragraph(AI_DISCLAIMER, s["disclaimer"]))
+        # ---- §9 Satış, m² & Getiri (ONLY for sell-side companies) ----------
+        if d.get("has_sell_side") and d.get("sell_side"):
+            ss = d["sell_side"]
+            story += sect("GELİŞTİRME", "Satış, m² & Getiri")
+            sk = ss.get("sales_kpis") or []
+            if sk:
+                story += [kpirow(sk), Spacer(1, 12)]
+            m2 = ss.get("m2_economics") or []
+            if m2:
+                img = ch.chart_grouped_bar(
+                    [x["project"] for x in m2],
+                    [("Maliyet/m²", [x["cost_per_m2"] for x in m2]),
+                     ("Gelir/m²", [x["revenue_per_m2"] for x in m2]),
+                     ("Kâr/m²", [x["profit_per_m2"] for x in m2])],
+                    tmpdir, y_label="₺/m²")
+                story += [chartcard("Proje Bazında m² Birim Ekonomisi (₺/m²)", img, CW, CH),
+                          Spacer(1, 12)]
+            ut = ss.get("unit_type_pnl") or []
+            story += [h3("Daire Tipine Göre Kâr/Zarar"), Spacer(1, 4)]
+            if ut:
+                urows = [[u["tip"], u["satilan"], u["ort_fiyat"], u["maliyet"],
+                          u["brut_kar"], u["marj"]] for u in ut]
+                story.append(dtable(
+                    ["Daire Tipi", "Satılan", "Ort. Fiyat", "Maliyet Payı", "Brüt Kâr", "Marj %"],
+                    urows, [3.4 * cm, 2.0 * cm, 3.0 * cm, 3.2 * cm, 3.0 * cm, 2.8 * cm],
+                    aligns=[0, 2, 2, 2, 2, 2]))
+            else:
+                story.append(calm("Henüz satış kaydı bulunmamaktadır."))
+            story.append(PageBreak())
 
-    return _render_story(story, d["generated_at"], footer_note=AI_DISCLAIMER)
+        # ---- §10 Veri Güvence & Anomali (READ-ONLY) -----------------------
+        story += sect("AI GÜVENCE", "Veri Güvence & Anomali")
+        a = d.get("assurance") or {}
+        high_n = a.get("high_count", 0)
+        total_n = a.get("total_found", 0)
+        ak = [
+            ("TARANAN KAYIT", str(a.get("scanned_total", 0)), "Maliyet + hakediş", MUT, PETROL),
+            ("AÇIK BULGU", str(total_n), f"{high_n} yüksek öncelik",
+             AMBER if total_n else GREEN, GOLD),
+            ("YÜKSEK ÖNCELİK", str(high_n), "İnceleme bekliyor",
+             RED if high_n else GREEN, GOLD),
+        ]
+        story += [kpirow(ak, colw=5.4), Spacer(1, 12)]
+        fbt = a.get("found_by_type") or []
+        if fbt:
+            img = ch.chart_hbar(
+                [_short(x["label"], 22) for x in fbt], [x["count"] for x in fbt],
+                tmpdir, colors=[RAG_HEX.get(x["rag"], AMBER) for x in fbt], value_fmt="{:.0f}")
+            story += [chartcard("Bulgu Türüne Göre (adet)", img, CW, CHs), Spacer(1, 12)]
+        pf = a.get("priority_findings") or []
+        story += [h3("Öncelikli Bulgular"), Spacer(1, 4)]
+        if pf:
+            frows = [[_short(x["bulgu"], 40), x["tur"], _short(x["oneri"], 36),
+                      (x["durum_label"], x["durum_rag"])] for x in pf]
+            story.append(dtable(
+                ["Bulgu", "Tür", "Öneri", "Durum"], frows,
+                [6.2 * cm, 3.2 * cm, 5.5 * cm, 2.5 * cm], aligns=[0, 0, 0, 1]))
+        else:
+            story.append(calm("Bu dönem için açık bulgu tespit edilmemiştir."))
+        story.append(PageBreak())
+
+        # ---- §11 Risk & Aksiyon Planı -------------------------------------
+        story += sect("YÖNETİŞİM", "Risk & Aksiyon Planı")
+        rr = d.get("risk_register") or []
+        story += [h3("Risk Kaydı"), Spacer(1, 4)]
+        if rr:
+            rrows = [[_short(x["risk"], 40), (x["duzey_label"], x["duzey_rag"]),
+                      _short(x["etki"], 30), _short(x["azaltma"], 30), x["sahip"]] for x in rr]
+            story.append(dtable(
+                ["Risk", "Düzey", "Etki", "Azaltma", "Sahip"], rrows,
+                [5.0 * cm, 1.8 * cm, 3.4 * cm, 4.4 * cm, 2.8 * cm], aligns=[0, 1, 0, 0, 0]))
+        else:
+            story.append(calm("Bu dönem için kayda değer risk bulunmamaktadır."))
+        ap = d.get("action_plan") or []
+        story += [Spacer(1, 12), h3("Aksiyon Planı"), Spacer(1, 4)]
+        if ap:
+            arows = [[_short(x["aksiyon"], 46), x["sahip"], _short(x["beklenen_etki"], 36),
+                      (x["durum_label"], x["durum_rag"])] for x in ap]
+            story.append(dtable(
+                ["Aksiyon", "Sahip", "Beklenen Etki", "Durum"], arows,
+                [6.5 * cm, 3.0 * cm, 5.4 * cm, 2.5 * cm], aligns=[0, 0, 0, 1]))
+        else:
+            story.append(calm("Planlanan aksiyon bulunmamaktadır."))
+        story += [Spacer(1, 10),
+                  Paragraph(AI_DISCLAIMER, TS("disc", LATO_REGULAR, 7.5, MUT, leading=10))]
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(
+            buf, pagesize=A4, topMargin=2.0 * cm, bottomMargin=1.7 * cm,
+            leftMargin=1.69 * cm, rightMargin=1.69 * cm,
+            title="Yapı — Aylık Yönetim Raporu")
+        doc.build(story, onFirstPage=_mgmt_cover_canvas(d),
+                  onLaterPages=_mgmt_page_furniture(d, d["generated_at"]))
+        return buf.getvalue()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _short(text, n=20) -> str:
@@ -1236,3 +2057,144 @@ def _nl2br(text) -> str:
     from xml.sax.saxutils import escape
 
     return escape(str(text or "")).replace("\n", "<br/>")
+
+
+# ---------------------------------------------------------------------------
+# CR-011-C — Agent analysis export (PDF + Excel)
+# An agent analysis = answer text + its chart(s) + citations. Self-contained
+# (the caller passes the analysis the agent already produced; no re-run).
+# ---------------------------------------------------------------------------
+def build_agent_analysis_data(company: Company | None, analysis: dict) -> dict:
+    """Shape the analysis for rendering (no ReportLab/openpyxl import — testable)."""
+    now = datetime.now(timezone.utc)
+    return {
+        "company_name": company.name if company else "Yapı",
+        "logo_url": company.logo_url if company else None,
+        "title": analysis.get("title") or "Yapı AI Analizi",
+        "question": analysis.get("question"),
+        "answer_markdown": analysis.get("answer_markdown") or "",
+        "charts": analysis.get("charts") or [],
+        "citations": analysis.get("citations") or [],
+        "generated_at": format_datetime_tr(now),
+        "report_date": format_date_tr(now.date()),
+    }
+
+
+def render_agent_analysis_pdf(company: Company | None, analysis: dict) -> bytes:
+    return _agent_analysis_pdf(build_agent_analysis_data(company, analysis))
+
+
+def _agent_chart_flowables(s, ch: dict) -> list:
+    """Render one agent chart as a titled data table (its underlying numbers) —
+    honest and dialect/markup-safe for any chart_type (line/bar/composed)."""
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph
+
+    out = [Paragraph(_nl2br(ch.get("title") or "Grafik"), s["h3"])]
+    series = ch.get("series") or []
+    data = ch.get("data") or []
+    x_key = ch.get("x_key") or "x"
+    if not series or not data:
+        out.append(Paragraph("Grafik verisi yok.", s["body"]))
+        return out
+    header = [x_key] + [str(se.get("label") or se.get("key") or "") for se in series]
+    rows = [header]
+    for pt in data:
+        row = [str(pt.get(x_key, ""))]
+        for se in series:
+            row.append(str(pt.get(se.get("key"), "")))
+        rows.append(row)
+    ncol = len(header)
+    out.append(_data_table(
+        rows, col_widths=[17.6 / ncol * cm] * ncol, num_cols=tuple(range(1, ncol)),
+    ))
+    if ch.get("source_note"):
+        out.append(Paragraph(_nl2br(ch["source_note"]), s["note"]))
+    return out
+
+
+def _agent_analysis_pdf(d: dict) -> bytes:
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Paragraph, Spacer
+
+    s = _styles()
+    story = [
+        _header_table(s, d["logo_url"], d["company_name"], d["title"], d["report_date"]),
+        Spacer(1, 10),
+    ]
+    if d.get("question"):
+        story.append(Paragraph(f"<b>Soru:</b> {_nl2br(d['question'])}", s["h3"]))
+        story.append(Spacer(1, 4))
+
+    story.append(Paragraph("Analiz", s["h2"]))
+    story.append(Paragraph(_format_ai_md(d["answer_markdown"]), s["body"]))
+
+    for ch in d["charts"]:
+        story.append(Spacer(1, 8))
+        story += _agent_chart_flowables(s, ch)
+
+    cits = d["citations"]
+    if cits:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Kaynaklar", s["h2"]))
+        rows = [["Kaynak", "Bağlantı"]]
+        for c in cits:
+            rows.append([_short(str(c.get("label", "")), 60), str(c.get("deep_link", ""))])
+        story.append(_data_table(rows, col_widths=[8.8 * cm, 8.8 * cm]))
+
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(AI_DISCLAIMER, s["disclaimer"]))
+    return _render_story(story, d["generated_at"], footer_note=AI_DISCLAIMER)
+
+
+def _safe_sheet_title(title, idx: int) -> str:
+    """Excel sheet titles: <=31 chars, none of []:*?/\\, unique (idx-prefixed)."""
+    import re
+
+    t = re.sub(r"[\[\]:\*\?/\\]", " ", str(title or "")).strip()
+    return (f"{idx}-{t}" if t else f"Grafik {idx}")[:31]
+
+
+def render_agent_analysis_excel(company: Company | None, analysis: dict) -> bytes:
+    """Render the analysis to an .xlsx workbook: an Analiz sheet (answer text),
+    one sheet per chart (its data), and a Kaynaklar sheet (citations)."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    d = build_agent_analysis_data(company, analysis)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Analiz"
+    ws.append([d["title"]])
+    ws.append(["Şirket", d["company_name"]])
+    ws.append(["Oluşturulma", d["generated_at"]])
+    if d.get("question"):
+        ws.append(["Soru", d["question"]])
+    ws.append([])
+    ws.append(["Analiz"])
+    answer_lines = _strip_action_lines(d["answer_markdown"]) or [d["answer_markdown"]]
+    for line in answer_lines:
+        ws.append([line])
+
+    for idx, ch in enumerate(d["charts"], 1):
+        cws = wb.create_sheet(title=_safe_sheet_title(ch.get("title"), idx))
+        series = ch.get("series") or []
+        x_key = ch.get("x_key") or "x"
+        cws.append([x_key] + [str(se.get("label") or se.get("key") or "") for se in series])
+        for pt in (ch.get("data") or []):
+            cws.append([pt.get(x_key)] + [pt.get(se.get("key")) for se in series])
+
+    cits = d["citations"]
+    if cits:
+        kws = wb.create_sheet(title="Kaynaklar")
+        kws.append(["Kaynak", "Tür", "Bağlantı"])
+        for c in cits:
+            kws.append([c.get("label"), c.get("type"), c.get("deep_link")])
+
+    info = wb.create_sheet(title="Bilgi")
+    info.append([AI_DISCLAIMER])
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

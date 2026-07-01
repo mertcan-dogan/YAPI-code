@@ -96,6 +96,39 @@ export const COST_CATEGORY_OPTIONS = Object.entries(COST_CATEGORIES).map(([value
   label,
 }));
 
+// CR-016: unit-schedule (daire dağılımı) preset types — mirrors backend UNIT_TYPES.
+export const UNIT_TYPES: Record<string, string> = {
+  "1+1": "1+1",
+  "2+1": "2+1",
+  "3+1": "3+1",
+  "4+1": "4+1",
+  ticari: "Ticari",
+  dukkan: "Dükkan",
+  ofis: "Ofis",
+  bodrum: "Bodrum",
+  depo: "Depo",
+  other: "Diğer",
+};
+
+export const UNIT_TYPE_OPTIONS = Object.entries(UNIT_TYPES).map(([value, label]) => ({
+  value,
+  label,
+}));
+
+// CR-053: per-project deal structure (anlaşma yapısı) — meaningful for sell-side
+// projects. Drives wizard hints / labels; the P&L itself is data-driven, not enum-driven.
+export const DEAL_STRUCTURE_OPTIONS: { value: string; label: string }[] = [
+  { value: "arsa_karsiligi_daire", label: "Arsa Karşılığı (Daire)" },
+  { value: "kentsel_donusum", label: "Kentsel Dönüşüm" },
+  { value: "nakit_katki", label: "Nakit Katkılı" },
+  { value: "yap_sat_kendi_arsa", label: "Yap-Sat (Kendi Arsası)" },
+  { value: "diger", label: "Diğer" },
+];
+
+export const DEAL_STRUCTURE_LABELS: Record<string, string> = Object.fromEntries(
+  DEAL_STRUCTURE_OPTIONS.map((o) => [o.value, o.label])
+);
+
 export const VAT_RATES = [0, 1, 10, 20];
 
 export const INVOICE_TYPE_LABELS: Record<string, string> = {

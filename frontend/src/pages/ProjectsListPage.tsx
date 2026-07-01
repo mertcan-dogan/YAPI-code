@@ -1,7 +1,7 @@
 import { DataTable, type Column } from "@/components/DataTable";
 import { PageHeader } from "@/components/layout/AppLayout";
 import { RAGIndicator } from "@/components/RAGIndicator";
-import { Button } from "@/components/ui";
+import { Badge, Button } from "@/components/ui";
 import { PROJECT_TYPES } from "@/constants";
 import { useFetch } from "@/hooks/useFetch";
 import { useAuth } from "@/store/auth";
@@ -84,6 +84,17 @@ export default function ProjectsListPage() {
     { key: "project_type", header: "Tür", render: (r) => PROJECT_TYPES[r.project_type] ?? r.project_type },
     { key: "client_name", header: "İşveren" },
     { key: "contract_value_try", header: "Sözleşme", align: "right", sortable: true, sortValue: (r) => toNumber(r.contract_value_try), render: (r) => formatCurrency(r.contract_value_try) },
+    {
+      // Project lifecycle status — Aktif until the closeout marks it Tamamlandı.
+      key: "status",
+      header: "Durum",
+      render: (r) =>
+        r.status === "completed" ? (
+          <Badge variant="success">Tamamlandı</Badge>
+        ) : (
+          <Badge variant="info">Aktif</Badge>
+        ),
+    },
     {
       key: "margin",
       header: "Kar Marjı",

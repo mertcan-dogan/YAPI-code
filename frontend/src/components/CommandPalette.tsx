@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiPost } from "@/lib/api";
+import { cachedGet } from "@/lib/requestCache";
 import { useProjectStore } from "@/store/project";
 import { AIDisclaimer } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -41,7 +42,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     setQ("");
     setAnswer(null);
     setSel(0);
-    apiGet<{ id: string; name: string; status: string }[]>("/projects")
+    cachedGet<{ id: string; name: string; status: string }[]>("/projects")
       .then(({ data }) => setProjects((data ?? []).filter((p) => p.status === "active").map((p) => ({ id: p.id, name: p.name }))))
       .catch(() => setProjects([]));
     const t = setTimeout(() => inputRef.current?.focus(), 40);
@@ -54,7 +55,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     { type: "page", label: "Hatırlatıcılar", to: "/reminders", icon: Bell },
     { type: "page", label: "Raporlar", to: "/reports", icon: FileBarChart },
     { type: "page", label: "Yapay Zeka Uyarıları", to: "/ai-alerts", icon: Sparkles },
-    { type: "page", label: "AI Asistan", to: "/ai-assistant", icon: MessageSquare },
+    { type: "page", label: "Yapı AI", to: "/ai-assistant", icon: MessageSquare },
     { type: "page", label: "Belge Tara", to: "/document-capture", icon: ScanLine },
     { type: "page", label: "Ayarlar", to: "/settings", icon: Settings },
   ];

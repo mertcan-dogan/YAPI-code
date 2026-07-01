@@ -17,6 +17,8 @@ from app.deps import CurrentUser
 from app.models.cost_entry import CostEntry
 from app.responses import APIError, success
 from app.schemas.cost import CostEntryCreate
+from app.services import fx
+from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
 from app.services.calc_fields import total_with_vat, vat_amount
@@ -100,6 +102,9 @@ async def preview_import(
             "skipped": skipped,
             "header_detected": result["header_detected"],
             "header_row": result["header_row"],
+            # CR-015-fix: column mapping + an honest reason when nothing imports.
+            "column_map": result.get("column_map", {}),
+            "message": result.get("message"),
         },
     )
 
@@ -145,6 +150,14 @@ def confirm_import(
         )
         db.add(entry)
         db.flush()
+        # CR-008-F: auto-link the imported row to a canonical vendor.
+        entry.vendor_id = entry.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+            db, user.company_id, entry.supplier_name
+        )
+        # CR-014-B parity: snapshot the USD value at this row's relevant date so
+        # imported rows are not left amount_usd=NULL (rate_as_of caches per date,
+        # so a bulk import across a few dates does no per-row network).
+        fx.snapshot_cost_usd(db, entry)
         record_audit(
             db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
             record_id=entry.id, action="INSERT", new_values=snapshot(entry),

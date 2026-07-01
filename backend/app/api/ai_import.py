@@ -22,9 +22,11 @@ from app.schemas.equipment import EquipmentCreate
 from app.schemas.invoice import ClientInvoiceCreate
 from app.schemas.subcontractor import SubcontractorCreate
 from app.services import ai as ai_service
+from app.services import fx
+from app.services import vendor_backfill
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
-from app.services.calc_fields import invoice_net_due, total_with_vat, vat_amount
+from app.services.calc_fields import coerce_confidence, invoice_net_due, total_with_vat, vat_amount
 from app.services.excel_import import LABEL_TO_KEY, LEGACY_XLS_MESSAGE, excel_to_text, is_legacy_xls
 
 router = APIRouter(tags=["ai-import"])
@@ -70,10 +72,18 @@ async def ai_import(project_id: uuid.UUID, user: CurrentUser, db: Session = Depe
         if is_legacy_xls(file.filename, exc):
             raise APIError(422, "VALIDATION_ERROR", LEGACY_XLS_MESSAGE, field="file")
         raise APIError(422, "VALIDATION_ERROR", f"Dosya okunamadı: {exc}", field="file")
+    # No rows extracted -> say so plainly rather than letting the AI choke on it.
+    if rows == 0 or not text.strip():
+        raise APIError(422, "VALIDATION_ERROR", "Dosyada veri bulunamadı — sayfa boş olabilir.", field="file")
     try:
         extracted = ai_service.analyze_excel_import(text)
     except ai_service.AIUnavailable:
+        # True outage (missing key / transport). The standard import still works.
         raise APIError(503, "AI_UNAVAILABLE", "AI şu an kullanılamıyor. Standart içe aktarma kullanın.")
+    except ai_service.AIResponseError as exc:
+        # The model answered but the output was unusable — a parse/format problem,
+        # NOT an outage. Surface the real reason (CR-015-fix).
+        raise APIError(422, "AI_RESPONSE_ERROR", str(exc), field="file")
 
     analysis = {
         "maliyet_girisleri": len(extracted.get("maliyet_girisleri", [])),
@@ -96,6 +106,9 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
     for raw in payload.maliyet_girisleri:
         rec = _clean(raw)
         rec["cost_category"] = _normalise_category(rec.get("cost_category"))
+        # CR-024: persist the AI's per-record 0..1 confidence (_clean drops the
+        # raw "confidence" key, so read it from the original record).
+        rec["extraction_confidence"] = raw.get("confidence")
         try:
             item = CostEntryCreate(**rec)
         except ValidationError:
@@ -108,6 +121,12 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
                           vat_amount_try=vat, total_with_vat_try=twv, **d)
         db.add(entry)
         db.flush()
+        # CR-008-F: auto-link the AI-imported row to a canonical vendor.
+        entry.vendor_id = entry.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+            db, user.company_id, entry.supplier_name
+        )
+        # CR-014-B parity: snapshot USD so AI-imported rows aren't left amount_usd=NULL.
+        fx.snapshot_cost_usd(db, entry)
         record_audit(db, company_id=user.company_id, user_id=user.id, table_name="cost_entries",
                      record_id=entry.id, action="INSERT", new_values=snapshot(entry))
         imported["maliyet_girisleri"] += 1
@@ -125,7 +144,8 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
             vat_amount_try=vat_amount(d["amount_try"], d["vat_rate"]),
             total_with_vat_try=total_with_vat(d["amount_try"], d["vat_rate"]),
             net_due_try=invoice_net_due(d["amount_try"], d["vat_rate"], d["retention_amount_try"]),
-            amount_received_try=0, payment_status="unpaid", **d,
+            amount_received_try=0, payment_status="unpaid",
+            extraction_confidence=coerce_confidence(raw.get("confidence")), **d,
         )
         db.add(inv)
         try:
@@ -148,6 +168,10 @@ def ai_import_confirm(project_id: uuid.UUID, payload: AIImportConfirm, user: Cur
         sub = Subcontractor(project_id=project.id, company_id=user.company_id, **item.model_dump())
         db.add(sub)
         db.flush()
+        # CR-008-F: auto-link the AI-imported subcontractor to a canonical vendor.
+        sub.vendor_id = sub.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+            db, user.company_id, sub.name
+        )
         record_audit(db, company_id=user.company_id, user_id=user.id, table_name="subcontractors",
                      record_id=sub.id, action="INSERT", new_values=snapshot(sub))
         imported["alt_yukleniciler"] += 1

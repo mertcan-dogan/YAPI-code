@@ -61,6 +61,7 @@ class EquipmentOut(ORMModel):
     deployment_end: date | None
     fuel_maintenance_try: Decimal
     notes: str | None
+    photo_urls: list[str] = []
     # computed
     duration_days: int | None = None
     total_cost_try: Decimal | None = None

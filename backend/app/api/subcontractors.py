@@ -22,6 +22,7 @@ from app.schemas.subcontractor import (
 )
 from app.services.access import get_company_project
 from app.services.audit import record_audit, snapshot
+from app.services import vendor_backfill
 
 router = APIRouter(tags=["subcontractors"])
 
@@ -74,6 +75,10 @@ def create_sub(
     sub = Subcontractor(project_id=project.id, company_id=user.company_id, **payload.model_dump())
     db.add(sub)
     db.flush()
+    # CR-008-F: auto-link the subcontractor to a canonical vendor.
+    sub.vendor_id = sub.vendor_id or vendor_backfill.resolve_or_create_vendor_id(
+        db, user.company_id, sub.name
+    )
     record_audit(
         db, company_id=user.company_id, user_id=user.id, table_name="subcontractors",
         record_id=sub.id, action="INSERT", new_values=snapshot(sub), ip_address=_ip(request),

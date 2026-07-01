@@ -9,6 +9,13 @@ interface AuthState {
   init: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, companyName: string, fullName: string) => Promise<void>;
+  acceptInvite: (
+    token: string,
+    email: string,
+    password: string,
+    fullName: string,
+    mode: "signup" | "signin"
+  ) => Promise<void>;
   logout: () => Promise<void>;
   fetchProfile: () => Promise<User | null>;
 }
@@ -80,6 +87,34 @@ export const useAuth = create<AuthState>((set, get) => ({
       full_name: fullName,
       email,
     });
+    set({ user });
+  },
+
+  // CR-041: accept a teammate invite. Unlike register(), this attaches the user
+  // to the INVITING company (the backend reads it from the invite), so no company
+  // name is collected. Two entry modes:
+  //   - "signup": brand-new user creates their Supabase Auth account here.
+  //   - "signin": the user already created the account (e.g. had to confirm their
+  //     email first) and now signs in before accepting.
+  acceptInvite: async (token, email, password, fullName, mode) => {
+    if (mode === "signup") {
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) throw new Error(error.message || "Kayıt başarısız");
+      // Email confirmation on → no session. The user must confirm, then return
+      // and sign in to accept (handled by the "signin" mode on the page).
+      if (!data.session) {
+        throw new Error(
+          "Hesabınız oluşturuldu. Lütfen e-postanızı onaylayın, sonra bu sayfaya dönüp giriş yaparak daveti kabul edin."
+        );
+      }
+    } else {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error || !data.session) throw new Error("E-posta veya şifre hatalı");
+    }
+    await waitForSession();
+    // Provision the user into the inviting company and set them straight from the
+    // response (no /auth/me round-trip, no race) — mirrors register().
+    const user = await apiPost<User>(`/auth/invite/${token}/accept`, { full_name: fullName });
     set({ user });
   },
 

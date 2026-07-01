@@ -33,6 +33,20 @@ class CostEntryCreate(BaseModel):
     amount_paid_try: Decimal = Decimal("0")
     document_url: str | None = None
     notes: str | None = None
+    # CR-023: relief link (actual → the committed entry it fulfils) + PO metadata.
+    commitment_id: uuid.UUID | None = None
+    po_number: str | None = None
+    expected_date: date | None = None
+    # CR-024: AI document-extraction confidence (0..1); NULL for manual / standard
+    # Excel rows. Persisted as-is; never affects financial math.
+    extraction_confidence: float | None = None
+
+    @field_validator("extraction_confidence")
+    @classmethod
+    def _conf(cls, v):
+        from app.services.calc_fields import coerce_confidence
+
+        return coerce_confidence(v)
 
     @field_validator("amount_try")
     @classmethod
@@ -82,7 +96,7 @@ class CostEntryCreate(BaseModel):
         return v
 
     # CR-002-I: strip any HTML from free-text fields (XSS protection).
-    @field_validator("description", "supplier_name", "subcategory", "notes", "invoice_number")
+    @field_validator("description", "supplier_name", "subcategory", "notes", "invoice_number", "po_number")
     @classmethod
     def _sanitize(cls, v):
         from app.utils.sanitize import sanitize_text
@@ -114,6 +128,10 @@ class CostEntryUpdate(BaseModel):
     amount_paid_try: Decimal | None = None
     document_url: str | None = None
     notes: str | None = None
+    # CR-023: allow (re)linking a relief commitment + editing PO metadata.
+    commitment_id: uuid.UUID | None = None
+    po_number: str | None = None
+    expected_date: date | None = None
 
     @field_validator("amount_try")
     @classmethod
@@ -137,6 +155,7 @@ class CostEntryOut(ORMModel):
     amount_try: Decimal
     amount_eur: Decimal | None
     amount_usd: Decimal | None
+    fx_rate_usd: Decimal | None = None
     vat_rate: Decimal
     vat_amount_try: Decimal
     total_with_vat_try: Decimal
@@ -146,6 +165,10 @@ class CostEntryOut(ORMModel):
     amount_paid_try: Decimal
     document_url: str | None
     notes: str | None
+    commitment_id: uuid.UUID | None = None
+    po_number: str | None = None
+    expected_date: date | None = None
+    extraction_confidence: float | None = None
     pending_approval: bool = False
     created_by: uuid.UUID
     created_at: datetime

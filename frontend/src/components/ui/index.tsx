@@ -1,6 +1,7 @@
 import { cn } from "@/lib/cn";
 import * as React from "react";
-import { Info, Loader2, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ChevronLeft, ChevronRight, Info, Loader2, X } from "lucide-react";
 
 // --- Button ---
 type ButtonVariant = "primary" | "ghost" | "danger" | "outline";
@@ -34,12 +35,166 @@ export function Button({
   );
 }
 
-// --- Card ---
+// --- Card --- (CR-028: hairline border + soft shadow-card, flat & crisp)
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("rounded-xl border border-border bg-surface shadow-sm", className)} {...props} />;
+  return <div className={cn("rounded-card border border-border bg-surface shadow-card", className)} {...props} />;
 }
 export function CardBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("p-4", className)} {...props} />;
+}
+
+// --- Badge (CR-028) — semantic pill for statuses/tags. The single source of
+// truth for pill shape; StatusBadge composes this. `style` overrides colors. ---
+type BadgeVariant = "neutral" | "info" | "success" | "warning" | "danger";
+export function Badge({
+  variant = "neutral",
+  className,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement> & { variant?: BadgeVariant }) {
+  const variants: Record<BadgeVariant, string> = {
+    neutral: "bg-bg text-text-secondary",
+    info: "bg-navy-50 text-brand",
+    success: "bg-green-50 text-success",
+    warning: "bg-amber-50 text-warning",
+    danger: "bg-red-50 text-danger",
+  };
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+        variants[variant],
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </span>
+  );
+}
+
+// --- Overline (CR-028) — small muted uppercase label (field/column/section). ---
+export function Overline({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("overline", className)} {...props} />;
+}
+
+// --- SectionTitle (CR-028) — title + optional subtitle + right slot. ---
+export function SectionTitle({
+  title,
+  subtitle,
+  right,
+  icon: Icon,
+  className,
+}: {
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  right?: React.ReactNode;
+  icon?: React.ComponentType<{ className?: string }>;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex items-start justify-between gap-3", className)}>
+      <div className="min-w-0">
+        <h2 className="flex items-center gap-2 text-section text-primary">
+          {Icon && <Icon className="h-3.5 w-3.5 text-brand" />}
+          <span>{title}</span>
+        </h2>
+        {subtitle && <p className="mt-0.5 text-caption leading-snug text-text-secondary">{subtitle}</p>}
+      </div>
+      {right && <div className="shrink-0">{right}</div>}
+    </div>
+  );
+}
+
+// --- Stat / Metric (CR-028) — inline metric block (big .tabular value + muted
+// overline label + optional delta in green/red). KPICard remains the richer
+// dashboard *card* (icon + sparkline + click); Stat is the lightweight sibling. ---
+export function Stat({
+  label,
+  value,
+  valueTitle,
+  hint,
+  delta,
+  className,
+}: {
+  label: string;
+  value: React.ReactNode;
+  valueTitle?: string;
+  hint?: React.ReactNode;
+  delta?: { text: string; positive?: boolean } | null;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <div className="overline">{label}</div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span title={valueTitle} className="tabular whitespace-nowrap text-stat text-primary">{value}</span>
+        {delta && (
+          <span className={cn("tabular text-xs font-medium", delta.positive ? "text-success" : "text-danger")}>{delta.text}</span>
+        )}
+      </div>
+      {hint && <div className="mt-0.5 text-caption text-text-secondary">{hint}</div>}
+    </div>
+  );
+}
+
+// --- Toolbar (CR-028) — consistent filter/action bar (replaces per-page ad-hoc). ---
+export function Toolbar({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("flex flex-wrap items-center gap-2", className)} {...props} />;
+}
+export function ToolbarSpacer() {
+  return <div className="flex-1" />;
+}
+
+// --- Tabs (CR-028) — accessible, keyboard-navigable (←/→). ---
+export interface TabItem {
+  id: string;
+  label: React.ReactNode;
+}
+export function Tabs({
+  tabs,
+  value,
+  onChange,
+  className,
+}: {
+  tabs: TabItem[];
+  value: string;
+  onChange: (id: string) => void;
+  className?: string;
+}) {
+  const onKey = (e: React.KeyboardEvent) => {
+    const i = tabs.findIndex((t) => t.id === value);
+    if (e.key === "ArrowRight") {
+      e.preventDefault();
+      onChange(tabs[(i + 1) % tabs.length].id);
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      onChange(tabs[(i - 1 + tabs.length) % tabs.length].id);
+    }
+  };
+  return (
+    <div role="tablist" className={cn("flex flex-wrap items-center gap-1", className)} onKeyDown={onKey}>
+      {tabs.map((t) => {
+        const active = t.id === value;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(t.id)}
+            className={cn(
+              "focus-ring rounded-control px-3 py-1.5 text-sm font-medium transition-colors",
+              active ? "bg-brand text-white" : "bg-surface text-text-secondary hover:bg-surface-hover"
+            )}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // --- Input / Label / Textarea / Select ---
@@ -177,5 +332,311 @@ export function AIDisclaimer({ short = false, className }: { short?: boolean; cl
       <Info className="mt-0.5 h-3 w-3 shrink-0" />
       <span>{text}</span>
     </p>
+  );
+}
+
+// --- Menu / Dropdown (CR-029) — accessible popover for header dropdowns + the
+// card three-dot menus. Click-outside + Escape close; keyboard focusable. ---
+export function Menu({
+  trigger,
+  triggerClassName,
+  triggerLabel,
+  align = "right",
+  width,
+  children,
+}: {
+  trigger: React.ReactNode;
+  triggerClassName?: string;
+  triggerLabel?: string; // aria-label for icon-only triggers
+  align?: "left" | "right";
+  width?: number;
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
+}) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const close = () => setOpen(false);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={triggerLabel}
+        onClick={() => setOpen((o) => !o)}
+        className={cn("focus-ring", triggerClassName)}
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={width ? { width } : undefined}
+          className={cn(
+            "absolute z-50 mt-1 min-w-[180px] overflow-hidden rounded-control border border-border bg-surface py-1 shadow-pop animate-fade-in",
+            align === "right" ? "right-0" : "left-0"
+          )}
+        >
+          {typeof children === "function" ? children(close) : children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function MenuItem({
+  icon: Icon,
+  children,
+  onClick,
+  danger,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+  onClick?: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition-colors hover:bg-surface-hover",
+        danger ? "text-danger" : "text-text-primary"
+      )}
+    >
+      {Icon && <Icon className="h-4 w-4 shrink-0 text-text-muted" />}
+      {children}
+    </button>
+  );
+}
+
+// --- RowMenu (CR-034.1) — like Menu, but the dropdown panel is rendered through a
+// React portal to document.body and positioned (position:fixed) at the trigger.
+// This keeps the per-row "…" menu from being clipped by a table/list's overflow
+// container (the shared Menu uses absolute positioning inside the row and gets cut
+// off). Closes on outside mousedown / Escape / scroll / resize. Reuses MenuItem.
+// The panel and trigger are tracked by SEPARATE refs because they no longer share
+// a DOM ancestor — the outside-click check must treat BOTH as "inside" or a
+// mousedown on an item would close the menu before its click lands. ---
+export function RowMenu({
+  trigger,
+  triggerLabel,
+  align = "right",
+  children,
+}: {
+  trigger: React.ReactNode;
+  triggerLabel?: string; // aria-label for the icon-only trigger
+  align?: "left" | "right";
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState<{ top: number; left?: number; right?: number } | null>(null);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+
+  const place = () => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos(
+      align === "right"
+        ? { top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) }
+        : { top: r.bottom + 4, left: r.left }
+    );
+  };
+  const close = () => setOpen(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (triggerRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onShift = () => setOpen(false); // stale position on scroll/resize → just close
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onShift, true); // capture: any scrollable ancestor
+    window.addEventListener("resize", onShift);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onShift, true);
+      window.removeEventListener("resize", onShift);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={triggerLabel}
+        onClick={() => {
+          if (open) {
+            setOpen(false);
+          } else {
+            place();
+            setOpen(true);
+          }
+        }}
+        className="focus-ring"
+      >
+        {trigger}
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            role="menu"
+            style={{ position: "fixed", top: pos.top, left: pos.left, right: pos.right }}
+            className="z-[60] min-w-[180px] overflow-hidden rounded-control border border-border bg-surface py-1 shadow-pop animate-fade-in"
+          >
+            {typeof children === "function" ? children(close) : children}
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}
+
+// --- Sparkline (CR-029) — KPI mini-chart (mockup spark() port). ---
+export function Sparkline({
+  data,
+  color = "var(--color-brand)",
+  className,
+  width = 120,
+  height = 26,
+}: {
+  data: number[];
+  color?: string;
+  className?: string;
+  width?: number;
+  height?: number;
+}) {
+  if (!data || data.length < 2) return null;
+  const mn = Math.min(...data);
+  const mx = Math.max(...data);
+  const rg = mx - mn || 1;
+  const pts = data.map((d, i) => [(i / (data.length - 1)) * width, height - 2 - ((d - mn) / rg) * (height - 4)]);
+  const line = pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const area = `0,${height} ${line} ${width},${height}`;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className={className} aria-hidden="true">
+      <polygon points={area} fill={color} opacity={0.08} />
+      <polyline points={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// --- Switch / Toggle (CR-029) — iOS-style. ---
+export function Switch({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange?: (v: boolean) => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange?.(!checked)}
+      className={cn(
+        "focus-ring relative h-[16px] w-[28px] shrink-0 rounded-full transition-colors",
+        checked ? "bg-success" : "bg-border-strong",
+        disabled && "cursor-not-allowed opacity-60"
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow-sm transition-all",
+          checked ? "left-[14px]" : "left-[2px]"
+        )}
+      />
+    </button>
+  );
+}
+
+// --- Pagination (CR-029) — prev/next arrows, disabled at ends. ---
+export function Pagination({
+  page,
+  pageCount,
+  onPage,
+  className,
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (p: number) => void;
+  className?: string;
+}) {
+  const btn =
+    "focus-ring flex h-[26px] w-[26px] items-center justify-center rounded-sm border border-border bg-surface text-text-secondary transition-colors hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-40";
+  return (
+    <div className={cn("flex items-center gap-1.5", className)}>
+      <button type="button" aria-label="Önceki" disabled={page <= 1} onClick={() => onPage(page - 1)} className={btn}>
+        <ChevronLeft className="h-3.5 w-3.5" />
+      </button>
+      <button type="button" aria-label="Sonraki" disabled={page >= pageCount} onClick={() => onPage(page + 1)} className={btn}>
+        <ChevronRight className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// --- Avatar (CR-029) — initials or photo. ---
+export function Avatar({
+  name,
+  src,
+  size = 34,
+  className,
+}: {
+  name?: string;
+  src?: string | null;
+  size?: number;
+  className?: string;
+}) {
+  const initials =
+    (name || "")
+      .split(" ")
+      .map((w) => w[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toLocaleUpperCase("tr") || "?";
+  if (src) {
+    return <img src={src} alt={name ?? ""} className={cn("rounded-full object-cover", className)} style={{ width: size, height: size }} />;
+  }
+  return (
+    <span
+      className={cn("inline-flex items-center justify-center rounded-full bg-gradient-to-br from-brand to-purple font-semibold text-white", className)}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }}
+    >
+      {initials}
+    </span>
   );
 }

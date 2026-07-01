@@ -25,6 +25,8 @@ interface DataTableProps<T> {
   minWidth?: number; // CR-004-E: minimum table width before horizontal scroll kicks in
   error?: string | null; // when set (and not loading) shows a retry state, not "empty"
   onRetry?: () => void;
+  highlightId?: string | null; // CR-007-H: scroll to + flash the row whose id matches
+  dense?: boolean; // CR-028: tighter ~36px rows for the data-dense look
 }
 
 // Data Table — sticky navy header, zebra rows, sortable (Section 6.5)
@@ -39,9 +41,20 @@ export function DataTable<T extends Record<string, any>>({
   minWidth = 640,
   error,
   onRetry,
+  highlightId,
+  dense,
 }: DataTableProps<T>) {
+  const cellPad = dense ? "px-3 py-2" : "px-3 py-2.5"; // CR-028: configurable density
   const [sortKey, setSortKey] = React.useState<string | null>(null);
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+  const highlightRef = React.useRef<HTMLTableRowElement>(null);
+
+  // CR-007-H: bring the cited row into view once it (and the data) are present.
+  React.useEffect(() => {
+    if (highlightId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightId, rows]);
 
   const sorted = React.useMemo(() => {
     if (!sortKey) return rows;
@@ -67,7 +80,7 @@ export function DataTable<T extends Record<string, any>>({
 
   if (loading) {
     return (
-      <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+      <div className="overflow-hidden rounded-card border border-border bg-surface shadow-card">
         <div className="border-b border-border bg-bg px-4 py-3" />
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="border-b border-border px-4 py-3 last:border-0">
@@ -80,7 +93,7 @@ export function DataTable<T extends Record<string, any>>({
 
   if (error && !loading) {
     return (
-      <div className="rounded-xl border border-border bg-surface shadow-sm">
+      <div className="rounded-card border border-border bg-surface shadow-card">
         <LoadError onRetry={onRetry} />
       </div>
     );
@@ -88,23 +101,25 @@ export function DataTable<T extends Record<string, any>>({
 
   if (sorted.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-surface shadow-sm">
+      <div className="rounded-card border border-border bg-surface shadow-card">
         <EmptyState message={emptyMessage} actionLabel={emptyAction?.label} onAction={emptyAction?.onClick} />
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
+    <div className="overflow-x-auto rounded-card border border-border bg-surface shadow-card">
       <table className="w-full border-collapse text-sm" style={{ minWidth: minWidth }}>
-        <thead className="sticky top-0">
-          <tr className="border-b border-border bg-bg text-text-secondary">
+        <thead className="sticky top-0 z-10">
+          <tr className="border-b border-border bg-bg">
             {columns.map((c) => (
               <th
                 key={c.key}
                 style={c.maxWidth ? { maxWidth: c.maxWidth } : undefined}
                 className={cn(
-                  "px-3 py-2.5 text-left text-xs font-medium",
+                  // CR-028: small muted uppercase column headers (overline style).
+                  cellPad,
+                  "text-left text-[11px] font-semibold uppercase tracking-wide text-text-muted",
                   c.align === "right" && "text-right",
                   c.align === "center" && "text-center",
                   c.sortable && "cursor-pointer select-none"
@@ -120,12 +135,16 @@ export function DataTable<T extends Record<string, any>>({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row, i) => (
+          {sorted.map((row, i) => {
+            const isHighlighted = highlightId != null && row.id === highlightId;
+            return (
             <tr
               key={row.id ?? i}
+              ref={isHighlighted ? highlightRef : undefined}
               className={cn(
-                "border-b border-border last:border-0 hover:bg-navy-50",
+                "border-b border-border transition-colors last:border-0 hover:bg-surface-hover",
                 onRowClick && "cursor-pointer",
+                isHighlighted && "yapi-row-flash",
                 rowClassName?.(row)
               )}
               onClick={() => onRowClick?.(row)}
@@ -135,7 +154,7 @@ export function DataTable<T extends Record<string, any>>({
                   key={c.key}
                   style={c.maxWidth ? { maxWidth: c.maxWidth } : undefined}
                   className={cn(
-                    "px-3 py-2.5",
+                    cellPad,
                     c.align === "right" && "text-right tabular",
                     c.align === "center" && "text-center",
                     c.maxWidth && "truncate"
@@ -146,7 +165,8 @@ export function DataTable<T extends Record<string, any>>({
                 </td>
               ))}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

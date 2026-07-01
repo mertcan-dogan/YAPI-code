@@ -31,11 +31,24 @@ def list_custom_categories(user: CurrentUser, db: Session = Depends(get_db)):
 
 @router.post("")
 def create_custom_category(payload: CustomCategoryCreate, user: CurrentUser, db: Session = Depends(get_db)):
-    """Create a custom category, or bump usage_count if it already exists."""
+    """Create a custom category/subcategory, or bump usage_count if it already exists.
+
+    Dedup is by (company_id, parent_category, name_normalized). CR-018-B note: the
+    DB unique constraint can't enforce this when parent_category IS NULL (SQL NULLs
+    are distinct), so the top-level dedup that CR-001-D relied on is re-established
+    here in app code — the parent filter below uses ``.is_(None)`` for NULL parents.
+    """
     norm = normalize(payload.name)
+    parent = payload.parent_category  # already validated to be a COST_CATEGORY key or None
+    parent_filter = (
+        CustomCostCategory.parent_category.is_(None)
+        if parent is None
+        else CustomCostCategory.parent_category == parent
+    )
     existing = db.execute(
         select(CustomCostCategory).where(
             CustomCostCategory.company_id == user.company_id,
+            parent_filter,
             CustomCostCategory.name_normalized == norm,
         )
     ).scalar_one_or_none()
@@ -47,7 +60,8 @@ def create_custom_category(payload: CustomCategoryCreate, user: CurrentUser, db:
         return success(CustomCategoryOut.model_validate(existing).model_dump(mode="json"))
 
     cat = CustomCostCategory(
-        company_id=user.company_id, name=payload.name.strip(), name_normalized=norm, usage_count=1
+        company_id=user.company_id, parent_category=parent,
+        name=payload.name.strip(), name_normalized=norm, usage_count=1,
     )
     db.add(cat)
     db.commit()

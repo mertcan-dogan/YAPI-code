@@ -23,16 +23,37 @@ bleach==6.4.0                  # CR-002-I: XSS sanitisation of text input
 supabase==2.11.0
 
 # AI
-anthropic==0.42.0
+# 0.112.0 (current) — 0.42.0 predated the extended-thinking `thinking` parameter,
+# so messages.create/stream raised TypeError when AI_AGENT_THINKING_ENABLED was on
+# and took the whole agent down. agent.py also guards against this at runtime.
+anthropic==0.112.0
 
 # Email
 resend==2.5.1
+
+# Observability — error monitoring (errors-only; PII/financial data scrubbed).
+# [fastapi] pulls the Starlette/FastAPI integrations. Env-gated via SENTRY_DSN.
+sentry-sdk[fastapi]==2.63.0
 
 # PDF + Excel
 # CR-004-A: ReportLab replaces WeasyPrint — renders on Windows without GTK/Pango/Cairo.
 reportlab==4.2.5
 openpyxl==3.1.5
 jinja2==3.1.5
+
+# Charts (CR-036): matplotlib (Agg backend) renders the PDF report charts; the PNGs
+# are embedded via ReportLab. Pins matplotlib + its transitive deps so the Docker
+# image (python:3.12-slim) installs the same cp-manylinux wheels — no new apt system
+# libs needed (freetype/libpng ship inside the Pillow/matplotlib wheels).
+matplotlib==3.11.0
+numpy==2.4.6
+pillow==12.2.0
+contourpy==1.3.3
+cycler==0.12.1
+kiwisolver==1.5.0
+pyparsing==3.3.2
+fonttools==4.63.0
+packaging==26.2
 
 # HTTP / utils
 httpx==0.28.1

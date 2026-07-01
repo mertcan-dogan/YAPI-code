@@ -4,14 +4,14 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.responses import APIError, error_response
 
 logger = logging.getLogger("yapi.errors")
 
 
-class CatchAllErrorMiddleware(BaseHTTPMiddleware):
+class CatchAllErrorMiddleware:
     """Convert any unhandled exception into the standard 500 error envelope.
 
     FastAPI's catch-all ``Exception`` handler runs in Starlette's
@@ -24,14 +24,42 @@ class CatchAllErrorMiddleware(BaseHTTPMiddleware):
     is generated here and travels back out through the CORS layer, picking up
     the proper CORS headers. Handled errors (APIError, HTTPException, validation)
     are dealt with by ExceptionMiddleware below this point and never reach here.
+
+    CR-011 streaming fix: this is a **pure ASGI** middleware (not
+    BaseHTTPMiddleware) so it forwards each ``send`` event untouched — a
+    StreamingResponse (SSE on POST /ai/agent?stream=1) streams chunk-by-chunk
+    instead of being buffered. We only intervene when an exception escapes
+    BEFORE the response has started; once bytes are on the wire we cannot inject
+    a new response, so we re-raise.
     """
 
-    async def dispatch(self, request: Request, call_next):
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
         try:
-            return await call_next(request)
+            await self.app(scope, receive, send_wrapper)
         except Exception as exc:  # noqa: BLE001 — last-resort backstop
             logger.exception("Unhandled error: %s", exc)
-            return error_response(500, "INTERNAL_ERROR", "Beklenmeyen bir hata oluştu")
+            if response_started:
+                # Bytes already flushed (e.g. mid-stream) — cannot replace the
+                # response; let it propagate so the server closes the connection.
+                raise
+            await error_response(500, "INTERNAL_ERROR", "Beklenmeyen bir hata oluştu")(
+                scope, receive, send
+            )
 
 
 def register_error_handlers(app: FastAPI) -> None:

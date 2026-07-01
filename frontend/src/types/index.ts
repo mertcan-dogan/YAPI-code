@@ -50,6 +50,13 @@ export interface Project {
   name: string;
   project_code: string;
   project_type: string;
+  // CR: revenue/billing model — hakedis | kat_karsiligi | yap_sat | hasilat_paylasimi | maliyet_kar
+  revenue_model: string;
+  // CR-053: per-project deal structure (sell-side only; null on hakediş / old projects).
+  // arsa_karsiligi_daire | kentsel_donusum | nakit_katki | yap_sat_kendi_arsa | diger
+  deal_structure: string | null;
+  contractor_share_pct: string | null;
+  unit_count: number | null;
   client_name: string;
   client_contact: string | null;
   contract_number: string | null;
@@ -69,7 +76,39 @@ export interface Project {
   target_margin_pct: string | null;
   completion_pct: string;
   project_manager_id: string | null;
+  // CR-016: residential / kentsel dönüşüm details (empty for other projects).
+  construction_gross_m2: string | null;
+  construction_net_m2: string | null;
+  units: ProjectUnit[];
+  // CR-015: per-project financing overrides (null = inherit company default).
+  financing_enabled_override: boolean | null;
+  financing_annual_rate_pct_override: string | null;
   financials?: ProjectFinancials;
+}
+
+// CR-016: a daire dağılımı row as returned by the API.
+export interface ProjectUnit {
+  id: string;
+  project_id: string;
+  company_id: string;
+  unit_type: string;
+  custom_label: string | null;
+  count: number;
+  gross_m2_each: string;
+  net_m2_each: string | null;
+  sale_price_try: string | null;
+  notes: string | null;
+  // CR-053: which side this planned daire belongs to — "yuklenici" (contractor's
+  // sellable stock) | "arsa_sahibi" (landowner's). Default "yuklenici".
+  owner_side: string;
+}
+
+// CR-016-B: computed residential aggregates on the dashboard payload.
+export interface ResidentialAggregates {
+  total_units: number;
+  total_sellable_gross_m2: string;
+  total_sellable_net_m2: string;
+  total_estimated_sales_try: string | null;
 }
 
 export interface BudgetCategoryRow {
@@ -79,6 +118,8 @@ export interface BudgetCategoryRow {
   approved_variations_try: string;
   revised_budget_try: string;
   committed_try: string;
+  open_committed_try?: string; // CR-023: açık taahhüt (committed − linked actuals)
+  exposure_try?: string; // CR-023: actual + open committed
   invoiced_try: string;
   paid_try: string;
   remaining_try: string;
@@ -99,6 +140,8 @@ export interface CostEntry {
   description: string | null;
   invoice_number: string | null;
   amount_try: string;
+  amount_usd?: string | null;
+  fx_rate_usd?: string | null;
   vat_rate: string;
   vat_amount_try: string;
   total_with_vat_try: string;
@@ -108,6 +151,11 @@ export interface CostEntry {
   amount_paid_try: string;
   document_url: string | null;
   notes: string | null;
+  commitment_id?: string | null; // CR-023: relief link (actual → committed entry)
+  po_number?: string | null;
+  expected_date?: string | null;
+  // CR-024: AI document-extraction confidence (0..1); null on manual/Excel rows.
+  extraction_confidence?: number | null;
 }
 
 export interface ClientInvoice {
@@ -119,6 +167,8 @@ export interface ClientInvoice {
   invoice_type: string;
   description: string | null;
   amount_try: string;
+  amount_usd?: string | null;
+  fx_rate_usd?: string | null;
   vat_rate: string;
   vat_amount_try: string;
   total_with_vat_try: string;
@@ -130,6 +180,171 @@ export interface ClientInvoice {
   amount_received_try: string;
   outstanding_try: string;
   document_url: string | null;
+  // CR-024: AI document-extraction confidence (0..1); null on manual rows.
+  extraction_confidence?: number | null;
+}
+
+// --- CR-031: Satışlar & Kar/Zarar (sell-side revenue lane) ---
+export interface UnitSale {
+  id: string;
+  project_id: string;
+  project_unit_id: string | null;
+  unit_label: string;
+  unit_type: string | null;
+  floor: string | null;
+  gross_m2: string | null;
+  net_m2: string | null;
+  buyer_name: string | null;
+  sale_price_try: string;
+  sale_date: string;
+  fx_rate_usd: string | null;
+  sale_price_usd: string | null;
+  payment_type: string | null;
+  installment_note: string | null;
+  deed_status: string | null;
+  deed_date: string | null;
+  owner_side: string;
+  notes: string | null;
+}
+
+// A unit_sales GET row: the sale fields + read-time cost-allocation P&L (CR-031-A).
+export interface UnitSaleAllocation extends UnitSale {
+  basis_m2: string | null;
+  unit_cost_try: string | null;
+  unit_cost_usd: string | null;
+  pnl_try: string | null;
+  pnl_usd: string | null;
+  margin_pct: string | null;
+}
+
+export interface UnitSalesPayload {
+  basis: "net" | "gross";
+  denom_m2: string;
+  allocations: UnitSaleAllocation[];
+  totals: {
+    count: number;
+    sale_price_try: string;
+    sale_price_usd: string;
+    cost_try: string;
+    cost_usd: string;
+    pnl_try: string;
+    pnl_usd: string;
+    total_m2: string;
+    avg_price_per_m2_try: string | null;
+    margin_pct: string | null;
+  };
+  cost_total_try: string;
+  cost_total_usd: string;
+  usd_missing_count: number;
+}
+
+export interface LandownerPayment {
+  id: string;
+  payer_name: string | null;
+  committed_total_try: string | null;
+  payment_date: string;
+  amount_try: string;
+  amount_usd: string | null;
+  fx_rate_usd: string | null;
+  payment_type: string | null;
+  description: string | null;
+  notes: string | null;
+}
+
+export interface LandownerLedger {
+  payments: LandownerPayment[];
+  rollup: {
+    total_try: string;
+    total_usd: string;
+    count: number;
+    committed_total_try: string | null;
+    remaining_try: string | null;
+    pct_paid: string | null;
+    usd_missing_count: number;
+  };
+}
+
+interface PnlTrio {
+  try: string | null;
+  usd: string | null;
+  try_today: string | null;
+}
+
+export interface ProjectPnl {
+  revenue_model: string;
+  revenue_source: "sales" | "hakedis";
+  revenue_breakdown: Record<string, string>;
+  revenue_try: string;
+  revenue_usd: string;
+  cost_try: string;
+  cost_usd: string;
+  financing_try: string;
+  financing_usd: string;
+  net_excl_financing_try: string;
+  net_incl_financing_try: string;
+  net_excl_financing_usd: string;
+  net_incl_financing_usd: string;
+  margin_pct: string | null;
+  margin_incl_financing_pct: string | null;
+  usd_missing_count: number;
+  m2_analysis: {
+    gross_m2: string | null;
+    net_m2: string | null;
+    unit_count: number | null;
+    floor_count: number | null;
+    per_gross_m2: PnlTrio;
+    per_net_m2: PnlTrio;
+    per_unit: PnlTrio;
+    per_floor: PnlTrio;
+  };
+  fx_effect: {
+    today_rate: string | null;
+    cost_try_original: string;
+    cost_try_today: string | null;
+    fx_effect_try: string | null;
+    fx_effect_pct: string | null;
+  };
+  split?: {
+    contractor_share_pct: string | null;
+    contractor: { sales_try: string; sales_usd: string; allocated_cost_try: string | null };
+    landowner: { sales_try: string; sales_usd: string; payments_try: string; payments_usd: string; allocated_cost_try: string | null };
+  };
+  // CR-053: operator-model extras — present ONLY for sell-side (revenue_source === "sales").
+  // Efektif arsa maliyeti = construction × landowner share. DERIVED/informational —
+  // never added to revenue or cost (the land's cost is already inside construction).
+  efektif_arsa_maliyeti_try?: string | null;
+  efektif_arsa_maliyeti_usd?: string | null;
+  landowner_share_pct?: string | null; // e.g. "40.00"
+  landowner_share_basis?: "units" | "pct" | null;
+  planned_split?: {
+    has_schedule: boolean;
+    total_gross_m2: string;
+    contractor: { units: number; gross_m2: string; net_m2: string; estimated_sales_try: string | null };
+    landowner: { units: number; gross_m2: string; net_m2: string; estimated_sales_try: string | null };
+    sold: { units: number; value_try: string; value_usd: string };
+    remaining: { units: number; projected_value_try: string | null };
+  };
+}
+
+export interface InvestmentReturn {
+  irr_try_pct: string | null;
+  irr_usd_pct: string | null;
+  roi_pct: string | null;
+  net_profit_try: string;
+  total_cost_try: string;
+  duration_months: number | null;
+  profit_per_net_m2_try: string | null;
+  profit_per_unit_try: string | null;
+  revenue_source: "sales" | "hakedis";
+  yearly: {
+    year: number;
+    inflow_try: string;
+    outflow_try: string;
+    net_try: string;
+    inflow_usd: string;
+    outflow_usd: string;
+    net_usd: string;
+  }[];
 }
 
 export interface Subcontractor {
@@ -160,6 +375,8 @@ export interface Equipment {
   deployment_start: string;
   deployment_end: string | null;
   fuel_maintenance_try: string;
+  notes?: string | null;
+  photo_urls?: string[];
   duration_days: number | null;
   total_cost_try: string | null;
 }
@@ -208,4 +425,59 @@ export interface AIAlert {
   recommended_action: string | null;
   is_actioned: boolean;
   created_at: string;
+  feedback?: string | null;
+  // CR-022: record linkage for assurance findings (NULL on legacy health alerts).
+  source_type?: string | null;
+  source_id?: string | null;
+  dedup_key?: string | null;
+}
+
+// CR-022-B: POST /ai/assurance/scan summary.
+export interface AssuranceScanSummary {
+  scanned: { cost_entries: number; client_invoices: number };
+  found: Record<string, number>;
+  total_found: number;
+  created: number;
+}
+
+// Proje Kapanışı (project closeout) — lifecycle Aktif → Geçici Kabul → Kesin Hesap
+// → Kesin Kabul. `stage` is the FURTHEST stage reached (or null when not started).
+export type CloseoutStage = "gecici_kabul" | "kesin_hesap" | "kesin_kabul";
+
+export interface CloseoutSummary {
+  project_name: string;
+  client_name: string;
+  contract_value: string;
+  total_actual: string;
+  forecast_final: string;
+  margin_pct: string;
+  net_cash: string;
+  report_date: string;
+  generated_at: string;
+}
+
+export interface CloseoutObj {
+  id: string;
+  project_id: string;
+  company_id: string;
+  stage: CloseoutStage | null;
+  gecici_kabul_date: string | null;
+  kesin_hesap_date: string | null;
+  kesin_kabul_date: string | null;
+  is_active: boolean;
+  frozen_at: string | null;
+  reopened_at: string | null;
+  created_at: string;
+  // The /closeouts archive list carries these per record (newest first).
+  summary?: CloseoutSummary | null;
+  report_frozen?: boolean;
+}
+
+// GET /projects/{id}/closeout envelope.
+export interface CloseoutResponse {
+  closeout: CloseoutObj | null;
+  project_status: "active" | "completed";
+  summary: CloseoutSummary | null;
+  report_frozen: boolean;
+  report_stale: boolean;
 }

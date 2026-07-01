@@ -49,8 +49,9 @@ def test_capture_returns_extracted_fields(client, seed, monkeypatch):
 
 def test_confirm_saves_cost_entry(client, seed):
     pid = _login(client, seed)
+    cid = seed["a"]["company"].id
     body = {
-        "document_path": f"{pid}/abc.png",
+        "document_path": f"{cid}/{pid}/abc.png",
         "entry_date": "2025-05-01",
         "cost_category": "material_concrete",
         "supplier_name": "Beton A.Ş.",
@@ -65,7 +66,7 @@ def test_confirm_saves_cost_entry(client, seed):
     costs = client.get(f"/api/v1/projects/{pid}/costs").json()
     assert costs["meta"]["total"] == 1
     # Document link stored with bucket prefix.
-    assert costs["data"][0]["document_url"] == f"documents/{pid}/abc.png"
+    assert costs["data"][0]["document_url"] == f"documents/{cid}/{pid}/abc.png"
 
 
 def test_confirm_rejects_invalid_amount(client, seed):
