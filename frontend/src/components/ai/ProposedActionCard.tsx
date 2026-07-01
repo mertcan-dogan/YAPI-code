@@ -3,11 +3,20 @@ import { KPICard } from "@/components/KPICard";
 import { StudioChart, formatMetricValue } from "@/components/StudioChart";
 import { apiPut, skills, studio } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import {
+  applyOption,
+  badgeForType,
+  detectDataFindings,
+  findingId,
+  optionsFor,
+  type DraftWidget,
+  type Finding,
+} from "@/lib/critique";
 import { useAuth } from "@/store/auth";
 import { toast } from "@/store/toast";
 import type { ProposedAction } from "@/types/agent";
 import type { CatalogDimension, CatalogMetric, RunResult, RunRow, StudioSpec } from "@/types/studio";
-import { ArrowRight, Check, FileSpreadsheet, FileText, Pencil, Sparkles, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, FileSpreadsheet, FileText, Pencil, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -122,27 +131,99 @@ export function ProposedActionCard({
 
   const labelOf = (id: string) => metricById.get(id)?.label ?? dimById.get(id)?.label ?? id;
 
-  // CR-049 — the data widgets to live-preview as a scrollable mini-report. A report
-  // is its single spec; a dashboard/skill is EACH data widget (kpi/chart/table) with
-  // a non-empty spec, in plan order. text/empty widgets are dropped. (Was: only the
-  // first widget — the draft card now shows the whole report, scrollable + capped.)
+  // CR-056 — the EDITABLE draft widget list (component state). A report is one
+  // pseudo-widget ("report"); a dashboard/skill is each widget in plan order, keyed
+  // by its id (matches the finding.widget_ids and the preview key). `raw` keeps the
+  // full widget object so create/save sends the (possibly trimmed) real widgets. The
+  // agent wrote nothing and the critique never mutated this — the user's option-click
+  // is the only thing that trims/retitles it, and Oluştur creates the ADJUSTED plan.
+  const [draft, setDraft] = useState<DraftWidget[]>(() => {
+    if (isReportKind) {
+      return action.spec ? [{ key: "report", title: action.title ?? null, spec: action.spec, raw: null }] : [];
+    }
+    const widgetList = isDraftSkill ? skillWidgets : isDashboardKind ? action.widgets ?? [] : [];
+    return (widgetList as any[]).map((w, i) => ({
+      key: w?.id != null ? String(w.id) : `idx-${i}`,
+      title: w?.title ?? null,
+      spec: w?.spec ?? null,
+      raw: w ?? null,
+    }));
+  });
+
+  // CR-049 — the data widgets to live-preview as a scrollable mini-report, derived
+  // from the (editable) draft: each widget with a non-empty spec, in order.
   const previewWidgets = useMemo<{ key: string; title: string | null; spec: StudioSpec }[]>(() => {
     const valid = (s: any): StudioSpec | null =>
       s && Array.isArray(s.metrics) && s.metrics.length > 0 ? (s as StudioSpec) : null;
-    if (isReportKind) {
-      const s = valid(action.spec);
-      return s ? [{ key: "report", title: null, spec: s }] : [];
-    }
-    const widgetList = isDraftSkill ? skillWidgets : isDashboardKind ? action.widgets ?? [] : [];
     const out: { key: string; title: string | null; spec: StudioSpec }[] = [];
-    (widgetList as any[]).forEach((w, i) => {
-      const s = valid(w?.spec);
-      // `idx-${i}` fallback can't collide with an explicit widget id (e.g. "w3").
-      if (s) out.push({ key: w?.id != null ? String(w.id) : `idx-${i}`, title: w?.title ?? null, spec: s });
-    });
+    for (const d of draft) {
+      const s = valid(d.spec);
+      if (s) out.push({ key: d.key, title: d.title, spec: s });
+    }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReportKind, isDashboardKind, isDraftSkill, action.spec, action.widgets, action.plan]);
+  }, [draft]);
+
+  // CR-056 — run-results lifted from each StudioRunPreview so the data-aware checks
+  // (empty_dimension / single_row / identical_data) run WITHOUT any extra /studio/run.
+  const [resultByKey, setResultByKey] = useState<Record<string, RunResult | undefined>>({});
+  const onWidgetResult = (key: string, r: RunResult | null) =>
+    setResultByKey((prev) => (prev[key] === (r ?? undefined) ? prev : { ...prev, [key]: r ?? undefined }));
+
+  // CR-056 — findings the user has already resolved (option clicked / "Tümünü tut"):
+  // hidden from the summary and their badges cleared. Keyed by a stable finding id.
+  const [resolved, setResolved] = useState<Set<string>>(new Set());
+  const dismissAll = () => {
+    setResolved((prev) => {
+      const next = new Set(prev);
+      findings.forEach((f) => next.add(findingId(f)));
+      return next;
+    });
+  };
+
+  // CR-056 — the unified, ACTIVE findings: backend structural (duplicate/mislabel) +
+  // FE data-aware, minus resolved ones and any whose widgets were already trimmed.
+  const findings = useMemo<Finding[]>(() => {
+    const presentKeys = new Set(draft.map((d) => d.key));
+    const structural = (action.critique ?? []) as Finding[];
+    const dataAware = detectDataFindings(previewWidgets, resultByKey);
+    const seen = new Set<string>();
+    const out: Finding[] = [];
+    for (const f of [...structural, ...dataAware]) {
+      const id = findingId(f);
+      if (resolved.has(id) || seen.has(id)) continue;
+      // Drop a finding once its referenced widgets no longer BOTH exist (e.g. after a
+      // "Sadece X" trim resolves the duplicate).
+      const live = f.widget_ids.filter((k) => presentKeys.has(k));
+      if (live.length < Math.min(2, f.widget_ids.length) && f.widget_ids.length > 1) continue;
+      if (live.length === 0) continue;
+      seen.add(id);
+      out.push(f);
+    }
+    return out;
+  }, [action.critique, previewWidgets, resultByKey, resolved, draft]);
+
+  // CR-056 — pick the option the user clicked: trim/retitle the draft, then mark the
+  // finding resolved. This is the ONLY mutation of the plan, and only on a click.
+  const chooseOption = (f: Finding, action_: Parameters<typeof applyOption>[1]) => {
+    setDraft((d) => applyOption(d, action_));
+    setResolved((prev) => new Set(prev).add(findingId(f)));
+  };
+
+  // CR-056 — the badge (if any) to show inline on a preview widget: the first active
+  // finding that references it. Cleared once resolved/trimmed.
+  const badgeByKey = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const f of findings) {
+      for (const k of f.widget_ids) if (!out[k]) out[k] = badgeForType(f.type);
+    }
+    return out;
+  }, [findings]);
+
+  const titleByKey = useMemo<Record<string, string | null>>(() => {
+    const out: Record<string, string | null> = {};
+    for (const d of draft) out[d.key] = d.title;
+    return out;
+  }, [draft]);
 
   const approve = async () => {
     if (busy) return;
@@ -189,10 +270,16 @@ export function ProposedActionCard({
   const create = async () => {
     if (busy) return;
     setBusy(true);
+    // CR-056 — create the ADJUSTED plan: build the payload from the (possibly
+    // trimmed/retitled) draft, not the original action. A report is the single
+    // draft widget's spec+title; a dashboard/skill is the surviving raw widgets.
+    const trimmedWidgets = draft.map((d) => d.raw).filter(Boolean);
     try {
       if (isDraftReport) {
         const r = await studio.createReport({
-          title: action.title ?? "Rapor", spec: action.spec, visibility: vis, labels: action.labels ?? null,
+          title: draft[0]?.title ?? action.title ?? "Rapor",
+          spec: draft[0]?.spec ?? action.spec,
+          visibility: vis, labels: action.labels ?? null,
         });
         setCreatedTarget(`/studio/reports/${r.id}`);
         toast.success("Rapor oluşturuldu.");
@@ -203,7 +290,7 @@ export function ProposedActionCard({
         const r = await skills.createSkill({
           name: action.title ?? "Beceri",
           instruction: action.instruction ?? "",
-          plan: action.plan as any,
+          plan: { ...(action.plan as any), widgets: trimmedWidgets },
           format: action.format ?? "xlsx",
           visibility: vis,
           labels: action.labels ?? null,
@@ -213,7 +300,7 @@ export function ProposedActionCard({
         toast.success("Beceri kaydedildi.");
       } else {
         const r = await studio.createDashboard({
-          title: action.title ?? "Pano", widgets: action.widgets ?? [], date_range: action.date_range ?? null,
+          title: action.title ?? "Pano", widgets: trimmedWidgets, date_range: action.date_range ?? null,
           comparison: action.comparison ?? null, filters: action.filters ?? null, visibility: vis,
           labels: action.labels ?? null,
         });
@@ -341,11 +428,22 @@ export function ProposedActionCard({
             <>
               {action.title && <p className="mt-1 text-[13px] font-semibold text-text-primary">{action.title}</p>}
               {isReportKind ? reportSummary() : isDraftSkill ? skillSummary() : dashboardSummary()}
+              {/* CR-056 — critique summary + ask-with-options (only when findings). */}
+              {findings.length > 0 && (
+                <CritiquePanel
+                  findings={findings}
+                  titleByKey={titleByKey}
+                  onChoose={chooseOption}
+                  onKeepAll={dismissAll}
+                />
+              )}
               {previewWidgets.length > 0 ? (
                 <MiniReportPreview
                   widgets={previewWidgets}
                   metricById={metricById}
                   showTitles={isDashboardKind || isDraftSkill}
+                  badgeByKey={badgeByKey}
+                  onResult={onWidgetResult}
                 />
               ) : (
                 <p className="mt-2 text-[11px] text-text-faint">Önizlenecek veri yok.</p>
@@ -509,6 +607,60 @@ export function ProposedActionCard({
 }
 
 // --------------------------------------------------------------------------- #
+// CR-056 — the critique summary + ask-with-options block. Shows what the agent
+// noticed (never auto-applied) and, per finding, the deterministic option buttons.
+// Clicking an option trims/retitles the in-memory draft (via the card's onChoose);
+// "Tümünü tut" dismisses every finding, keeping the plan intact. Nothing here writes
+// — Oluştur/Kaydet later creates whatever the draft became.
+// --------------------------------------------------------------------------- #
+function CritiquePanel({
+  findings,
+  titleByKey,
+  onChoose,
+  onKeepAll,
+}: {
+  findings: Finding[];
+  titleByKey: Record<string, string | null>;
+  onChoose: (f: Finding, action: Parameters<typeof applyOption>[1]) => void;
+  onKeepAll: () => void;
+}) {
+  return (
+    <div className="mt-2 rounded-control border border-warning/40 bg-warning/5 p-2.5">
+      <div className="flex items-center gap-1.5 text-[12px] font-semibold text-text-primary">
+        <AlertTriangle className="h-3.5 w-3.5 text-warning" />
+        Planı gözden geçirdim — kararı sana bırakıyorum
+      </div>
+      <ul className="mt-1.5 space-y-2">
+        {findings.map((f) => (
+          <li key={findingId(f)} className="space-y-1">
+            <p className="text-[12px] text-text-secondary">{f.message}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {optionsFor(f, titleByKey).map((opt, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onChoose(f, opt.action)}
+                  className="focus-ring rounded-control border border-border bg-surface px-2 py-0.5 text-[11px] font-medium text-text-primary transition hover:border-brand hover:text-brand"
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        onClick={onKeepAll}
+        className="focus-ring mt-2 text-[11px] font-medium text-text-faint hover:text-text-secondary hover:underline"
+      >
+        Tümünü tut
+      </button>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
 // CR-049 — scrollable multi-widget mini-report preview. Renders the plan's data
 // widgets stacked in a scrollable container (each reusing StudioRunPreview), capped
 // at the first PREVIEW_CAP with a "Tam önizleme" expand revealing the rest. The cap
@@ -558,10 +710,16 @@ function MiniReportPreview({
   widgets,
   metricById,
   showTitles,
+  badgeByKey,
+  onResult,
 }: {
   widgets: { key: string; title: string | null; spec: StudioSpec }[];
   metricById: Map<string, CatalogMetric>;
   showTitles: boolean;
+  // CR-056 — an inline badge per affected widget key + a callback lifting each
+  // widget's run-result up so the card can run the data-aware critique checks.
+  badgeByKey?: Record<string, string>;
+  onResult?: (key: string, r: RunResult | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hidden = Math.max(0, widgets.length - PREVIEW_CAP);
@@ -569,16 +727,32 @@ function MiniReportPreview({
   return (
     <div className="mt-2">
       <div className="max-h-[26rem] space-y-3 overflow-y-auto rounded-control border border-border bg-surface/40 p-2">
-        {visible.map((w) => (
-          <div key={w.key}>
-            {showTitles && w.title && (
-              <p className="mb-1 text-[11px] font-medium text-text-secondary">{w.title}</p>
-            )}
-            <LazyMount>
-              <StudioRunPreview spec={w.spec} metricById={metricById} />
-            </LazyMount>
-          </div>
-        ))}
+        {visible.map((w) => {
+          const badge = badgeByKey?.[w.key];
+          return (
+            <div key={w.key}>
+              {(showTitles && w.title) || badge ? (
+                <div className="mb-1 flex items-center gap-2">
+                  {showTitles && w.title && (
+                    <p className="text-[11px] font-medium text-text-secondary">{w.title}</p>
+                  )}
+                  {badge && (
+                    <span className="inline-flex items-center gap-1 rounded-control border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+                      <AlertTriangle className="h-3 w-3" /> {badge}
+                    </span>
+                  )}
+                </div>
+              ) : null}
+              <LazyMount>
+                <StudioRunPreview
+                  spec={w.spec}
+                  metricById={metricById}
+                  onResult={onResult ? (r) => onResult(w.key, r) : undefined}
+                />
+              </LazyMount>
+            </div>
+          );
+        })}
       </div>
       {hidden > 0 && !expanded && (
         <button
@@ -598,11 +772,23 @@ function MiniReportPreview({
 // the EXISTING studio kit (same dispatch as the editor's CanvasPreview). Self
 // contained loading / error states; a failed run never blocks the rest of the card.
 // --------------------------------------------------------------------------- #
-function StudioRunPreview({ spec, metricById }: { spec: StudioSpec; metricById: Map<string, CatalogMetric> }) {
+function StudioRunPreview({
+  spec,
+  metricById,
+  onResult,
+}: {
+  spec: StudioSpec;
+  metricById: Map<string, CatalogMetric>;
+  // CR-056 — lift the run-result (or null on error) to the card for the data-aware
+  // critique. Kept in a ref so a changing closure never re-fires the run.
+  onResult?: (r: RunResult | null) => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
   const specKey = JSON.stringify(spec);
+  const onResultRef = useRef(onResult);
+  onResultRef.current = onResult;
 
   useEffect(() => {
     let alive = true;
@@ -615,11 +801,13 @@ function StudioRunPreview({ spec, metricById }: { spec: StudioSpec; metricById: 
         if (!alive) return;
         setResult(r);
         setLoading(false);
+        onResultRef.current?.(r);
       })
       .catch((e) => {
         if (!alive) return;
         setError(e?.message ?? "Önizleme yüklenemedi.");
         setLoading(false);
+        onResultRef.current?.(null);
       });
     return () => {
       alive = false;
