@@ -56,6 +56,11 @@ export interface ProposedAction {
   // CR-039 — the user-chosen create payload for a draft.
   visibility?: string;
   labels?: string[] | null;
+  // CR-056 (additive) — advisory STRUCTURAL findings the compile step detected
+  // (duplicate / mislabel). The FE merges in its data-aware findings, renders a
+  // critique summary + inline badges + option buttons, and the user's click trims/
+  // retitles the in-memory draft. Never auto-applied; the plan is unchanged here.
+  critique?: import("../lib/critique").Finding[];
   // CR-044 (additive) — "draft_skill": a reusable file-recipe the agent compiled.
   // It carries the free-form `instruction`, the dashboard-shaped `plan` (the engine
   // runs this — the LLM never writes figures), and the output `format`. Title is the

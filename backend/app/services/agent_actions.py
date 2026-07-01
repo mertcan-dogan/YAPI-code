@@ -26,6 +26,7 @@ from app.responses import APIError
 from app.services import approvals as approvals_service
 from app.services.studio import creators as studio_creators
 from app.services.studio.catalog import validate_spec as validate_report_spec
+from app.services.studio.critique import build_critique, critique_summary
 
 
 class ActionError(Exception):
@@ -110,12 +111,20 @@ def _draft(kind: str, title: str, fields: dict) -> dict:
     (``CurrentUser``). This STRENGTHENS the CR-011 invariant — authoring no longer
     writes even a pending proposal. The draft rides the existing
     ``proposed_actions[]`` channel; the FE keys on ``kind`` (no ``request_id`` ⇒ a
-    draft card, not an approvals card)."""
+    draft card, not an approvals card).
+
+    CR-056: when ``fields`` carries a ``critique`` list (structural findings the
+    compile step detected — duplicate / mislabel), the tool ``message`` gains a
+    short tr-TR summary so the agent RELAYS what it noticed and asks. The critique
+    is advisory data only — it rides the proposed_action and NEVER mutates the plan;
+    the user's option-click (client-side) is what trims/retitles the draft."""
+    base_msg = "Taslak hazır — sohbette düzenleyebilir veya Oluştur'a basabilirsiniz."
+    summary = critique_summary(fields.get("critique") or [])
     return {
         "ok": True,
         "proposed": True,
         "status": "draft",
-        "message": "Taslak hazır — sohbette düzenleyebilir veya Oluştur'a basabilirsiniz.",
+        "message": f"{summary} {base_msg}" if summary else base_msg,
         "proposed_action": {
             "kind": kind,
             "kind_label": ACTION_KIND_LABELS.get(kind, kind),
@@ -256,10 +265,14 @@ def propose_report(db: Session, company_id, user_id, *, title: str, spec,
             "Yalnızca studio_catalog'daki metrik/boyut kimliklerini kullan."
         )
     vis = visibility if visibility in ("private", "company") else "private"
+    # CR-056 — advisory structural critique (a report is one widget: only mislabel
+    # can fire; a lone spec can't duplicate). Rides the draft; never mutates the spec.
+    critique = build_critique([{"id": "report", "title": title, "spec": spec}])
     # CR-039 — DRAFT: validation done above; write NOTHING. The user creates their
     # own report via OLUŞTUR (POST /studio/reports as themselves).
     return _draft("draft_report", title,
-                  {"spec": spec, "visibility": vis, "labels": labels})
+                  {"spec": spec, "visibility": vis, "labels": labels,
+                   "critique": critique})
 
 
 # --------------------------------------------------------------------------- #
@@ -289,12 +302,14 @@ def propose_dashboard(db: Session, company_id, user_id, *, title: str, widgets,
         )
     widgets_json = [w.model_dump(mode="json") for w in normalised]
     vis = visibility if visibility in ("private", "company") else "private"
+    # CR-056 — advisory structural critique over the data widgets (duplicate/mislabel).
+    critique = build_critique(widgets_json)
     # CR-039 — DRAFT: validation done above; write NOTHING. The user creates their
     # own pano via OLUŞTUR (POST /studio/dashboards as themselves).
     return _draft("draft_dashboard", title,
                   {"widgets": widgets_json, "date_range": date_range,
                    "comparison": comparison, "filters": filters,
-                   "visibility": vis, "labels": labels})
+                   "visibility": vis, "labels": labels, "critique": critique})
 
 
 # --------------------------------------------------------------------------- #
@@ -365,12 +380,15 @@ def propose_skill(db: Session, company_id, user_id, *, name, widgets,
     # Skill via OLUŞTUR (POST /skills as themselves). instruction falls back to the
     # name when blank so the draft stays consistent with SkillCreate (min_length=1)
     # and can always be saved.
+    # CR-056 — advisory structural critique over the skill plan's data widgets.
+    critique = build_critique(widgets_json)
     return _draft("draft_skill", name, {
         "plan": plan,
         "format": fmt,
         "instruction": (instruction or "").strip() or name,
         "visibility": vis,
         "labels": labels,
+        "critique": critique,
     })
 
 
