@@ -7,10 +7,51 @@ import { useState } from "react";
  * One export column: a Turkish header plus an accessor that returns the RAW
  * underlying value (string/number/date) — never rendered JSX. Amounts should be
  * returned as plain `number`s so Excel can compute on them; dates as strings.
+ *
+ * CR-055 — `type` drives the xlsx cell number format so amounts show as `288.810 ₺`
+ * (not `288810`): `currency` → ₺, `usd` → $, `percent` → literal `0.0"%"` (the value is
+ * already in percent-units, no ×100), `number` → thousands. `date`/`text`/undefined are
+ * left unformatted. CSV output ignores `type` and stays raw.
  */
+export type ExportColumnType = "currency" | "usd" | "percent" | "number" | "date" | "text";
+
 export interface ExportColumn<T> {
   header: string;
   value: (row: T) => string | number | null | undefined;
+  type?: ExportColumnType;
+}
+
+// xlsx cell number formats per numeric column type (mirror backend excel_report ₺/$/%).
+export const XLSX_FORMATS: Partial<Record<ExportColumnType, string>> = {
+  currency: '#,##0" ₺"',
+  usd: '#,##0" $"',
+  percent: '0.0"%"',
+  number: "#,##0",
+};
+
+/**
+ * CR-055 — apply each column's number format to its numeric xlsx cells (header is row 0).
+ * Only numeric cells are touched, so a blank/"–" USD or a formatted-date STRING is left
+ * as-is (no fabrication). `XLSX` is passed in so this stays free of a static SheetJS
+ * import (the library is lazy-loaded on export).
+ */
+export function applyColumnFormats<T>(
+  ws: Record<string, { v?: unknown; t?: string; z?: string }>,
+  columns: ExportColumn<T>[],
+  nRows: number,
+  XLSX: { utils: { encode_cell: (a: { r: number; c: number }) => string } },
+): void {
+  columns.forEach((col, ci) => {
+    const z = col.type ? XLSX_FORMATS[col.type] : undefined;
+    if (!z) return;
+    for (let r = 1; r <= nRows; r++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c: ci })];
+      if (cell && typeof cell.v === "number") {
+        cell.t = "n";
+        cell.z = z;
+      }
+    }
+  });
 }
 
 type Cell = string | number | null | undefined;
@@ -94,6 +135,9 @@ export function ExportMenu<T>({ rows, columns, filename, disabled, fetchRows, cs
       const XLSX = await import("xlsx");
       const { headers, data } = buildMatrix(all, columns);
       const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+      // CR-055 — apply a per-column number format so amounts show as ₺/$/% (not raw
+      // General numbers). CSV stays raw (exportCSV is untouched).
+      applyColumnFormats(ws as any, columns, data.length, XLSX);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Veri");
       XLSX.writeFile(wb, `${filename}-${dateStamp()}.xlsx`);

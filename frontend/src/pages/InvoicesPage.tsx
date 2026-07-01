@@ -133,20 +133,20 @@ export default function InvoicesPage() {
 
   const exportColumns: ExportColumn<ClientInvoice>[] = [
     { header: "Fatura No", value: (r) => r.invoice_number },
-    { header: "Tarih", value: (r) => (r.invoice_date ? formatDate(r.invoice_date) : "") },
+    { header: "Tarih", value: (r) => (r.invoice_date ? formatDate(r.invoice_date) : ""), type: "date" },
     { header: "Dönem", value: (r) => r.hakkedis_period ?? r.description ?? "" },
     { header: "Tür", value: (r) => INVOICE_TYPE_LABELS[r.invoice_type] ?? r.invoice_type },
-    { header: "Tutar", value: (r) => toNumber(r.amount_try) },
-    { header: "KDV", value: (r) => toNumber(r.vat_amount_try) },
-    { header: "Kesinti", value: (r) => toNumber(r.retention_amount_try) },
-    { header: "Net Tahsil", value: (r) => toNumber(r.net_due_try) },
-    { header: "Vade", value: (r) => (r.due_date ? formatDate(r.due_date) : "") },
+    { header: "Tutar", value: (r) => toNumber(r.amount_try), type: "currency" },
+    { header: "KDV", value: (r) => toNumber(r.vat_amount_try), type: "currency" },
+    { header: "Kesinti", value: (r) => toNumber(r.retention_amount_try), type: "currency" },
+    { header: "Net Tahsil", value: (r) => toNumber(r.net_due_try), type: "currency" },
+    { header: "Vade", value: (r) => (r.due_date ? formatDate(r.due_date) : ""), type: "date" },
     { header: "Durum", value: (r) => STATUS_LABELS[r.payment_status] ?? r.payment_status },
-    { header: "Bakiye", value: (r) => toNumber(r.outstanding_try) },
-    { header: "Gecikme (gün)", value: (r) => (r.payment_status !== "paid" && daysUntil(r.due_date) < 0 ? Math.abs(daysUntil(r.due_date)) : "") },
+    { header: "Bakiye", value: (r) => toNumber(r.outstanding_try), type: "currency" },
+    { header: "Gecikme (gün)", value: (r) => (r.payment_status !== "paid" && daysUntil(r.due_date) < 0 ? Math.abs(daysUntil(r.due_date)) : ""), type: "number" },
     // CR-014-D: USD snapshot + the rate applied (blank when no snapshot yet).
-    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : "") },
-    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : "") },
+    { header: "USD (Anlık)", value: (r) => (r.amount_usd != null ? Number(r.amount_usd) : ""), type: "usd" },
+    { header: "USD Kuru", value: (r) => (r.fx_rate_usd != null ? Number(r.fx_rate_usd) : ""), type: "number" },
   ];
 
   return (

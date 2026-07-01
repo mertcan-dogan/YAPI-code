@@ -88,10 +88,13 @@ def run_skill(db: Session, user: User, skill: Skill, *, signed_ttl: int | None =
     try:
         deck = _plan_dashboard(plan)
         results = _run_dashboard_batch(db, user, deck)  # SOLE figure source
+        # CR-055 — the xlsx skill report shows USD-at-date alongside ₺: a second run of
+        # the SAME deck with basis.currency='usd' (read-only; no fabrication). pdf ₺-only.
+        results_usd = _run_dashboard_batch(db, user, deck, currency="usd") if fmt == "xlsx" else None
         company = db.get(Company, user.company_id)
         resp = studio_export_dashboard(
             deck.widgets or [], results, deck.title, fmt,
-            company=company.name if company else None,
+            company=company.name if company else None, results_usd=results_usd,
         )
         data = bytes(resp.body)  # studio_export_dashboard returns a Response
         if not data:

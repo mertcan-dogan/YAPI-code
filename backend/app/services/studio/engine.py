@@ -960,3 +960,84 @@ def run_spec(db, company_id, spec: dict, today: date | None = None) -> dict:
     if viz in ("line", "area", "bar"):
         result["series"] = _build_series(primary, compare, dims, metric_ids, spec)
     return result
+
+
+# --------------------------------------------------------------------------- #
+# CR-055 — currency companion (USD alongside ₺, rate-at-date). No new FX work:
+# most metrics honour basis.currency="usd" already (CR-014). Two exceptions matter so
+# a companion never mislabels a ₺ value as USD:
+#   * cost_try is currency-LOCKED to ₺ (_cost_amount_key); its honest USD-at-date is the
+#     sibling metric cost_usd — requested in the USD run, then relabelled back.
+#   * cash metrics have NO USD in the engine (the cashflow calc is ₺-only) — nulled in
+#     the companion so they render "–", never the ₺ figure with a $ sign.
+# --------------------------------------------------------------------------- #
+_USD_SIBLING = {"cost_try": "cost_usd"}
+_USD_UNAVAILABLE = frozenset({"cash_in", "cash_out", "net_cash", "cum_cash"})
+
+
+def _spec_in_currency(spec: dict, currency: str) -> dict:
+    """Return a shallow copy of ``spec`` with ``basis.currency`` forced to ``currency``.
+    Preserves the spec's other basis toggles (cost/financing/vat)."""
+    return {**spec, "basis": {**(spec.get("basis") or {}), "currency": currency}}
+
+
+def _remap_metric_ids(res: dict, src_of: dict) -> None:
+    """Re-key a companion result's rows/totals metrics from the run's SOURCE ids to the
+    REQUESTED ids in place. ``src_of`` maps requested_id → source_id (e.g. cost_try →
+    cost_usd); an id whose source is itself is unchanged. Copy semantics — a source
+    shared by two requested ids feeds BOTH — so a spec that requests cost_try AND
+    cost_usd keeps both distinct with the real USD value (never collapsed/double-added)."""
+    def remap(d):
+        return {req: d.get(src) for req, src in src_of.items()}
+    for row in res.get("rows") or []:
+        if isinstance(row.get("metrics"), dict):
+            row["metrics"] = remap(row["metrics"])
+    tot = res.get("totals") or {}
+    if isinstance(tot.get("metrics"), dict):
+        tot["metrics"] = remap(tot["metrics"])
+
+
+def _null_metrics(res: dict, ids) -> None:
+    """Force the given metric ids to None in a result's rows/totals (a metric with no USD
+    equivalent → "–" in the companion, never a ₺ value shown as USD)."""
+    ids = list(ids)
+    if not ids:
+        return
+    for row in res.get("rows") or []:
+        m = row.get("metrics")
+        if isinstance(m, dict):
+            for mid in ids:
+                if mid in m:
+                    m[mid] = None
+    tot = (res.get("totals") or {}).get("metrics")
+    if isinstance(tot, dict):
+        for mid in ids:
+            if mid in tot:
+                tot[mid] = None
+
+
+def run_spec_usd(db, company_id, spec: dict, today: date | None = None) -> dict:
+    """CR-055 — the USD-at-date companion of a spec: the SAME rows valued in USD
+    (basis.currency='usd'), with cost_try swapped for its cost_usd sibling and cash
+    metrics nulled (no engine USD). Result ids match the request's, so it pairs
+    column-for-column with the ₺ run. Read-only; never fabricates FX (a row with no
+    amount_usd is None → "–"; ``meta.usd_missing_count`` reports how many)."""
+    metrics = list(spec.get("metrics") or [])
+    # requested id → the id whose USD value feeds it (cost_try borrows its cost_usd
+    # sibling; every other metric is itself under basis=usd).
+    src_of = {m: _USD_SIBLING.get(m, m) for m in metrics}
+    usd_spec = _spec_in_currency(spec, "usd")
+    # DE-DUP the USD run's metric list so a source shared by two requested ids (e.g. both
+    # cost_try and cost_usd resolve to cost_usd) is computed ONCE — never double-counted.
+    usd_spec["metrics"] = list(dict.fromkeys(src_of.values()))
+    res = run_spec(db, company_id, usd_spec, today=today)
+    _remap_metric_ids(res, src_of)
+    _null_metrics(res, [m for m in metrics if m in _USD_UNAVAILABLE])
+    return res
+
+
+def run_both_currencies(db, company_id, spec: dict, today: date | None = None) -> tuple[dict, dict]:
+    """CR-055 — run a spec in its own basis (the ₺ primary) AND its USD-at-date companion
+    (``run_spec_usd``). Returns ``(primary_result, usd_result)``. Read-only."""
+    primary = run_spec(db, company_id, spec, today=today)
+    return primary, run_spec_usd(db, company_id, spec, today=today)

@@ -50,11 +50,11 @@ export default function VariationsPage() {
   const exportColumns: ExportColumn<Variation>[] = [
     { header: "EK İş No", value: (r) => r.variation_number },
     { header: "Başlık", value: (r) => r.title },
-    { header: "Sunulma", value: (r) => (r.submitted_date ? formatDate(r.submitted_date) : "") },
-    { header: "Talep Edilen", value: (r) => toNumber(r.value_try) },
-    { header: "Onaylanan", value: (r) => (r.approved_value_try ? toNumber(r.approved_value_try) : "") },
-    { header: "Maliyet Etkisi", value: (r) => toNumber(r.cost_impact_try) },
-    { header: "Marj Etkisi", value: (r) => toNumber(r.margin_impact_try) },
+    { header: "Sunulma", value: (r) => (r.submitted_date ? formatDate(r.submitted_date) : ""), type: "date" },
+    { header: "Talep Edilen", value: (r) => toNumber(r.value_try), type: "currency" },
+    { header: "Onaylanan", value: (r) => (r.approved_value_try ? toNumber(r.approved_value_try) : ""), type: "currency" },
+    { header: "Maliyet Etkisi", value: (r) => toNumber(r.cost_impact_try), type: "currency" },
+    { header: "Marj Etkisi", value: (r) => toNumber(r.margin_impact_try), type: "currency" },
     { header: "Durum", value: (r) => STATUS_LABELS[r.status] ?? r.status },
   ];
 

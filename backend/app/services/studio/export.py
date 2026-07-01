@@ -350,7 +350,7 @@ def _pdf(header, data_rows, totals_row, title: str, result: dict, viz: str | Non
 # Public entrypoint
 # --------------------------------------------------------------------------- #
 def studio_export(result: dict, fmt: str, title: str, viz: str | None = None,
-                  company: str | None = None) -> Response:
+                  company: str | None = None, result_usd: dict | None = None) -> Response:
     """Build a downloadable file (pdf/xlsx/csv) from a run_spec result. Read-only.
 
     ``viz`` (the report spec's visualization) drives the PDF chart (CR-037) and the
@@ -360,6 +360,10 @@ def studio_export(result: dict, fmt: str, title: str, viz: str | None = None,
     Özet-lite (title band + headline KPIs + the report's chart) + a styled data sheet,
     not the old flat dump. pdf/csv are unchanged.
 
+    CR-055: ``result_usd`` (the same spec run with basis.currency='usd') adds the USD-
+    at-date companion to the xlsx (₺+USD KPIs, paired $ columns, footnote). pdf/csv are
+    unchanged (₺ only).
+
     Raises ``APIError(422, INVALID_FORMAT)`` for an unknown format (the router also
     guards, so this is defense-in-depth)."""
     header, data_rows, totals_row = _flat_table(result)
@@ -368,7 +372,7 @@ def studio_export(result: dict, fmt: str, title: str, viz: str | None = None,
     if fmt == "xlsx":
         from app.services.studio.excel_report import build_single_report
 
-        content = build_single_report(result, title, viz, company=company)
+        content = build_single_report(result, title, viz, company=company, result_usd=result_usd)
         media, ext = _XLSX_MEDIA, "xlsx"
     elif fmt == "csv":
         content = _csv(header, data_rows, totals_row)
@@ -518,17 +522,21 @@ def _dashboard_pdf(ordered: list, results: dict, title: str) -> bytes:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _dashboard_xlsx(ordered: list, results: dict, title: str, company: str | None = None) -> bytes:
+def _dashboard_xlsx(ordered: list, results: dict, title: str, company: str | None = None,
+                    results_usd: dict | None = None) -> bytes:
     """CR-046 — the decision-grade Excel engine: an Özet dashboard (KPI cards + native
     charts) + consolidated styled data sheets, NOT one-sheet-per-widget. Raises
-    ``APIError(422, NO_DATA)`` when nothing is renderable (no empty workbook)."""
+    ``APIError(422, NO_DATA)`` when nothing is renderable (no empty workbook).
+
+    CR-055 — ``results_usd`` (the same widgets run with basis.currency='usd') adds the
+    USD-at-date companion (₺+USD KPIs, paired $ columns, footnote)."""
     from app.services.studio.excel_report import build_workbook
 
-    return build_workbook(ordered, results, title, company=company)
+    return build_workbook(ordered, results, title, company=company, results_usd=results_usd)
 
 
 def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str,
-                            company: str | None = None) -> Response:
+                            company: str | None = None, results_usd: dict | None = None) -> Response:
     """Build a dashboard deck file (pdf/xlsx) from already-computed batch results.
 
     READ-ONLY: consumes ``results`` ({widget_id: run_spec-result-or-status}) and the
@@ -551,7 +559,7 @@ def studio_export_dashboard(widgets: list, results: dict, title: str, fmt: str,
         content = _dashboard_pdf(ordered, results, title)
         media, ext = _PDF_MEDIA, "pdf"
     elif fmt == "xlsx":
-        content = _dashboard_xlsx(ordered, results, title, company=company)
+        content = _dashboard_xlsx(ordered, results, title, company=company, results_usd=results_usd)
         media, ext = _XLSX_MEDIA, "xlsx"
     elif fmt == "csv":
         raise APIError(422, "INVALID_FORMAT", "Pano CSV olarak dışa aktarılamaz (pdf veya xlsx)")
